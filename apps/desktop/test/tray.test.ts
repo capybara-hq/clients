@@ -218,14 +218,105 @@ describe("start at login (spec 9.4)", () => {
 
   test("the app menu carries the platform switcher and the standard menus", () => {
     const template = appMenuTemplate(menuState(false), { ...actions(), setStartAtLogin: vi.fn() });
-    expect(template.map((i) => i.label ?? i.role)).toEqual([
-      "Capybara",
-      "平台",
-      "editMenu",
-      "viewMenu",
-      "windowMenu",
-    ]);
+    expect(template.map((i) => i.label)).toEqual(["Capybara", "平台", "编辑", "显示", "窗口"]);
     expect(labels(template[1]?.submenu ?? [])).toEqual(["Example", "Other", "-", "添加平台"]);
+  });
+
+  // Electron hard-codes English labels for bare roles (spec §12): every item carries a catalog
+  // label and keeps its role, so the behaviour and the accelerators stay Electron's.
+  const roleItems = (items: MenuItemModel[]): [string | undefined, string | undefined][] =>
+    items.flatMap((i) =>
+      i.submenu ? roleItems(i.submenu) : i.role ? [[i.role, i.label] as [string, string]] : [],
+    );
+
+  test("every role item has a Chinese label", () => {
+    const template = appMenuTemplate(menuState(false), { ...actions(), setStartAtLogin: vi.fn() });
+    expect(roleItems(template)).toEqual([
+      ["about", "关于 Capybara"],
+      ["hide", "隐藏 Capybara"],
+      ["hideOthers", "隐藏其他"],
+      ["unhide", "全部显示"],
+      ["quit", "退出 Capybara"],
+      ["undo", "撤销"],
+      ["redo", "重做"],
+      ["cut", "剪切"],
+      ["copy", "拷贝"],
+      ["paste", "粘贴"],
+      ["pasteAndMatchStyle", "粘贴并匹配样式"],
+      ["delete", "删除"],
+      ["selectAll", "全选"],
+      ["reload", "重新载入"],
+      ["forceReload", "强制重新载入"],
+      ["toggleDevTools", "开发者工具"],
+      ["resetZoom", "实际大小"],
+      ["zoomIn", "放大"],
+      ["zoomOut", "缩小"],
+      ["togglefullscreen", "切换全屏幕"],
+      ["minimize", "最小化"],
+      ["zoom", "缩放"],
+      ["front", "前置全部窗口"],
+    ]);
+    // The Window menu is the macOS window menu (its window list), labelled.
+    expect(template[4]).toMatchObject({ label: "窗口", role: "window" });
+  });
+
+  test("every role item has an English label", () => {
+    const template = appMenuTemplate(
+      { ...menuState(false), locale: "en" },
+      { ...actions(), setStartAtLogin: vi.fn() },
+    );
+    expect(template.map((i) => i.label)).toEqual([
+      "Capybara",
+      "Platforms",
+      "Edit",
+      "View",
+      "Window",
+    ]);
+    expect(roleItems(template).map(([, label]) => label)).toEqual([
+      "About Capybara",
+      "Hide Capybara",
+      "Hide Others",
+      "Show All",
+      "Quit Capybara",
+      "Undo",
+      "Redo",
+      "Cut",
+      "Copy",
+      "Paste",
+      "Paste and Match Style",
+      "Delete",
+      "Select All",
+      "Reload",
+      "Force Reload",
+      "Toggle Developer Tools",
+      "Actual Size",
+      "Zoom In",
+      "Zoom Out",
+      "Toggle Full Screen",
+      "Minimize",
+      "Zoom",
+      "Bring All to Front",
+    ]);
+    expect(template[0]?.submenu?.find((i) => i.type === "checkbox")?.label).toBe("Start at login");
+  });
+
+  test("no menu item is left without a label", () => {
+    for (const locale of ["zh", "en"] as const) {
+      const walk = (items: MenuItemModel[]): void => {
+        for (const i of items) {
+          if (i.type === "separator") continue;
+          expect(i.label, JSON.stringify(i)).toBeTruthy();
+          expect(i.label).not.toMatch(/^menu\./);
+          if (i.submenu) walk(i.submenu);
+        }
+      };
+      walk(
+        appMenuTemplate(
+          { ...menuState(false), locale },
+          { ...actions(), setStartAtLogin: vi.fn() },
+        ),
+      );
+    }
   });
 
   test("with lockDeployments the app menu offers no 添加平台", () => {
