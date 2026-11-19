@@ -62,12 +62,22 @@ describe("discovery in the main process", () => {
       fetch: fakeFetch({
         "https://b.example.com/api/v1/meta": json({
           ...META,
-          features: { localDevices: true, appSignIn: false },
+          features: { localDevices: true },
         }),
       }),
     });
     expect(old.result).toEqual({ ok: false, error: "too_old" });
     expect(old.candidate).toBeUndefined();
+    const noPublicUrl = await discoverDeployment("c.example.com", {
+      fetch: fakeFetch({
+        "https://c.example.com/api/v1/meta": json({
+          ...META,
+          features: { localDevices: true, appSignIn: false },
+        }),
+      }),
+    });
+    expect(noPublicUrl.result).toEqual({ ok: false, error: "sign_in_unavailable" });
+    expect(noPublicUrl.candidate).toBeUndefined();
   });
 
   test("a deployment with a name and an icon", async () => {
@@ -157,6 +167,9 @@ describe("the address page IPC", () => {
     expect(init?.locale).toBe("zh");
     expect(init?.prefill).toBe("capybara.example.com");
     expect(init?.strings["address.error.too_old"]).toBe("该平台版本过旧");
+    expect(init?.strings["address.error.sign_in_unavailable"]).toBe(
+      "该平台尚未设置公开访问地址（http.publicUrl），无法在桌面端登录。请联系超级管理员。",
+    );
     expect(Object.keys(init?.strings ?? {}).sort()).toEqual([...ADDRESS_STRING_KEYS].sort());
   });
 

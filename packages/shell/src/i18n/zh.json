@@ -9,6 +9,7 @@
   "address.error.unreachable": "无法连接到这个地址",
   "address.error.not_capybara": "这个地址不是 Capybara 平台",
   "address.error.too_old": "该平台版本过旧",
+  "address.error.sign_in_unavailable": "该平台尚未设置公开访问地址（http.publicUrl），无法在桌面端登录。请联系超级管理员。",
   "address.checking": "正在连接…",
   "address.open": "打开",
   "address.change": "修改地址",

@@ -23,6 +23,7 @@ import {
   type PermissionSession,
   profileWebPreferences,
 } from "./security.ts";
+import { type HeaderSession, installDesktopUserAgent } from "./user-agent.ts";
 
 export interface WebContentsLike extends ContentsLike {
   id: number;
@@ -62,9 +63,15 @@ export interface WindowOptions {
     | ReturnType<typeof addressWebPreferences>;
 }
 
+/** A partition as the window manager configures it. */
+export type ProfileSession = PermissionSession &
+  Pick<HeaderSession, "getUserAgent"> & {
+    webRequest: WebRequestSession["webRequest"] & HeaderSession["webRequest"];
+  };
+
 export interface WindowManagerDeps {
   createWindow(options: WindowOptions): WindowLike;
-  sessionFor(partition: string): PermissionSession & WebRequestSession;
+  sessionFor(partition: string): ProfileSession;
   preloadPath: string;
   addressPreloadPath: string;
   platform: ShellPlatform;
@@ -75,6 +82,8 @@ export interface WindowManagerDeps {
   onFocusProfile(profile: Profile): void;
   /** An address window closed: what was pending for its webContents id can go. */
   onAddressClosed?: (webContentsId: number) => void;
+  /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
+  userAgent: string;
   backgroundColor?: () => string;
   /** Errors that have nowhere else to go (a failed load). */
   log?: (message: string, err: unknown) => void;
@@ -163,6 +172,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       const ses = deps.sessionFor(partition);
       installPermissionHandlers(ses, profile.origin);
       blockInWindowSignIn(ses, profile.base);
+      installDesktopUserAgent(ses, profile.origin, deps.userAgent);
       permissionsInstalled.add(partition);
     }
     const win = deps.createWindow({

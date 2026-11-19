@@ -50,9 +50,44 @@ describe("fetchMeta", () => {
       error: "not_capybara",
     });
   });
-  test("appSignIn false is too_old", async () => {
+  test("appSignIn false is sign_in_unavailable (no http.publicUrl on the deployment)", async () => {
     const f = fake(() => json({ ...good, features: { localDevices: true, appSignIn: false } }));
+    expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "sign_in_unavailable" });
+  });
+  test("features without appSignIn (an older kernel) is too_old", async () => {
+    const f = fake(() => json({ ...good, features: { localDevices: true } }));
     expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "too_old" });
+  });
+  test("a non-boolean appSignIn is not_capybara", async () => {
+    const f = fake(() => json({ ...good, features: { localDevices: true, appSignIn: "yes" } }));
+    expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "not_capybara" });
+  });
+  test("exposes icons; each may be null; a meta without icons stays valid", async () => {
+    const icons = { app: "/icon/app?v=1", maskable: null, favicon: "/icon/favicon?v=2" };
+    const withIcons = await fetchMeta("https://x", fake(() => json({ ...good, icons })).fn);
+    expect(withIcons).toEqual({ ...good, icons });
+    const nulls = { app: null, maskable: null, favicon: null };
+    expect(await fetchMeta("https://x", fake(() => json({ ...good, icons: nulls })).fn)).toEqual({
+      ...good,
+      icons: nulls,
+    });
+    const without = await fetchMeta("https://x", fake(() => json(good)).fn);
+    expect(without).toEqual(good);
+    expect(without).not.toHaveProperty("icons");
+  });
+  test("a malformed icons field is ignored (forward compatible); the meta stays valid", async () => {
+    for (const icons of [
+      null,
+      "x",
+      [],
+      { app: 1, maskable: null, favicon: null },
+      { app: null, maskable: null },
+      { app: null, maskable: {}, favicon: null },
+    ]) {
+      const meta = await fetchMeta("https://x", fake(() => json({ ...good, icons })).fn);
+      expect(meta).toEqual(good);
+      expect(meta).not.toHaveProperty("icons");
+    }
   });
   test("never follows redirects and has a timeout signal", async () => {
     const f = fake(() => json(good));
