@@ -44,5 +44,17 @@
   "device.remove.no": "否",
   "device.ceiling.change.full_access": "完全访问：允许",
   "device.ceiling.change.project_reach": "项目范围：整个系统用户（os-user）",
-  "device.keep_awake.limits_linux": "保持唤醒无法阻止以下情况：由系统处理的盖子开关、选择睡眠、电量严重不足或过热。睡眠中的电脑对平台显示为离线。"
+  "device.keep_awake.limits_linux": "保持唤醒无法阻止以下情况：由系统处理的盖子开关、选择睡眠、电量严重不足或过热。睡眠中的电脑对平台显示为离线。",
+  "tray.device.state.online": "本机：在线",
+  "tray.device.state.offline": "本机：离线",
+  "tray.device.state.paused": "本机：已暂停",
+  "tray.device.running": "运行中：{count}",
+  "tray.device.pause": "暂停",
+  "tray.device.resume": "恢复",
+  "tray.device.disconnect": "断开",
+  "tray.device.keep_awake": "保持唤醒",
+  "tray.device.keep_awake.off": "关闭",
+  "tray.device.keep_awake.while-busy": "运行任务时",
+  "tray.device.keep_awake.connected": "连接期间",
+  "tray.device.page": "本机"
 }

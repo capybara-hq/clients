@@ -127,6 +127,11 @@ export interface ShellBridgeDeps<C extends CallContext> {
    * origin.
    */
   sendEvent?(target: C, message: ShellEventMessage): unknown;
+  /**
+   * The one-dialog-per-profile slot, when something else (the tray) takes it too. Default: the
+   * bridge's own.
+   */
+  gate?: ConfirmGate;
 }
 
 export interface IpcMainLike {
@@ -179,7 +184,7 @@ const FAILED: ShellCallResult = { ok: false, code: "failed" };
 
 export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C>) {
   const registry = new Map<string, Registered<C>>();
-  const gate = createConfirmGate();
+  const gate = deps.gate ?? createConfirmGate();
   /** Per webContents: the document subscribed now and its subscriptions (id → stop). */
   const subscriptions = new Map<
     number,
