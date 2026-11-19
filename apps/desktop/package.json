@@ -10,7 +10,7 @@
     "icons": "node scripts/icons.ts",
     "start": "electron .",
     "dev": "node scripts/build.ts && electron .",
-    "dist": "node scripts/build.ts && electron-builder --config electron-builder.config.mjs",
+    "dist": "node scripts/build.ts && node scripts/bundle-node.ts && electron-builder --config electron-builder.config.mjs",
     "bundle-node": "node scripts/bundle-node.ts"
   },
   "dependencies": {

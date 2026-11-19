@@ -340,14 +340,16 @@ function start(): void {
     // connecting (Task 18); at start a packaged app only repairs an installed service whose app
     // moved, then restarts it if an update replaced the bundled device it runs.
     const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
-    const deviceService = createDeviceService({
-      cli: createDeviceCli({
-        resourcesPath,
-        spawn: spawn as unknown as SpawnLike,
-        env: process.env,
-      }),
+    const deviceCli = createDeviceCli({
       resourcesPath,
+      spawn: spawn as unknown as SpawnLike,
+      env: process.env,
+      log: (message, err) => console.error(message, err ?? ""),
     });
+    // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
+    // running for the app is ended with it.
+    app.on("will-quit", () => deviceCli.dispose());
+    const deviceService = createDeviceService({ cli: deviceCli, resourcesPath });
 
     // electron-updater works only in a packaged app. An update installs on quit, so the
     // `afterUpdate` call at the next start is the one that finds the new device on disk.

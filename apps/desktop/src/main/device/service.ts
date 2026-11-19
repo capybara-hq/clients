@@ -45,8 +45,8 @@ export interface DeviceService {
   status(): Promise<ServiceStatus>;
   /**
    * Makes the login service run this app's copy, unless the person installed one with the CLI:
-   * `installed` (there was none), `kept` (this app's, or a CLI-installed one that still exists),
-   * `reinstalled` (its bin is gone, it runs another app bundle's copy, or another Node).
+   * `installed` (there was none), `kept` (this app's, another app copy's or a CLI-installed one
+   * whose bin still exists), `reinstalled` (its bin is gone, or this app's bin runs another Node).
    */
   ensureService(): Promise<"installed" | "kept" | "reinstalled">;
   /**
@@ -147,13 +147,21 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
     return run(["service", "install"]);
   }
 
-  /** Whether an installed service must be replaced by this app's copy. */
+  /**
+   * Whether an installed service must be replaced by this app's copy: its bin is gone (the app or
+   * the CLI install that wrote it was moved or removed), or it is this app's bin on another Node.
+   * Another app bundle's copy whose bin still exists is kept, so two copies of the app never take
+   * the service back and forth; a CLI-installed one is kept too (spec §5.2: used as is).
+   */
   function needsReinstall(s: ServiceStatus): boolean {
     if (!s.binExists) return true;
     if (same(s.binPath, own.bin)) return !same(s.nodePath, own.node);
-    // Another app bundle's copy (an older install moved or duplicated); a CLI one is kept.
-    return s.binPath !== undefined && APP_COPY.test(s.binPath);
+    return false;
   }
+
+  /** A copy some app bundle installed (this one or another), as opposed to the CLI's. */
+  const isAppCopy = (s: ServiceStatus): boolean =>
+    s.binPath !== undefined && (same(s.binPath, own.bin) || APP_COPY.test(s.binPath));
 
   async function ensureService(): Promise<"installed" | "kept" | "reinstalled"> {
     const s = await status();
@@ -173,7 +181,9 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
     async repairService() {
       const s = await status();
       if (!s.installed) return "absent";
-      if (!s.loaded || !needsReinstall(s)) return "kept";
+      // Only an app copy is repaired at start; a broken CLI-installed service waits for the
+      // person to switch it to the app's copy (Task 18's UI, through ensureService).
+      if (!s.loaded || !isAppCopy(s) || !needsReinstall(s)) return "kept";
       // Not from a temporary location: the next start from the real place repairs it.
       if (isTemporaryLocation(deps.resourcesPath)) return "kept";
       await install();
@@ -184,6 +194,8 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
       const s = await status();
       if (!s.installed || !s.running || !same(s.binPath, own.bin)) return;
       if (s.runningVersion === undefined || s.installedVersion === undefined) return;
+      // Only a new device version restarts: an update that changes only the bundled Node keeps
+      // the running program on the old Node until its next start (accepted).
       if (s.runningVersion === s.installedVersion) return;
       await run(["service", "restart"]);
     },

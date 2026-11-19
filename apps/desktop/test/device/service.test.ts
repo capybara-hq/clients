@@ -78,15 +78,27 @@ test("ensureService reinstalls when the service's bin is gone (the app moved)", 
   expect(f.calls).toEqual(["service status --json", "service install"]);
 });
 
-test("ensureService reinstalls when the service runs another app bundle's copy", async () => {
+test("ensureService keeps another app bundle's copy while its bin exists", async () => {
   const f = fakeCli({
     ...appCopy,
     binPath:
       "/Users/me/Applications/Capybara.app/Contents/Resources/device/bin/capybara-device.mjs",
     nodePath: "/Users/me/Applications/Capybara.app/Contents/Resources/node/node",
   });
-  await expect(service(f.cli).ensureService()).resolves.toBe("reinstalled");
-  expect(f.calls).toEqual(["service status --json", "service install"]);
+  await expect(service(f.cli).ensureService()).resolves.toBe("kept");
+  expect(f.calls).toEqual(["service status --json"]);
+});
+
+test("two app copies never take the service back and forth", async () => {
+  const other = "/Users/me/Applications/Capybara.app/Contents/Resources";
+  const f = fakeCli({
+    ...appCopy,
+    binPath: `${other}/device/bin/capybara-device.mjs`,
+    nodePath: `${other}/node/node`,
+  });
+  await expect(service(f.cli).repairService()).resolves.toBe("kept");
+  await expect(service(f.cli, other).repairService()).resolves.toBe("kept");
+  expect(f.calls).not.toContain("service install");
 });
 
 test("ensureService reinstalls the app's copy when it runs another node", async () => {
@@ -127,6 +139,27 @@ test("repairService reinstalls a loaded app service whose bin moved", async () =
   const f = fakeCli({ ...appCopy, running: false, binExists: false });
   await expect(service(f.cli).repairService()).resolves.toBe("reinstalled");
   expect(f.calls).toEqual(["service status --json", "service install"]);
+});
+
+test("repairService keeps a loaded CLI service whose bin is gone", async () => {
+  const f = fakeCli({
+    ...appCopy,
+    nodePath: "/Users/me/.nvm/versions/node/v22.12.0/bin/node",
+    binPath:
+      "/Users/me/.nvm/versions/node/v22.12.0/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs",
+    binExists: false,
+  });
+  await expect(service(f.cli).repairService()).resolves.toBe("kept");
+  expect(f.calls).toEqual(["service status --json"]);
+});
+
+test("repairService reinstalls another app copy whose bin is gone", async () => {
+  const f = fakeCli({
+    ...appCopy,
+    binPath: "/Users/me/Downloads/Capybara.app/Contents/Resources/device/bin/capybara-device.mjs",
+    binExists: false,
+  });
+  await expect(service(f.cli).repairService()).resolves.toBe("reinstalled");
 });
 
 test("repairService does not start a service that is not loaded (paused)", async () => {

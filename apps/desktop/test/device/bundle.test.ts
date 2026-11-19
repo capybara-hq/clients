@@ -16,6 +16,7 @@ import {
   copyDevicePackage,
   fetchNodeTarball,
   hashTree,
+  httpDownload,
   NODE_PINS,
   NODE_VERSION,
   nodeTarballName,
@@ -186,4 +187,28 @@ test("hashTree changes when one byte changes", () => {
   const before = hashTree(src);
   writeFileSync(join(src, "dist", "node_modules", "ws", "index.js"), "export {};\n");
   expect(hashTree(src)).not.toEqual(before);
+});
+
+test("downloads come only from https://nodejs.org/dist/ and follow no redirect", async () => {
+  const seen: Array<{ url: string; redirect: unknown }> = [];
+  const fakeFetch = (async (url: string, init?: RequestInit) => {
+    seen.push({ url, redirect: init?.redirect });
+    return new Response("ok");
+  }) as typeof fetch;
+  await expect(
+    httpDownload(`https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt`, fakeFetch),
+  ).resolves.toEqual(new TextEncoder().encode("ok"));
+  expect(seen).toEqual([
+    { url: `https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt`, redirect: "error" },
+  ]);
+  for (const url of [
+    "http://nodejs.org/dist/x",
+    "https://nodejs.org.evil.example/dist/x",
+    "https://example.com/dist/x",
+  ]) {
+    await expect(httpDownload(url, fakeFetch)).rejects.toThrow(/only https:\/\/nodejs\.org/);
+  }
+  expect(seen).toHaveLength(1);
+  const failing = (async () => new Response("", { status: 404 })) as unknown as typeof fetch;
+  await expect(httpDownload("https://nodejs.org/dist/x", failing)).rejects.toThrow(/404/);
 });

@@ -167,8 +167,18 @@ export function pinnedDeviceVersion(packageJson: string): string {
   return v;
 }
 
-async function httpDownload(url: string): Promise<Uint8Array> {
-  const res = await fetch(url, { redirect: "follow" });
+/**
+ * Downloads only from nodejs.org's dist directory over https and follows no redirect, so the
+ * bytes checked against the pins can come from nowhere else.
+ */
+export async function httpDownload(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Uint8Array> {
+  if (!url.startsWith("https://nodejs.org/dist/")) {
+    throw new Error(`refusing to download ${url}: only https://nodejs.org/dist/ is allowed`);
+  }
+  const res = await fetchImpl(url, { redirect: "error" });
   if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -193,7 +203,10 @@ async function main(): Promise<void> {
     const slices: string[] = [];
     let license = "";
     for (const arch of ["darwin-arm64", "darwin-x64"] as const) {
-      const tarball = await fetchNodeTarball(arch, { cacheDir, download: httpDownload });
+      const tarball = await fetchNodeTarball(arch, {
+        cacheDir,
+        download: (url) => httpDownload(url),
+      });
       const top = `node-v${NODE_VERSION}-${arch}`;
       const into = join(work, arch);
       mkdirSync(into);

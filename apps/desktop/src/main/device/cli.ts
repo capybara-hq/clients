@@ -10,6 +10,7 @@ export interface ChildLike {
   stderr: NodeJS.ReadableStream | null;
   on(event: "close", listener: (code: number | null, signal: string | null) => void): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
+  kill(signal?: NodeJS.Signals): unknown;
 }
 
 export type SpawnLike = (
@@ -23,12 +24,24 @@ export interface DeviceCliResult {
   code: number;
   /** The tail of stderr (the device prints its human lines and errors there with --json). */
   stderr: string;
+  /** True when the command outlived its timeout and was killed; `code` is then 124. */
+  timedOut?: true;
 }
 
-export type DeviceCli = (
-  args: string[],
-  o?: { onLine?: (obj: unknown) => void },
-) => Promise<DeviceCliResult>;
+export interface DeviceCliOptions {
+  /** Called with each JSON object line of stdout; an exception it throws is logged, not raised. */
+  onLine?: (obj: unknown) => void;
+  /** Overrides the default timeout for this command (`login --json` waits for a person); 0: none. */
+  timeoutMs?: number;
+}
+
+export type DeviceCli = (args: string[], o?: DeviceCliOptions) => Promise<DeviceCliResult>;
+
+/** A device CLI that can also end every command still running (at app quit). */
+export type DeviceCliHandle = DeviceCli & { dispose(): void };
+
+/** The exit code reported for a command killed at its timeout (as timeout(1) does). */
+export const TIMEOUT_CODE = 124;
 
 export interface DeviceCliDeps {
   /** `process.resourcesPath` in a packaged app; `apps/desktop/build` in a development run. */
@@ -36,6 +49,23 @@ export interface DeviceCliDeps {
   spawn: SpawnLike;
   /** The app's own environment; only the names in {@link INHERITED_ENV} are passed on. */
   env: Record<string, string | undefined>;
+  /** How long a command may run before SIGTERM (default 60 s; 0: no limit). */
+  timeoutMs?: number;
+  /** How long after SIGTERM a command still running gets SIGKILL (default 5 s). */
+  killGraceMs?: number;
+  /** Schedules a timer; answers how to cancel it (tests drive it by hand). */
+  schedule?: (fn: () => void, ms: number) => () => void;
+  log?: (message: string, err?: unknown) => void;
+}
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_KILL_GRACE_MS = 5000;
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const t = setTimeout(fn, ms);
+  // A pending kill never keeps the app alive at quit.
+  t.unref?.();
+  return () => clearTimeout(t);
 }
 
 /**
@@ -91,21 +121,63 @@ function asJsonObject(line: string): object | undefined {
   }
 }
 
-export function createDeviceCli(deps: DeviceCliDeps): DeviceCli {
+export function createDeviceCli(deps: DeviceCliDeps): DeviceCliHandle {
   const { node, bin } = devicePaths(deps.resourcesPath);
-  return (args, o) =>
+  const schedule = deps.schedule ?? defaultSchedule;
+  const grace = deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  /** Every running command: how to end it (SIGTERM, then SIGKILL after the grace). */
+  const live = new Set<() => void>();
+
+  const cli: DeviceCli = (args, o) =>
     new Promise<DeviceCliResult>((resolve, reject) => {
       const child = deps.spawn(node, [bin, ...args], {
         env: deviceEnv(deps.env),
         stdio: ["ignore", "pipe", "pipe"],
       });
       let settled = false;
+      let timedOut = false;
       let buf = "";
       let dropping = false;
       let stderr = "";
+      const cancels: Array<() => void> = [];
+      const terminate = () => {
+        child.kill("SIGTERM");
+        cancels.push(
+          schedule(() => {
+            child.kill("SIGKILL");
+            // A child that ignores even SIGKILL (or whose close never comes) still settles.
+            if (timedOut) settle({ code: TIMEOUT_CODE, stderr, timedOut: true });
+          }, grace),
+        );
+      };
+      const settle = (result: DeviceCliResult | Error) => {
+        if (settled) return;
+        settled = true;
+        for (const cancel of cancels) cancel();
+        live.delete(terminate);
+        if (result instanceof Error) reject(result);
+        else resolve(result);
+      };
+      live.add(terminate);
+      const timeout = o?.timeoutMs ?? deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      if (timeout > 0) {
+        cancels.push(
+          schedule(() => {
+            if (settled) return;
+            timedOut = true;
+            deps.log?.(`capybara-device ${args.join(" ")} timed out after ${timeout} ms`);
+            terminate();
+          }, timeout),
+        );
+      }
       const emit = (line: string) => {
         const obj = asJsonObject(line);
-        if (obj !== undefined) o?.onLine?.(obj);
+        if (obj === undefined) return;
+        try {
+          o?.onLine?.(obj);
+        } catch (err) {
+          deps.log?.(`a capybara-device ${args[0] ?? ""} line listener failed`, err);
+        }
       };
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
@@ -125,18 +197,20 @@ export function createDeviceCli(deps: DeviceCliDeps): DeviceCli {
       child.stderr?.on("data", (chunk: string) => {
         stderr = (stderr + chunk).slice(-STDERR_KEEP);
       });
-      child.on("error", (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      });
+      child.on("error", (error) => settle(error));
       child.on("close", (code, signal) => {
         if (settled) return;
-        settled = true;
         // A last line without a newline still counts.
         if (!dropping && buf !== "") emit(buf);
+        if (timedOut) return settle({ code: TIMEOUT_CODE, stderr, timedOut: true });
         const exit = code ?? (signal !== null ? 128 + (SIGNALS[signal] ?? 0) : 1);
-        resolve({ code: exit === 128 ? 1 : exit, stderr });
+        settle({ code: exit === 128 ? 1 : exit, stderr });
       });
     });
+
+  return Object.assign(cli, {
+    dispose() {
+      for (const terminate of [...live]) terminate();
+    },
+  });
 }

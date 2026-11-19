@@ -14,7 +14,12 @@ interface Spawned {
   cmd: string;
   args: readonly string[];
   env: Record<string, string>;
-  child: ChildLike & { stdout: PassThrough; stderr: PassThrough; emit: EventEmitter["emit"] };
+  child: ChildLike & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    emit: EventEmitter["emit"];
+    kills: string[];
+  };
 }
 
 function fakeSpawn() {
@@ -23,6 +28,10 @@ function fakeSpawn() {
     const child = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
+      kills: [] as string[],
+      kill(signal?: NodeJS.Signals) {
+        child.kills.push(signal ?? "SIGTERM");
+      },
     });
     calls.push({ cmd, args, env: options.env, child });
     return child;
@@ -144,4 +153,101 @@ test("a missing bundled node rejects", async () => {
   const done = cli(["status"]);
   f.calls[0]?.child.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
   await expect(done).rejects.toThrow(/ENOENT/);
+});
+
+/** Timers driven by hand: `fire(i)` runs the i-th scheduled callback. */
+function manualTimers() {
+  const timers: Array<{ ms: number; fn: () => void; cancelled: boolean }> = [];
+  return {
+    timers,
+    schedule: (fn: () => void, ms: number) => {
+      const t = { ms, fn, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
+    },
+    fire: (i: number) => {
+      const t = timers[i];
+      if (!t || t.cancelled) throw new Error(`timer ${i} is not pending`);
+      t.fn();
+    },
+  };
+}
+
+test("a command past its timeout gets SIGTERM, then SIGKILL, and reports code 124", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const done = cli(["service", "install"]);
+  expect(t.timers.map((x) => x.ms)).toEqual([60_000]);
+  t.fire(0);
+  expect(f.calls[0]?.child.kills).toEqual(["SIGTERM"]);
+  expect(t.timers[1]?.ms).toBe(5000);
+  t.fire(1);
+  expect(f.calls[0]?.child.kills).toEqual(["SIGTERM", "SIGKILL"]);
+  await expect(done).resolves.toEqual({ code: 124, stderr: "", timedOut: true });
+});
+
+test("a command that exits after SIGTERM still reports the timeout", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const done = cli(["status"]);
+  t.fire(0);
+  await finish(f.calls[0], null, "SIGTERM");
+  await expect(done).resolves.toMatchObject({ code: 124, timedOut: true });
+  // The SIGKILL timer was cancelled.
+  expect(t.timers[1]?.cancelled).toBe(true);
+});
+
+test("a call may set its own timeout; 0 means none", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const a = cli(["login", "--json"], { timeoutMs: 900_000 });
+  const b = cli(["login", "--json"], { timeoutMs: 0 });
+  expect(t.timers.map((x) => x.ms)).toEqual([900_000]);
+  await finish(f.calls[0], 0);
+  await finish(f.calls[1], 0);
+  await Promise.all([a, b]);
+  expect(t.timers[0]?.cancelled).toBe(true);
+});
+
+test("dispose ends every running command", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const a = cli(["status"]);
+  const finished1 = cli(["status"]);
+  await finish(f.calls[1], 0);
+  await finished1;
+  cli.dispose();
+  expect(f.calls[0]?.child.kills).toEqual(["SIGTERM"]);
+  expect(f.calls[1]?.child.kills).toEqual([]);
+  await finish(f.calls[0], null, "SIGTERM");
+  expect((await a).code).toBe(143);
+});
+
+test("a throwing line listener is logged and does not fail the command", async () => {
+  const f = fakeSpawn();
+  const logged: string[] = [];
+  const cli = createDeviceCli({
+    resourcesPath: RESOURCES,
+    spawn: f.spawn,
+    env: {},
+    log: (message) => logged.push(message),
+  });
+  const seen: unknown[] = [];
+  const done = cli(["login", "--json"], {
+    onLine: (obj) => {
+      seen.push(obj);
+      throw new Error("listener bug");
+    },
+  });
+  f.calls[0]?.child.stdout.write('{"a":1}\n{"b":2}\n');
+  await finish(f.calls[0], 0);
+  await expect(done).resolves.toMatchObject({ code: 0 });
+  expect(seen).toEqual([{ a: 1 }, { b: 2 }]);
+  expect(logged).toHaveLength(2);
 });
