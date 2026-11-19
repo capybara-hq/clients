@@ -10,8 +10,8 @@ export default defineConfig({
   fullyParallel: false,
   timeout: 0,
   globalTimeout: 10 * 60 * 1000,
-  // Failure artifacts (traces, error context) land here; CI uploads the directory.
+  // Failure artifacts land here; CI uploads the directory. `use.trace` does not apply to an app
+  // launched with `_electron.launch`, so the spec records its own trace into this directory.
   outputDir: "./test-results",
-  use: { trace: "retain-on-failure" },
   reporter: [["list"]],
 });

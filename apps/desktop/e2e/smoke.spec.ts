@@ -45,6 +45,9 @@ test.beforeAll(async () => {
     ),
   );
   app = await electron.launch({ args: [appDir], cwd: appDir, env });
+  // `use.trace` records nothing for `_electron.launch`: trace the app's context here and keep the
+  // trace only when a test failed (afterAll).
+  await app.context().tracing.start({ screenshots: true, snapshots: true });
   // The system browser must not open: capture what the app would have opened.
   await app.evaluate(({ shell }) => {
     const opened: string[] = [];
@@ -55,7 +58,14 @@ test.beforeAll(async () => {
   });
 });
 
+let failed = false;
+test.afterEach(() => {
+  const info = test.info();
+  if (info.status !== info.expectedStatus) failed = true;
+});
+
 test.afterAll(async () => {
+  await app?.context().tracing.stop(failed ? { path: test.info().outputPath("trace.zip") } : {});
   await app?.close();
   await fake?.close();
   await peer?.close();
@@ -247,15 +257,17 @@ test("a replayed callback does nothing", async () => {
   await app.evaluate(({ app: electronApp }, url) => {
     electronApp.emit("open-url", { preventDefault() {} }, url);
   }, link);
-  // The router looks the state up synchronously and a miss sends nothing, so the reload round
-  // trip below orders after it. For a stronger signal, poll for a token hit that must stay absent.
+  // What this proves: after the replay, a sentinel request goes through the app's own session to
+  // the fake. The replay was emitted synchronously before it (the router looks the state up
+  // synchronously and a miss sends nothing), and the fake records requests in arrival order, so
+  // once the sentinel has been answered any token call the replay caused would already be in the
+  // log. The count must still be 1. It does not prove anything about a replay that is delayed.
+  await page.evaluate(() => fetch("/sentinel").then((r) => r.text()));
+  const seen = fake.requests.map((r) => r.path);
+  expect(seen.lastIndexOf("/sentinel")).toBeGreaterThan(-1);
+  expect(seen.filter((p) => p === "/api/v1/app-auth/token")).toHaveLength(1);
   await page.reload();
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
-  await expect
-    .poll(() => fake.requests.filter((r) => r.path === "/api/v1/app-auth/token").length, {
-      timeout: 2000,
-    })
-    .toBe(1);
   expect(fake.accepted).toBe(1);
 });
 

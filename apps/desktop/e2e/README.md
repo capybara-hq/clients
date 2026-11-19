@@ -15,7 +15,9 @@ It builds the app, runs Electron's install script (the binary download that the 
 script is idempotent), then runs the specs. CI runs it as the `e2e` job on `macos-latest`, which
 `ci-ok` requires. It runs in full on every PR and every push to main (no diff-based planning):
 the repository is small and this is its only runtime check of the app. A failure uploads the
-Playwright traces and error context as the `e2e-failure` artifact. Electron windows appear for a few seconds; the app is closed at the end.
+Playwright trace (`trace.zip`, recorded by the spec on the app's context) and error context as the
+`e2e-failure` artifact (kept 7 days). Electron windows appear for a few seconds; the app is closed
+at the end.
 
 The test seam: the app honours `CAPYBARA_E2E_USER_DATA` only when it is not packaged
 (`!app.isPackaged`). It gives the run its own userData directory and keeps the run from calling

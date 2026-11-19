@@ -87,9 +87,10 @@ jobs:
       # The app writes no logs of its own under the seam; the traces and error context are what a
       # macOS-only failure leaves.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: e2e-failure
+          retention-days: 7
           path: apps/desktop/e2e/test-results
           if-no-files-found: ignore
 
