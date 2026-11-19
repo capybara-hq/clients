@@ -1,0 +1,13 @@
+{
+  "platform.add": "Add a platform",
+  "address.title": "Add a platform",
+  "address.label": "Platform address",
+  "address.placeholder": "For example capybara.example.com",
+  "address.continue": "Continue",
+  "address.error.invalid": "This is not a valid address",
+  "address.error.insecure": "Only local addresses may use http; use https for any other address",
+  "address.error.unreachable": "Cannot reach this address",
+  "address.error.not_capybara": "This address is not a Capybara platform",
+  "address.error.too_old": "This platform is too old",
+  "greeting.test": "Hello, {name}"
+}

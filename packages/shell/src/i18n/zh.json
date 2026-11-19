@@ -1,0 +1,13 @@
+{
+  "platform.add": "添加平台",
+  "address.title": "添加平台",
+  "address.label": "平台地址",
+  "address.placeholder": "例如 capybara.example.com",
+  "address.continue": "继续",
+  "address.error.invalid": "这不是有效的地址",
+  "address.error.insecure": "只有本机地址可以使用 http，其他地址请使用 https",
+  "address.error.unreachable": "无法连接到这个地址",
+  "address.error.not_capybara": "这个地址不是 Capybara 平台",
+  "address.error.too_old": "该平台版本过旧",
+  "greeting.test": "你好，{name}"
+}
