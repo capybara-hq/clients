@@ -10,3 +10,13 @@ Only the official builds, with the Capybara name and icon, are published from th
 ship your own brand, fork it and publish your own build.
 
 Licensed under Apache-2.0.
+
+## Development
+
+Node 24 and pnpm 10 (`corepack enable`). Packages: `packages/shell` (pure logic) and `apps/desktop`
+(Electron). See [AGENTS.md](AGENTS.md) for the rules.
+
+```bash
+pnpm install
+pnpm lint && pnpm typecheck && pnpm test
+```

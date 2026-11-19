@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+  - apps/*
+allowBuilds:
+  # Electron's postinstall downloads the binary (~100 MB). Nothing runs Electron yet (the code
+  # under test takes Electron objects as parameters), so installs skip it. The packaging task
+  # turns this on where a build needs the binary.
+  electron: false
+  esbuild: true
