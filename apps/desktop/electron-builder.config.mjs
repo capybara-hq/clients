@@ -22,8 +22,8 @@ export function createConfig(env, exists) {
     directories: { buildResources: "build", output: "release" },
     files: ["dist/**/*", "package.json"],
     asar: true,
-    // The bundled device program and Node runtime stay outside ASAR (spec §5.2); Task 17 fills
-    // build/device and build/node. A missing directory is skipped.
+    // The bundled device program and Node runtime stay outside ASAR (spec §5.2);
+    // scripts/bundle-node.ts fills build/device and build/node. A missing directory is skipped.
     extraResources: [
       { from: "build/device", to: "device" },
       { from: "build/node", to: "node" },
@@ -42,10 +42,9 @@ export function createConfig(env, exists) {
       entitlements: "build/entitlements.mac.plist",
       // electron-builder applies one inherit plist to the helpers and to the binaries below.
       entitlementsInherit: "build/entitlements.node.plist",
-      // Only once Task 17 has filled build/node: signing a missing path would fail a signed run.
-      // TODO(Task 17): the universal .app merges an x64 and an arm64 slice; Resources/node/node
-      // must be one lipo'd universal binary (identical in both slices), or @electron/universal
-      // needs it listed in `x64ArchFiles` (mac.x64ArchFiles) to accept the differing files.
+      // Only once scripts/bundle-node.ts has filled build/node: signing a missing path would fail
+      // a signed run. That node is already one lipo'd universal binary, identical in the x64 and
+      // arm64 slices, which @electron/universal keeps as is (no x64ArchFiles entry needed).
       ...(exists("build/node/node") ? { binaries: ["Contents/Resources/node/node"] } : {}),
       ...(exists(icon) ? { icon } : {}),
       // null: no identity lookup, so an unsigned build never touches the Keychain.

@@ -45,6 +45,9 @@ importers:
         specifier: ^6.8.11
         version: 6.8.11
     devDependencies:
+      '@capybara-hq/device':
+        specifier: 0.1.0-rc.18
+        version: 0.1.0-rc.18
       '@electron/fuses':
         specifier: ^2.1.3
         version: 2.1.3
@@ -138,6 +141,11 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@capybara-hq/device@0.1.0-rc.18':
+    resolution: {integrity: sha512-fzOwwH4ozU09p92l9MKP1SIHXA05eIqOqZNOpSEGsWlKYUNW9SOoKJV/A/NxWCCgVMkZm4TL31yTFjcT+pKl2A==}
+    engines: {node: '>=22.12'}
+    hasBin: true
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.38':
     resolution: {integrity: sha512-x1GieDQqGC/Q7KJ60S6f2qytm16D28YVOJV9zPpn62ejz/ZUEW3Kw48RMLspITZw8v/C1I9KlUnrX8Z6miGxGA==}
@@ -2435,6 +2443,8 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
+
+  '@capybara-hq/device@0.1.0-rc.18': {}
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.38':
     dependencies:

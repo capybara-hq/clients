@@ -1,7 +1,7 @@
 // The main process entry: wiring only. Every module it calls takes its Electron objects as
 // parameters and is tested without Electron; the casts below adapt Electron's overloaded types to
 // those narrow interfaces.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -41,6 +41,8 @@ import {
   type DeepLinkApp,
   installDeepLinks,
 } from "./deep-links.ts";
+import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
+import { createDeviceService } from "./device/service.ts";
 import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
 import { createShellBridge, type IpcMainLike } from "./ipc.ts";
 import {
@@ -340,14 +342,34 @@ function start(): void {
       if (added > 0) ui.profilesChanged();
     });
 
-    // electron-updater works only in a packaged app. `afterUpdate` is Task 17's hook (device
-    // `service restart` when the bundled device changed).
+    // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
+    // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
+    // connecting (Task 18); at start a packaged app only repairs an installed service whose app
+    // moved, then restarts it if an update replaced the bundled device it runs.
+    const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
+    const deviceCli = createDeviceCli({
+      resourcesPath,
+      spawn: spawn as unknown as SpawnLike,
+      env: process.env,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
+    // running for the app is ended with it.
+    app.on("will-quit", () => deviceCli.dispose());
+    const deviceService = createDeviceService({ cli: deviceCli, resourcesPath });
+
+    // electron-updater works only in a packaged app. An update installs on quit, so the
+    // `afterUpdate` call at the next start is the one that finds the new device on disk.
     if (app.isPackaged) {
+      void deviceService
+        .repairService()
+        .then(() => deviceService.afterUpdate())
+        .catch((err: unknown) => console.error("device service check failed", err));
       const updates = setupUpdates({
         autoUpdater,
         managed,
         logger: { info: console.info, error: console.error },
-        afterUpdate: async () => {},
+        afterUpdate: () => deviceService.afterUpdate(),
       });
       void updates.check();
     }
