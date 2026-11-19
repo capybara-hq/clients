@@ -1,11 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "outDir": "out/tsc",
     "rootDir": ".",
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
-    "types": ["node"]
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"],
+    "resolveJsonModule": true
   },
-  "include": ["brand.ts"]
+  "include": ["brand.ts", "src/**/*.ts", "scripts/**/*.ts"],
+  "references": [
+    {
+      "path": "../../packages/shell"
+    }
+  ]
 }

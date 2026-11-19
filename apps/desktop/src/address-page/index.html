@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Capybara</title>
+    <link rel="stylesheet" href="address.css" />
+    <script src="address.js" defer></script>
+  </head>
+  <body>
+    <div class="titlebar" aria-hidden="true"></div>
+    <main>
+      <h1 data-i18n="address.title">Add a platform</h1>
+
+      <form id="address-form" novalidate>
+        <label for="address" data-i18n="address.label">Platform address</label>
+        <input
+          id="address"
+          name="address"
+          type="text"
+          inputmode="url"
+          autocomplete="url"
+          autocapitalize="off"
+          spellcheck="false"
+          required
+          aria-describedby="error"
+        />
+        <p id="error" class="error" role="alert" hidden></p>
+        <button id="continue" type="submit" data-i18n="address.continue">Continue</button>
+      </form>
+
+      <section id="found" class="found" hidden aria-live="polite">
+        <div class="identity">
+          <img id="icon" alt="" width="48" height="48" hidden />
+          <div>
+            <p id="name" class="name"></p>
+            <p id="host" class="host"></p>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="change" type="button" class="secondary" data-i18n="address.change">
+            Change address
+          </button>
+          <button id="open" type="button" data-i18n="address.open">Open</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

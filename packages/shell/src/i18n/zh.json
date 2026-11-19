@@ -8,5 +8,9 @@
   "address.error.insecure": "只有本机地址可以使用 http，其他地址请使用 https",
   "address.error.unreachable": "无法连接到这个地址",
   "address.error.not_capybara": "这个地址不是 Capybara 平台",
-  "address.error.too_old": "该平台版本过旧"
+  "address.error.too_old": "该平台版本过旧",
+  "address.checking": "正在连接…",
+  "address.open": "打开",
+  "address.change": "修改地址",
+  "address.error.failed": "出了点问题，请重试"
 }
