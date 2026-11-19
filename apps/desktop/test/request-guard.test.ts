@@ -100,3 +100,39 @@ describe("isInWindowSignIn", () => {
     expect(isInWindowSignIn("GET", `${root}/api/v1/auth/sso//start`, root)).toBe(false);
   });
 });
+
+describe("percent-encoded paths", () => {
+  test("encoded segments are decoded before matching", () => {
+    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/%6cogin`, BASE)).toBe(true);
+    expect(isInWindowSignIn("POST", `${BASE}/%61pi/v1/auth/login`, BASE)).toBe(true);
+    expect(isInWindowSignIn("GET", `${BASE}/api/v1/auth/sso/x/%73tart`, BASE)).toBe(true);
+    expect(isInWindowSignIn("GET", `${BASE}/api/v1/auth/sso/%4Cark/start`, BASE)).toBe(true);
+  });
+
+  test("an encoded slash or backslash cannot hide the route (block when in doubt)", () => {
+    for (const [method, path] of [
+      ["POST", "/api/v1/auth%2Flogin"],
+      ["POST", "/api%2fv1%2fauth%2flogin"],
+      ["GET", "/api/v1/auth/sso/x%2Fstart"],
+      ["GET", "/api/v1/auth/sso%2Fx/start"],
+      ["POST", "/api\\v1\\auth\\login"],
+      ["POST", "/api/v1/x/..%2Fauth/login"],
+      ["POST", "/api/v1/auth/%2e%2e%2fauth/login"],
+    ]) {
+      expect(isInWindowSignIn(method as string, `${BASE}${path}`, BASE), path).toBe(true);
+    }
+  });
+
+  test("a malformed escape does not throw and does not unblock the rest", () => {
+    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/login%zz`, BASE)).toBe(false);
+    expect(isInWindowSignIn("POST", `${BASE}/%zz/../api/v1/auth/login`, BASE)).toBe(true);
+  });
+
+  test("encoded look-alikes of other routes still pass", () => {
+    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/%6cogout`, BASE)).toBe(false);
+    expect(isInWindowSignIn("GET", `${BASE}/files/a%2Fb`, BASE)).toBe(false);
+    expect(isInWindowSignIn("POST", "https://capybara.example.com/api/v1/auth/%6cogin", BASE)).toBe(
+      false,
+    );
+  });
+});

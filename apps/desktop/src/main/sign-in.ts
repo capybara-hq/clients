@@ -43,8 +43,13 @@ export interface SignInDeps {
   newState?: () => string;
   /** One-shot timer; returns its cancel. A desktop app's main process may hold timers. */
   schedule?: (fn: () => void, ms: number) => () => void;
+  /** A signal that aborts after `ms`; defaults to `AbortSignal.timeout` (injected in tests). */
+  timeoutSignal?: (ms: number) => AbortSignal;
   log?: (message: string, err?: unknown) => void;
 }
+
+/** The token exchange may take this long; then the sign-in fails instead of hanging. */
+export const EXCHANGE_TIMEOUT_MS = 30_000;
 
 interface Pending {
   profile: Profile;
@@ -128,6 +133,7 @@ export function createSignIn(deps: SignInDeps) {
         credentials: "include",
         redirect: "error",
         cache: "no-store",
+        signal: (deps.timeoutSignal ?? AbortSignal.timeout)(EXCHANGE_TIMEOUT_MS),
       });
       if (!res.ok) {
         // The kernel's error JSON (e.g. app_auth.code_invalid) carries no secret, but only the

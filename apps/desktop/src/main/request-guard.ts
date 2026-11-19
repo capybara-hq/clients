@@ -25,6 +25,31 @@ const LOGIN = /^\/api\/v1\/auth\/login$/;
 // Any provider segment(s): blocking more than the kernel routes is harmless, missing one is not.
 const SSO_START = /^\/api\/v1\/auth\/sso\/.+\/start$/;
 
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    // A malformed escape stays as written; the rest of the path is still compared.
+    return segment;
+  }
+}
+
+/**
+ * The path as a server may end up routing it: percent-escapes decoded (an encoded slash or
+ * backslash becomes a separator, which blocks more than it must: block when in doubt), doubled
+ * slashes and dot segments resolved, no trailing slash, lower case.
+ */
+function canonicalPath(pathname: string): string {
+  const decoded = pathname.split("/").map(decodeSegment).join("/").replace(/\\/g, "/");
+  const out: string[] = [];
+  for (const part of decoded.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part.toLowerCase());
+  }
+  return out.length === 0 ? "" : `/${out.join("/")}`;
+}
+
 function parse(url: string): URL | null {
   try {
     return new URL(url);
@@ -44,13 +69,8 @@ export function isInWindowSignIn(method: string, url: string, base: string): boo
   const target = parse(url);
   const home = parse(base);
   if (!target || !home || target.origin !== home.origin) return false;
-  const clean = (p: string) =>
-    p
-      .replace(/\/{2,}/g, "/")
-      .replace(/\/+$/, "")
-      .toLowerCase();
-  const prefix = clean(home.pathname);
-  const path = clean(target.pathname);
+  const prefix = canonicalPath(home.pathname);
+  const path = canonicalPath(target.pathname);
   if (!path.startsWith(`${prefix}/`)) return false;
   const route = path.slice(prefix.length);
   if (SSO_START.test(route)) return true;

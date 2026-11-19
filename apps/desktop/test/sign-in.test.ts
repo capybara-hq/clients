@@ -297,6 +297,37 @@ describe("the callback", () => {
     }
   });
 
+  test("the token exchange has a 30 s timeout; hitting it fails the sign-in", async () => {
+    const timeout = new AbortController();
+    const asked: number[] = [];
+    const { signIn, deps, fetchImpl, onSignedIn } = setup({
+      timeoutSignal: (ms) => {
+        asked.push(ms);
+        return timeout.signal;
+      },
+    });
+    let signal: AbortSignal | null | undefined;
+    // A fetch that only ends when its signal aborts, as a stalled server would.
+    deps.fetchFor = () => (_url, init) => {
+      signal = init.signal;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    };
+    void fetchImpl;
+    const result = signIn.start(profile);
+    result.catch(() => undefined);
+    await flush();
+    const handled = signIn.handleCallback(callback({}));
+    await flush();
+    expect(asked).toEqual([30_000]);
+    expect(signal).toBe(timeout.signal);
+    timeout.abort();
+    await handled;
+    await expect(result).rejects.toEqual({ code: "failed" });
+    expect(onSignedIn).not.toHaveBeenCalled();
+  });
+
   test("a profile removed meanwhile gets no exchange", async () => {
     const { signIn, profiles, fetchCalls } = setup();
     const result = signIn.start(profile);
@@ -355,6 +386,7 @@ describe("no tokens are kept", () => {
     "openExternal",
     "pkce",
     "schedule",
+    "timeoutSignal",
   ];
 
   test("the exchange touches no store, and nothing token-bearing leaves it", async () => {
