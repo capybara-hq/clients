@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { brand } from "../brand.ts";
-import { createConfig } from "../electron-builder.config.mjs";
+import config, { createConfig } from "../electron-builder.config.mjs";
 
 const none = () => false;
 
@@ -35,4 +35,8 @@ test("with the bundled node present its binary is signed; notarize needs all API
     createConfig({ APPLE_API_KEY: "k", APPLE_API_KEY_ID: "i", APPLE_API_ISSUER: "u" }, none).mac
       ?.identity,
   ).toBeNull();
+});
+
+test("the committed icon.icns is the app icon", () => {
+  expect(config.mac?.icon).toBe("build/icons/icon.icns");
 });

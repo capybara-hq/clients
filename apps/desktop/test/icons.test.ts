@@ -27,3 +27,9 @@ describe("the generated icons", () => {
     });
   });
 });
+
+test("icon.icns is a macOS icon file", () => {
+  const b = readFileSync(new URL("icon.icns", dir));
+  expect(b.subarray(0, 4).toString("ascii")).toBe("icns");
+  expect(b.readUInt32BE(4)).toBe(b.length);
+});
