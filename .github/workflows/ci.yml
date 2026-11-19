@@ -68,6 +68,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  # The desktop app against a fake deployment (apps/desktop/e2e). Electron's postinstall stays off
+  # for the install above (the unit-test jobs stay fast); `pnpm e2e` fetches the binary itself.
+  e2e:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm e2e
+      # The app writes no logs of its own under the seam; the traces and error context are what a
+      # macOS-only failure leaves.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() || cancelled()
+        with:
+          name: e2e-failure
+          retention-days: 7
+          path: apps/desktop/e2e/test-results
+          if-no-files-found: ignore
+
   commitlint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -95,7 +121,7 @@ jobs:
   # cancelled instead of being skipped (skipped = passed).
   ci-ok:
     if: always()
-    needs: [lint, typecheck, test, commitlint]
+    needs: [lint, typecheck, test, e2e, commitlint]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -103,14 +129,16 @@ jobs:
           LINT: ${{ needs.lint.result }}
           TYPECHECK: ${{ needs.typecheck.result }}
           TEST: ${{ needs.test.result }}
+          E2E: ${{ needs.e2e.result }}
           COMMITLINT: ${{ needs.commitlint.result }}
           EVENT: ${{ github.event_name }}
         run: |
-          echo "lint=$LINT typecheck=$TYPECHECK test=$TEST commitlint=$COMMITLINT"
+          echo "lint=$LINT typecheck=$TYPECHECK test=$TEST e2e=$E2E commitlint=$COMMITLINT"
           fail=0
           [ "$LINT" = "success" ] || fail=1
           [ "$TYPECHECK" = "success" ] || fail=1
           [ "$TEST" = "success" ] || fail=1
+          [ "$E2E" = "success" ] || fail=1
           if [ "$EVENT" = "pull_request" ]; then
             [ "$COMMITLINT" = "success" ] || fail=1
           else

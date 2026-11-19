@@ -11,3 +11,5 @@ coverage
 apps/desktop/build/.cache/
 apps/desktop/build/node/
 apps/desktop/build/device/
+test-results
+playwright-report
