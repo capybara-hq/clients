@@ -77,6 +77,13 @@ protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true } },
 ]);
 
+// The end-to-end test seam (apps/desktop/e2e): honoured only by an unpackaged app and only with
+// this variable set. It gives the run its own userData directory (profiles, partitions, the
+// single-instance lock) and keeps the run from registering the OS protocol handler; nothing else
+// changes. Loopback http addresses need no seam: normalizeAddress already allows them.
+const e2eUserData = !app.isPackaged ? process.env.CAPYBARA_E2E_USER_DATA : undefined;
+if (e2eUserData) app.setPath("userData", e2eUserData);
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -91,13 +98,18 @@ function start(): void {
 
   // Before `ready`: a macOS `open-url` that launched the app must not be lost; links wait in a
   // queue until the router exists. A development run registers the interpreter and the app path.
-  const links = installDeepLinks(app as unknown as DeepLinkApp, {
-    scheme: brand.scheme,
-    argv: process.argv,
-    ...(process.defaultApp && process.argv[1]
-      ? { defaultApp: { execPath: process.execPath, args: [resolve(process.argv[1])] } }
-      : {}),
-  });
+  const links = installDeepLinks(
+    (e2eUserData
+      ? { on: app.on.bind(app), setAsDefaultProtocolClient: () => false }
+      : app) as unknown as DeepLinkApp,
+    {
+      scheme: brand.scheme,
+      argv: process.argv,
+      ...(process.defaultApp && process.argv[1]
+        ? { defaultApp: { execPath: process.execPath, args: [resolve(process.argv[1])] } }
+        : {}),
+    },
+  );
 
   // Baseline for every webContents (no <webview>, no window.open) before any window-specific rules.
   app.on("web-contents-created", (_event, contents) => {

@@ -1,0 +1,13 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "composite": false,
+    "incremental": false,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["*.ts", "../../../packages/shell/test/fixtures/*.ts"]
+}
