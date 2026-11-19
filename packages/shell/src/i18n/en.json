@@ -44,5 +44,17 @@
   "device.remove.no": "No",
   "device.ceiling.change.full_access": "Full access: allowed",
   "device.ceiling.change.project_reach": "Project reach: the whole OS user (os-user)",
-  "device.keep_awake.limits_linux": "Keep-awake cannot prevent sleep from the lid switch as the system handles it, when Sleep is chosen, at a critically low battery or in a thermal emergency. A sleeping computer is offline for the platform."
+  "device.keep_awake.limits_linux": "Keep-awake cannot prevent sleep from the lid switch as the system handles it, when Sleep is chosen, at a critically low battery or in a thermal emergency. A sleeping computer is offline for the platform.",
+  "tray.device.state.online": "This computer: online",
+  "tray.device.state.offline": "This computer: offline",
+  "tray.device.state.paused": "This computer: paused",
+  "tray.device.running": "Running: {count}",
+  "tray.device.pause": "Pause",
+  "tray.device.resume": "Resume",
+  "tray.device.disconnect": "Disconnect",
+  "tray.device.keep_awake": "Keep awake",
+  "tray.device.keep_awake.off": "Off",
+  "tray.device.keep_awake.while-busy": "While operations run",
+  "tray.device.keep_awake.connected": "While connected",
+  "tray.device.page": "This computer"
 }

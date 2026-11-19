@@ -48,10 +48,12 @@ import { createDeviceCapability, type DeviceCapability } from "./device/capabili
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
 import { controlClient, deviceStateDir } from "./device/control.ts";
 import { createDeviceDialogs, type MessageBoxOptions } from "./device/dialogs.ts";
+import { readKeepAwake, readMachine } from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
+import { createTrayDevice } from "./device/tray-device.ts";
 import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
-import { createShellBridge, type IpcMainLike } from "./ipc.ts";
+import { createConfirmGate, createShellBridge, type IpcMainLike } from "./ipc.ts";
 import {
   createPlistReader,
   ensureManagedProfiles,
@@ -150,7 +152,11 @@ function start(): void {
       log: (message, err) => console.error(message, err ?? ""),
     });
 
+    // One native dialog at a time per profile, for a page's call and the tray's click alike.
+    const confirmGate = createConfirmGate();
+    const control = controlClient(deviceStateDir(process.env, homedir()));
     const bridge = createShellBridge<ProfileTarget>({
+      gate: confirmGate,
       resolveSender: (sender) => windows.resolveSender(sender),
       stateFor: (target) => chromeState(platform, target.window.isFullScreen()),
       platform,
@@ -232,7 +238,7 @@ function start(): void {
     device = createDeviceCapability({
       cli: deviceCli,
       service: deviceService,
-      control: controlClient(deviceStateDir(process.env, homedir())),
+      control,
       dialogs: createDeviceDialogs({
         showMessageBox: (parent, options: MessageBoxOptions) =>
           parent instanceof BrowserWindow && !parent.isDestroyed()
@@ -266,6 +272,7 @@ function start(): void {
       addProfile: (candidate) => {
         const profile = profiles.add(candidate);
         ui.profilesChanged();
+        trayDevice.refresh();
         return profile;
       },
       openProfile: (profile) => {
@@ -291,6 +298,21 @@ function start(): void {
       else windows.openAddressWindow(managed.profiles?.[0]);
     };
 
+    // This machine's device in the tray (spec §9.6). Its actions are device@1's own functions.
+    const trayDevice = createTrayDevice({
+      control,
+      readMachine: () => readMachine(deviceCli),
+      readKeepAwake: () => readKeepAwake(deviceCli),
+      profiles: visibleProfiles,
+      impl: device.impl,
+      gate: confirmGate,
+      openDevicePage: (profile, path) => windows.showProfile(profile, profile.base + path),
+      onChange: () => ui.stateChanged(),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    // Quitting ends the UI only: the tray's subscription ends, the service keeps running.
+    app.on("will-quit", () => trayDevice.dispose());
+
     // Tray, app menu and Dock icon: one refresh after anything that changes the profiles.
     const startAtLogin = createStartAtLogin(app);
     const locale = localeFrom(app.getLocale());
@@ -308,7 +330,9 @@ function start(): void {
       openWindow: () => {
         if (!windows.focusLast(isVisible)) openDefault();
       },
+      // Never asks and never stops the service (spec §9.4).
       quit: () => app.quit(),
+      device: trayDevice.actions,
       setStartAtLogin: (on: boolean) => {
         startAtLogin.set(on);
         ui.stateChanged();
@@ -352,6 +376,7 @@ function start(): void {
         profiles: visible.map((p) => ({ id: p.id, name: p.name })),
         activeId: profiles.lastUsed()?.id,
         lockDeployments: managed.lockDeployments === true,
+        device: trayDevice.current(),
       };
       tray.update(state);
       Menu.setApplicationMenu(
@@ -409,6 +434,7 @@ function start(): void {
     });
 
     ui.profilesChanged();
+    trayDevice.start();
     openDefault();
 
     // Managed profiles (spec §6.4) are ensured lazily and never block the start: each one that is
@@ -419,7 +445,10 @@ function start(): void {
       discover: (base) => discoverDeployment(base, { fetch: net.fetch as typeof fetch }),
       add: (candidate) => profiles.add(candidate),
     }).then((added) => {
-      if (added > 0) ui.profilesChanged();
+      if (added > 0) {
+        ui.profilesChanged();
+        trayDevice.refresh();
+      }
     });
 
     // electron-updater works only in a packaged app. An update installs on quit, so the
