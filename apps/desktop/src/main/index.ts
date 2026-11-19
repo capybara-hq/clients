@@ -44,7 +44,7 @@ import {
   installDeepLinks,
 } from "./deep-links.ts";
 import { createDeviceAvailability } from "./device/availability.ts";
-import { createDeviceCapability, type DeviceCapability } from "./device/capability.ts";
+import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
 import { controlClient, deviceStateDir } from "./device/control.ts";
 import { createDeviceDialogs, type MessageBoxOptions } from "./device/dialogs.ts";
@@ -61,11 +61,12 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
+import { createProfileRemoval } from "./remove-profile.ts";
 import { ADDRESS_PARTITION, hardenAnyContents } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
-import { setupUpdates } from "./updates.ts";
+import { setupUpdates, updateNotice } from "./updates.ts";
 import { desktopUserAgent } from "./user-agent.ts";
 import {
   createWindowManager,
@@ -149,19 +150,11 @@ function start(): void {
     app.on("will-quit", () => deviceCli.dispose());
     // `env`: `service install` records a PATH that also finds docker (launchd's is short).
     const deviceService = createDeviceService({ cli: deviceCli, resourcesPath, env: process.env });
-    // Set once device@1 exists; a profile removed before that has nothing to ask.
-    let device: DeviceCapability | undefined;
-
     const profiles = createProfileStore({
       file: join(app.getPath("userData"), "profiles.json"),
       fs,
       sessionFor: (partition) => session.fromPartition(partition),
       newId: () => randomUUID(),
-      // Spec §6.3: connected to that deployment → ask whether to disconnect and log out too.
-      beforeRemove: async (profile) => {
-        await device?.beforeRemoveProfile(profile, null);
-      },
-      log: (message, err) => console.error(message, err ?? ""),
     });
 
     // One native dialog at a time per profile, for a page's call and the tray's click alike.
@@ -246,16 +239,18 @@ function start(): void {
     bridge.registerCapability(SHELL_CAPABILITY_KEYS.signIn, signIn.capability, {
       activation: ["start"],
     });
+    // Electron's message box, attached to `parent` while that window lives (else app-modal).
+    const showMessageBox = (parent: unknown, options: MessageBoxOptions) =>
+      parent instanceof BrowserWindow && !parent.isDestroyed()
+        ? dialog.showMessageBox(parent, options)
+        : dialog.showMessageBox(options);
     // device@1 (spec §8, §9): native confirmations attached to the calling window.
-    device = createDeviceCapability({
+    const device = createDeviceCapability({
       cli: deviceCli,
       service: deviceService,
       control,
       dialogs: createDeviceDialogs({
-        showMessageBox: (parent, options: MessageBoxOptions) =>
-          parent instanceof BrowserWindow && !parent.isDestroyed()
-            ? dialog.showMessageBox(parent, options)
-            : dialog.showMessageBox(options),
+        showMessageBox,
         locale: localeFrom(app.getLocale()),
         platform: process.platform,
       }),
@@ -312,6 +307,8 @@ function start(): void {
 
     // This machine's device in the tray (spec §9.6). Its actions are device@1's own functions.
     const trayDevice = createTrayDevice({
+      // Managed 「连接本机」 off: no device in the tray, like device@1 is not offered.
+      enabled: managed.connectThisMachine !== false,
       control,
       readMachine: () => readMachine(deviceCli),
       readKeepAwake: () => readKeepAwake(deviceCli),
@@ -328,6 +325,25 @@ function start(): void {
     // Tray, app menu and Dock icon: one refresh after anything that changes the profiles.
     const startAtLogin = createStartAtLogin(app);
     const locale = localeFrom(app.getLocale());
+    // Spec §6.3: from the app menu or the tray; never under `lockDeployments` (the offered
+    // profiles are then the managed ones).
+    const removal = createProfileRemoval({
+      getProfile: (id) => visibleProfiles().find((p) => p.id === id),
+      isRemovable: () => managed.lockDeployments !== true,
+      gate: confirmGate,
+      dialogParent: (id) => windows.dialogParent(id),
+      showMessageBox,
+      locale,
+      beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
+      closeProfileWindows: (id) => windows.closeProfileWindows(id),
+      removeProfile: (id) => profiles.remove(id),
+      forgetAvailability: (id) => deviceAvailability.forget(id),
+      onRemoved: () => {
+        ui.profilesChanged();
+        trayDevice.refresh();
+      },
+      log: (message, err) => console.error(message, err ?? ""),
+    });
     const uiActions = {
       showProfile: (id: string) => {
         const profile = visibleProfiles().find((p) => p.id === id);
@@ -339,6 +355,7 @@ function start(): void {
       addPlatform: () => {
         windows.openAddressWindow();
       },
+      removeProfile: (id: string) => void removal.remove(id),
       openWindow: () => {
         if (!windows.focusLast(isVisible)) openDefault();
       },
@@ -424,6 +441,7 @@ function start(): void {
     });
 
     const router = createDeepLinkRouter({
+      scheme: brand.scheme,
       onAuth: (cb) => signIn.handleCallback(cb),
       ...deepLinkHandlers,
       log: (message, err) => console.error(message, err ?? ""),
@@ -464,7 +482,8 @@ function start(): void {
     });
 
     // electron-updater works only in a packaged app. An update installs on quit, so the
-    // `afterUpdate` call at the next start is the one that finds the new device on disk.
+    // `afterUpdate` call at the next start is the one that finds the new device on disk and
+    // restarts the service on it.
     if (app.isPackaged) {
       void deviceService
         .repairService()
@@ -474,8 +493,15 @@ function start(): void {
         autoUpdater,
         managed,
         logger: { info: console.info, error: console.error },
-        afterUpdate: () => deviceService.afterUpdate(),
+        // Once per version: a notification whose click restarts into the new version now.
+        onDownloaded: (info) => notice(info),
       });
+      const notice = updateNotice({
+        Notification: Notification as unknown as NotificationClass,
+        locale,
+        restart: () => updates.restart(),
+      });
+      app.on("will-quit", () => updates.dispose());
       void updates.check();
     }
   });

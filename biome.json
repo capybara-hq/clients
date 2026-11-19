@@ -13,7 +13,8 @@
       "!**/coverage",
       "!.superpowers",
       "!.worktrees",
-      "!pnpm-lock.yaml"
+      "!pnpm-lock.yaml",
+      "!.changeset/*.md"
     ]
   },
   "formatter": {

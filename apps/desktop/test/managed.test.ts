@@ -70,8 +70,10 @@ describe("an invalid updateFeed turns updates off (R9)", () => {
         autoInstallOnAppQuit: false,
         setFeedURL,
         checkForUpdates: vi.fn(async () => undefined),
+        quitAndInstall: vi.fn(),
         on: vi.fn(),
       },
+      schedule: () => () => {},
       managed: { ...parseManagedConfig(raw), ...over },
     });
     return { handle, setFeedURL };

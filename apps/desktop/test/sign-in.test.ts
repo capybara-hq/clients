@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
+import { brand } from "../brand.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import { createSignIn, REDIRECT_URI, type SignInDeps } from "../src/main/sign-in.ts";
 import { machineNameFrom } from "../src/main/user-agent.ts";
@@ -163,6 +164,8 @@ describe("the callback", () => {
       codeVerifier: "verifier-1",
       redirectUri: REDIRECT_URI,
     });
+    // Derived from the brand's scheme (the only brand file); `capybara` gives the kernel's value.
+    expect(REDIRECT_URI).toBe(`${brand.scheme}://auth/callback`);
     expect(REDIRECT_URI).toBe("capybara://auth/callback");
     // The window reloads (the wiring reloads every window of the profile on its origin).
     expect(onSignedIn).toHaveBeenCalledExactlyOnceWith(profile);
@@ -456,6 +459,7 @@ describe("no tokens are kept", () => {
     const source = readFileSync(new URL("../src/main/sign-in.ts", import.meta.url), "utf8");
     const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
     expect(imports.sort()).toEqual([
+      "../../brand.ts",
       "./ipc.ts",
       "./profiles.ts",
       "./user-agent.ts",

@@ -1,0 +1,151 @@
+import { describe, expect, test, vi } from "vitest";
+import type { MessageBoxOptions } from "../src/main/device/dialogs.ts";
+import { createConfirmGate } from "../src/main/ipc.ts";
+import type { Profile } from "../src/main/profiles.ts";
+import { createProfileRemoval, type ProfileRemovalDeps } from "../src/main/remove-profile.ts";
+
+const p1: Profile = {
+  id: "p1",
+  base: "https://a.example.com/team",
+  origin: "https://a.example.com",
+  name: "Example",
+};
+
+function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [0]) {
+  const order: string[] = [];
+  const boxes: { parent: unknown; options: MessageBoxOptions }[] = [];
+  const parent = { id: "window" };
+  const gate = createConfirmGate();
+  const deps: ProfileRemovalDeps = {
+    getProfile: (id) => (id === p1.id ? p1 : undefined),
+    isRemovable: () => true,
+    gate,
+    dialogParent: () => parent,
+    showMessageBox: async (box, options) => {
+      boxes.push({ parent: box, options });
+      order.push("confirm");
+      return { response: answers.shift() ?? 1 };
+    },
+    locale: "zh",
+    beforeRemoveDevice: vi.fn(async () => {
+      order.push("device");
+    }),
+    closeProfileWindows: vi.fn(() => {
+      order.push("close windows");
+    }),
+    removeProfile: vi.fn(async () => {
+      order.push("remove");
+    }),
+    forgetAvailability: vi.fn(() => {
+      order.push("forget");
+    }),
+    onRemoved: vi.fn(() => {
+      order.push("refresh");
+    }),
+    log: vi.fn(),
+    ...over,
+  };
+  return { removal: createProfileRemoval(deps), deps, order, boxes, parent, gate };
+}
+
+describe("removing a platform (spec 6.3)", () => {
+  test("asks, asks the device question, closes the windows before removing, then refreshes", async () => {
+    const { removal, deps, order, parent } = setup();
+    await removal.remove("p1");
+    expect(order).toEqual(["confirm", "device", "close windows", "remove", "forget", "refresh"]);
+    expect(deps.beforeRemoveDevice).toHaveBeenCalledWith(p1, parent);
+    expect(deps.closeProfileWindows).toHaveBeenCalledWith("p1");
+    expect(deps.removeProfile).toHaveBeenCalledWith("p1");
+    expect(deps.forgetAvailability).toHaveBeenCalledWith("p1");
+  });
+
+  test("the confirmation names the platform and its host, attached to a live window", async () => {
+    const { removal, boxes, parent } = setup();
+    await removal.remove("p1");
+    expect(boxes[0]?.parent).toBe(parent);
+    expect(boxes[0]?.options).toEqual({
+      type: "warning",
+      message: "要移除 Example（a.example.com）吗？",
+      detail: expect.stringContaining("本地数据"),
+      buttons: ["移除", "取消"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+  });
+
+  test("a platform without a name is named by its host; English from the catalog", async () => {
+    const unnamed = { ...p1, name: "a.example.com" };
+    const { removal, boxes } = setup({ getProfile: () => unnamed, locale: "en" });
+    await removal.remove("p1");
+    expect(boxes[0]?.options.message).toBe("Remove a.example.com?");
+    expect(boxes[0]?.options.buttons).toEqual(["Remove", "Cancel"]);
+  });
+
+  test("cancel (the default button) does nothing", async () => {
+    const { removal, deps, order } = setup({}, [1]);
+    await removal.remove("p1");
+    expect(order).toEqual(["confirm"]);
+    expect(deps.beforeRemoveDevice).not.toHaveBeenCalled();
+    expect(deps.closeProfileWindows).not.toHaveBeenCalled();
+    expect(deps.removeProfile).not.toHaveBeenCalled();
+    expect(deps.onRemoved).not.toHaveBeenCalled();
+  });
+
+  test("a managed profile under lockDeployments is never removed", async () => {
+    const { removal, order } = setup({ isRemovable: () => false });
+    await removal.remove("p1");
+    expect(order).toEqual([]);
+  });
+
+  test("an unknown profile does nothing", async () => {
+    const { removal, order } = setup();
+    await removal.remove("nope");
+    expect(order).toEqual([]);
+  });
+
+  test("a failing device step is logged and the removal goes on", async () => {
+    const { removal, order, deps } = setup({
+      beforeRemoveDevice: async () => {
+        throw new Error("cli gone");
+      },
+    });
+    await removal.remove("p1");
+    expect(order).toEqual(["confirm", "close windows", "remove", "forget", "refresh"]);
+    expect(deps.log).toHaveBeenCalledWith(
+      "the device step of a platform removal failed",
+      expect.any(Error),
+    );
+  });
+
+  test("one dialog at a time per platform: a second removal while one asks is dropped", async () => {
+    let answer: (r: { response: number }) => void = () => {};
+    const { removal, deps, gate } = setup({
+      showMessageBox: () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const first = removal.remove("p1");
+    await removal.remove("p1");
+    // A device dialog from the tray for the same platform is refused while this one is open.
+    expect(gate.isConfirmingCallAllowed("p1", true)).toBe("busy");
+    answer({ response: 0 });
+    await first;
+    expect(deps.removeProfile).toHaveBeenCalledTimes(1);
+    // The slot is released afterwards.
+    expect(gate.isConfirmingCallAllowed("p1", true)).toBe("ok");
+  });
+
+  test("a failed removal still releases the slot and refreshes", async () => {
+    const { removal, deps, gate } = setup({
+      removeProfile: async () => {
+        throw new Error("disk full");
+      },
+    });
+    await removal.remove("p1");
+    expect(deps.log).toHaveBeenCalledWith("the platform could not be removed", expect.any(Error));
+    expect(deps.onRemoved).toHaveBeenCalledTimes(1);
+    expect(gate.isConfirmingCallAllowed("p1", true)).toBe("ok");
+  });
+});

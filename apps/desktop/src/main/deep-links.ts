@@ -5,6 +5,8 @@ import { type AuthCallback, normalizeAddress, parseDeepLink } from "@capybara-hq
 import type { Profile } from "./profiles.ts";
 
 export interface DeepLinkHandlers {
+  /** The app's own scheme (`brand.scheme`): links of any other scheme are ignored. */
+  scheme: string;
   /** `capybara://auth/callback`: the sign-in module decides whether it matches an attempt. */
   onAuth(cb: AuthCallback): Promise<void>;
   /**
@@ -20,7 +22,7 @@ export interface DeepLinkHandlers {
 export function createDeepLinkRouter(handlers: DeepLinkHandlers) {
   return {
     routeDeepLink(url: string): void {
-      const link = parseDeepLink(url);
+      const link = parseDeepLink(url, handlers.scheme);
       if (!link) return;
       switch (link.kind) {
         case "auth":

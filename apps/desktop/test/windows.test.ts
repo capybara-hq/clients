@@ -235,6 +235,66 @@ describe("profile windows", () => {
     expect(created[1]?.close).toHaveBeenCalled();
     expect(created[2]?.close).not.toHaveBeenCalled();
   });
+
+  test("closeProfileWindows forgets the windows at once, before `closed` arrives", () => {
+    const onProfileClosed = vi.fn();
+    const { windows, created } = setup({ onProfileClosed });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    // A real close is asynchronous (beforeunload, then `closed`): nothing is emitted here.
+    created[0]?.close.mockImplementation(() => {});
+    const sender = created[0]?.webContents;
+    expect(windows.resolveSender(sender)?.profile.id).toBe("p1");
+    windows.closeProfileWindows("p1");
+    expect(created[0]?.close).toHaveBeenCalledTimes(1);
+    // No IPC resolves to the closing window while the removal clears its partition.
+    expect(windows.resolveSender(sender)).toBeUndefined();
+    expect(onProfileClosed).toHaveBeenCalledExactlyOnceWith(sender?.id);
+    // The late `closed` changes nothing more.
+    created[0]?.emit("closed");
+    expect(onProfileClosed).toHaveBeenCalledTimes(1);
+    expect(windows.resolveSender(created[1]?.webContents)?.profile.id).toBe("p2");
+  });
+
+  test("a closed window is forgotten without touching its destroyed webContents", () => {
+    const onProfileClosed = vi.fn();
+    const onAddressClosed = vi.fn();
+    const { windows, created } = setup({ onProfileClosed, onAddressClosed });
+    windows.openAddressWindow();
+    windows.openProfileWindow(p1);
+    const ids = created.map((w) => w.webContents.id);
+    // Electron: reading `webContents` of a window that emitted `closed` throws.
+    for (const w of created) {
+      Object.defineProperty(w, "webContents", {
+        get() {
+          throw new TypeError("Object has been destroyed");
+        },
+      });
+    }
+    expect(() => created[0]?.emit("closed")).not.toThrow();
+    expect(() => created[1]?.emit("closed")).not.toThrow();
+    expect(onAddressClosed).toHaveBeenCalledWith(ids[0]);
+    expect(onProfileClosed).toHaveBeenCalledWith(ids[1]);
+    expect(windows.hasWindows()).toBe(false);
+  });
+
+  test("dialogParent: the profile's window (the front one if it is), else the front one", () => {
+    const { windows, created } = setup();
+    expect(windows.dialogParent("p1")).toBeUndefined();
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    created[0]?.emit("focus");
+    expect(windows.dialogParent("p1")).toBe(created[0]);
+    created[2]?.emit("focus");
+    // p1 is not in front: its newest window.
+    expect(windows.dialogParent("p1")).toBe(created[1]);
+    expect(windows.dialogParent("p2")).toBe(created[2]);
+    // No window of that profile: the window in front.
+    expect(windows.dialogParent("p3")).toBe(created[2]);
+    windows.closeProfileWindows("p2");
+    expect(windows.dialogParent("p3")).toBe(created[1]);
+  });
 });
 
 describe("the address window", () => {

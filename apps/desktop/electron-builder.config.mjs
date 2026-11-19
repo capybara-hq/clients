@@ -28,6 +28,9 @@ export function createConfig(env, exists) {
       { from: "build/device", to: "device" },
       { from: "build/node", to: "node" },
     ],
+    // The app's UI languages (spec §12): Electron's other locales are dropped, and macOS learns
+    // them from CFBundleLocalizations below, so the items it injects into menus localize too.
+    electronLanguages: ["zh_CN", "en"],
     protocols: [{ name: brand.productName, schemes: [brand.scheme] }],
     afterPack,
     publish: { ...brand.updateFeed },
@@ -37,6 +40,7 @@ export function createConfig(env, exists) {
         { target: "zip", arch: ["universal"] },
       ],
       category: "public.app-category.productivity",
+      extendInfo: { CFBundleDevelopmentRegion: "en", CFBundleLocalizations: ["zh_CN", "en"] },
       hardenedRuntime: true,
       gatekeeperAssess: false,
       entitlements: "build/entitlements.mac.plist",

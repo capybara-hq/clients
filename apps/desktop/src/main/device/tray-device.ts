@@ -68,6 +68,11 @@ export interface TrayDeviceImpl {
 }
 
 export interface TrayDeviceDeps {
+  /**
+   * False under managed `connectThisMachine: false`: like device@1 not being offered, the tray
+   * shows no device and offers no device action. Default true.
+   */
+  enabled?: boolean;
   control: Pick<ControlClient, "subscribe" | "running" | "status">;
   readMachine(): Promise<Machine>;
   readKeepAwake(): Promise<KeepAwakeMode>;
@@ -87,6 +92,7 @@ const NONE: TrayDevice = { icon: "not_connected", running: 0, keepAwake: "off" }
 
 export function createTrayDevice(deps: TrayDeviceDeps) {
   const log = deps.log ?? (() => {});
+  const enabled = deps.enabled !== false;
   const schedule =
     deps.schedule ??
     ((fn: () => void, ms: number) => {
@@ -156,7 +162,7 @@ export function createTrayDevice(deps: TrayDeviceDeps) {
     run: (ctx: { profile: Profile; window: unknown } & ConfirmScope) => Promise<unknown>,
   ): Promise<void> {
     const profile = deps.profiles().find((p) => p.id === profileId);
-    if (!profile) return;
+    if (!profile || !enabled) return;
     // A tray click is a user action in the app's own UI: the activation is given.
     if (deps.gate.isConfirmingCallAllowed(profile.id, true) !== "ok") {
       log("a device dialog is already open for this platform");
@@ -176,7 +182,7 @@ export function createTrayDevice(deps: TrayDeviceDeps) {
 
   /** Reads the runner's status now (after an action, or when the saved profiles changed). */
   function refresh(): void {
-    if (disposed) return;
+    if (disposed || !enabled) return;
     deps.control.status().then(
       (live) => evaluate(live),
       (err) => log("the tray could not read the device", err),
@@ -190,7 +196,7 @@ export function createTrayDevice(deps: TrayDeviceDeps) {
     setKeepAwake: (id, mode) => act(id, (ctx) => deps.impl.setKeepAwake(ctx, mode)),
     openDevicePage(profileId, deviceId) {
       const profile = deps.profiles().find((p) => p.id === profileId);
-      if (!profile || !ID_PATTERN.test(deviceId)) return;
+      if (!profile || !enabled || !ID_PATTERN.test(deviceId)) return;
       deps.openDevicePage(profile, `/devices/${deviceId}`);
     },
   };
@@ -201,9 +207,9 @@ export function createTrayDevice(deps: TrayDeviceDeps) {
     /** Evaluations in flight (tests wait for zero). */
     pending: (): number => inFlight,
     refresh,
-    /** Subscribes once. */
+    /** Subscribes once (never while disabled). */
     start(): void {
-      if (stopControl || disposed) return;
+      if (stopControl || disposed || !enabled) return;
       stopControl = deps.control.subscribe((live) => void evaluate(live));
     },
     /** Quit: ends the subscription and the poll. Never touches the service. */

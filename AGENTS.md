@@ -36,7 +36,15 @@ pnpm install
 pnpm lint        # biome check
 pnpm typecheck   # tsc -b plus the test files
 pnpm test        # vitest run
+pnpm check:i18n  # the zh and en catalogs have the same keys and placeholders
+pnpm e2e         # builds the desktop app and runs the Playwright smoke (apps/desktop/e2e)
 pnpm changeset   # a version note for an app or package
+
+# The desktop app (from the root)
+node apps/desktop/node_modules/electron/install.js   # once: the Electron binary (installs skip it)
+pnpm --filter @capybara-hq/desktop dev           # build, then run Electron on the unpackaged app
+pnpm --filter @capybara-hq/desktop bundle-node   # fill build/node and build/device (the device)
+pnpm --filter @capybara-hq/desktop dist --mac --publish never   # an unsigned local package
 ```
 
 ## Work and commits

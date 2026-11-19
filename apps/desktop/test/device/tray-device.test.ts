@@ -53,7 +53,12 @@ describe("trayDeviceFrom (LiveStatus to the tray's state)", () => {
 });
 
 function harness(
-  o: { answer?: boolean; running?: number; machine?: Record<string, unknown> } = {},
+  o: {
+    answer?: boolean;
+    running?: number;
+    machine?: Record<string, unknown>;
+    enabled?: boolean;
+  } = {},
 ) {
   const f = fakeCli({ status: o.machine ?? loggedIn() });
   const d = fakeDialogs(o.answer ?? true);
@@ -92,6 +97,7 @@ function harness(
   const states: TrayDevice[] = [];
   const opened: [string, string][] = [];
   const tray = createTrayDevice({
+    ...(o.enabled === undefined ? {} : { enabled: o.enabled }),
     control,
     readMachine: () => readMachine(f.cli),
     readKeepAwake: () => readKeepAwake(f.cli),
@@ -126,6 +132,20 @@ function harness(
 }
 
 describe("the tray's device source", () => {
+  test("managed connectThisMachine: false shows no device and reads nothing", async () => {
+    const h = harness({ enabled: false });
+    h.tray.start();
+    h.tray.refresh();
+    expect(h.control.subscribe).not.toHaveBeenCalled();
+    expect(h.control.status).not.toHaveBeenCalled();
+    expect(h.tray.current().icon).toBe("not_connected");
+    await h.tray.actions.disconnect("pa");
+    await h.tray.actions.pause("pa");
+    // No device command ran and no state was reported.
+    expect(h.f.calls).toEqual([]);
+    expect(h.states).toEqual([]);
+  });
+
   test("subscribes once and reports each LiveStatus", async () => {
     const h = harness();
     h.tray.start();

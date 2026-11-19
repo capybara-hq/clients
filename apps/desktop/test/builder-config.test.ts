@@ -40,3 +40,14 @@ test("with the bundled node present its binary is signed; notarize needs all API
 test("the committed icon.icns is the app icon", () => {
   expect(config.mac?.icon).toBe("build/icons/icon.icns");
 });
+
+test("the app ships zh and en locales and declares them to macOS (spec §12)", () => {
+  const c = createConfig({}, none);
+  expect(c.electronLanguages).toEqual(["zh_CN", "en"]);
+  // macOS localizes the items it injects into the menus (and the standard dialogs) only for the
+  // languages the bundle declares.
+  expect(c.mac?.extendInfo).toEqual({
+    CFBundleDevelopmentRegion: "en",
+    CFBundleLocalizations: ["zh_CN", "en"],
+  });
+});
