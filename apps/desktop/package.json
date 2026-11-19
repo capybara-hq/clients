@@ -8,13 +8,17 @@
   "scripts": {
     "build": "node scripts/build.ts",
     "start": "electron .",
-    "dev": "node scripts/build.ts && electron ."
+    "dev": "node scripts/build.ts && electron .",
+    "dist": "node scripts/build.ts && electron-builder --config electron-builder.config.mjs"
   },
   "dependencies": {
-    "@capybara-hq/shell": "workspace:*"
+    "@capybara-hq/shell": "workspace:*",
+    "electron-updater": "^6.8.11"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.3",
     "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2"
   }
 }
