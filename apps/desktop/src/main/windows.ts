@@ -6,6 +6,7 @@ import {
   type CapabilityDescriptors,
   chromeState,
   SHELL_CHANNELS,
+  type ShellEventMessage,
   type ShellPlatform,
   type ShellState,
   TRAFFIC_LIGHT_POSITION,
@@ -16,6 +17,7 @@ import {
   ADDRESS_PARTITION,
   addressWebPreferences,
   type ContentsLike,
+  childWebPreferences,
   hardenAddressContents,
   hardenProfileContents,
   installDenyAllPermissions,
@@ -54,13 +56,16 @@ export interface WindowOptions {
   minHeight?: number;
   show: boolean;
   title: string;
-  titleBarStyle: "hiddenInset";
-  trafficLightPosition: { x: number; y: number };
+  titleBarStyle?: "hiddenInset";
+  trafficLightPosition?: { x: number; y: number };
   backgroundColor?: string;
   resizable?: boolean;
+  /** A child window (the device verification page) stays above its parent and closes with it. */
+  parent?: unknown;
   webPreferences:
     | ReturnType<typeof profileWebPreferences>
-    | ReturnType<typeof addressWebPreferences>;
+    | ReturnType<typeof addressWebPreferences>
+    | ReturnType<typeof childWebPreferences>;
 }
 
 /** A partition as the window manager configures it. */
@@ -78,6 +83,12 @@ export interface WindowManagerDeps {
   openExternal(url: string): unknown;
   /** The capability descriptors offered to a profile now. */
   describe(profile: Profile): CapabilityDescriptors;
+  /** The event names offered to a profile now (`device@1.onStatus`). */
+  describeEvents?: (profile: Profile) => CapabilityDescriptors;
+  /** A profile window committed a main-frame navigation: what is offered may be decided again. */
+  onProfileLoad?: (profile: Profile) => void;
+  /** A profile window closed: its event subscriptions can go. */
+  onProfileClosed?: (webContentsId: number) => void;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
   /** An address window closed: what was pending for its webContents id can go. */
@@ -137,6 +148,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     win.on("closed", () => {
       byContents.delete(id);
       if (entry.kind === "address") deps.onAddressClosed?.(id);
+      else deps.onProfileClosed?.(id);
       if (lastFocused === entry) lastFocused = undefined;
     });
     win.on("ready-to-show", () => win.show());
@@ -149,10 +161,22 @@ export function createWindowManager(deps: WindowManagerDeps) {
   }
 
   function stateOf(entry: Extract<Entry, { kind: "profile" }>, fullscreen: boolean): ShellState {
+    const events = deps.describeEvents?.(entry.profile) ?? {};
     return {
       ...chromeState(deps.platform, fullscreen),
       capabilities: deps.describe(entry.profile),
+      ...(Object.keys(events).length > 0 ? { events } : {}),
     };
+  }
+
+  /** True while the window's top frame is on the profile origin (and the contents live). */
+  function onProfileOrigin(win: WindowLike, profile: Profile): boolean {
+    try {
+      const wc = win.webContents;
+      return !wc.isDestroyed() && wc.mainFrame.origin === profile.origin;
+    } catch {
+      return false;
+    }
   }
 
   /** Sends `change` only while the window's main frame is on the profile origin. */
@@ -166,7 +190,8 @@ export function createWindowManager(deps: WindowManagerDeps) {
     }
   }
 
-  function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
+  /** Permissions, the sign-in guard and the user agent, once per profile partition. */
+  function preparePartition(profile: Profile): string {
     const partition = partitionFor(profile.id);
     if (!permissionsInstalled.has(partition)) {
       const ses = deps.sessionFor(partition);
@@ -175,6 +200,11 @@ export function createWindowManager(deps: WindowManagerDeps) {
       installDesktopUserAgent(ses, profile.origin, deps.userAgent);
       permissionsInstalled.add(partition);
     }
+    return partition;
+  }
+
+  function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
+    const partition = preparePartition(profile);
     const win = deps.createWindow({
       width: 1280,
       height: 820,
@@ -194,6 +224,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       openExternal: deps.openExternal,
       openProfileWindow: (target) => openProfileWindow(profile, target),
     });
+    win.webContents.on("did-navigate", () => deps.onProfileLoad?.(profile));
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
     load(win, url);
@@ -275,6 +306,61 @@ export function createWindowManager(deps: WindowManagerDeps) {
       hardenAddressContents(win.webContents);
       load(win, ADDRESS_URL);
       return win;
+    },
+
+    /** One event of a subscription, sent only while the window is on the profile origin. */
+    sendEvent(target: ProfileTarget, message: ShellEventMessage): boolean {
+      if (!onProfileOrigin(target.window, target.profile)) return false;
+      try {
+        target.window.webContents.send(SHELL_CHANNELS.event, message);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * A window of the profile's partition above `parent` for a page of the deployment (the device
+     * verification page): signed in, but untracked, so no IPC resolves to it, and no preload.
+     */
+    openChildWindow(
+      profile: Profile,
+      parent: unknown,
+      url: string,
+    ): { close(): void; onClosed(cb: () => void): void } {
+      const parentAlive =
+        typeof parent === "object" &&
+        parent !== null &&
+        !(parent as { isDestroyed?: () => boolean }).isDestroyed?.();
+      const win = deps.createWindow({
+        width: 560,
+        height: 720,
+        show: false,
+        // The default title bar: the page has no inset for traffic lights.
+        title: profile.name,
+        ...(parentAlive ? { parent } : {}),
+        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
+        webPreferences: childWebPreferences({ partition: preparePartition(profile) }),
+      });
+      hardenProfileContents(win.webContents, {
+        origin: profile.origin,
+        openExternal: deps.openExternal,
+        openProfileWindow: (target) => openProfileWindow(profile, target),
+      });
+      win.on("ready-to-show", () => win.show());
+      const closedListeners: (() => void)[] = [];
+      win.on("closed", () => {
+        for (const cb of closedListeners.splice(0)) cb();
+      });
+      load(win, url);
+      return {
+        close: () => {
+          if (!win.isDestroyed()) win.close();
+        },
+        onClosed: (cb) => {
+          closedListeners.push(cb);
+        },
+      };
     },
 
     resolveSender(sender: unknown): ProfileTarget | undefined {

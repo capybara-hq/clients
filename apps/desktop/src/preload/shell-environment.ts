@@ -3,6 +3,7 @@
 // the frame and the origin itself, and installs `window.capybaraShell` in the page's world.
 import {
   type CapabilityDescriptors,
+  DOC_ID_PATTERN,
   SHELL_CALL_ERRORS,
   SHELL_CHANNELS,
   type ShellCallResult,
@@ -10,10 +11,12 @@ import {
   type ShellState,
 } from "../shared/protocol.ts";
 
-/** What the page's world gets from the isolated world: two functions, nothing generic. */
+/** What the page's world gets from the isolated world: three functions, nothing generic. */
 export interface ShellBridge {
   call(key: string, fn: string, args: unknown[]): Promise<ShellCallResult>;
   onChange(listener: (state: ShellState) => void): void;
+  /** Subscribes to one event of a capability; answers how to unsubscribe. */
+  subscribe(key: string, event: string, listener: (payload: unknown) => void): () => void;
 }
 
 /**
@@ -36,10 +39,14 @@ export function installShellEnvironment(
     Object.freeze({ top: i.top, right: i.right, bottom: i.bottom, left: i.left });
   const freezeControls = (c: ShellInit["controls"]) =>
     c === null ? null : Object.freeze({ x: c.x, y: c.y, width: c.width, height: c.height });
-  const buildCapabilities = (descriptors: CapabilityDescriptors) => {
+  const buildCapabilities = (
+    descriptors: CapabilityDescriptors,
+    events: CapabilityDescriptors | undefined,
+  ) => {
     const out: Record<string, object> = {};
-    for (const key of Object.keys(descriptors)) {
-      const fns: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+    const keys = new Set([...Object.keys(descriptors), ...Object.keys(events ?? {})]);
+    for (const key of keys) {
+      const fns: Record<string, (...args: never[]) => unknown> = {};
       for (const name of descriptors[key] ?? []) {
         fns[name] = (...args: unknown[]) =>
           bridge.call(key, name, args).then((r) => {
@@ -51,6 +58,18 @@ export function installShellEnvironment(
             throw err;
           });
       }
+      for (const name of events?.[key] ?? []) {
+        fns[name] = (listener: (payload: unknown) => void) => {
+          if (typeof listener !== "function") return () => {};
+          return bridge.subscribe(key, name, (payload) => {
+            try {
+              listener(payload);
+            } catch (err) {
+              console.error(err);
+            }
+          });
+        };
+      }
       out[key] = Object.freeze(fns);
     }
     return Object.freeze(out);
@@ -58,7 +77,7 @@ export function installShellEnvironment(
 
   let insets = freezeInsets(init.insets);
   let controls = freezeControls(init.controls);
-  let capabilities = buildCapabilities(init.capabilities);
+  let capabilities = buildCapabilities(init.capabilities, init.events);
 
   const shell = Object.freeze({
     version: 1 as const,
@@ -88,7 +107,7 @@ export function installShellEnvironment(
   bridge.onChange((state) => {
     insets = freezeInsets(state.insets);
     controls = freezeControls(state.controls);
-    capabilities = buildCapabilities(state.capabilities);
+    capabilities = buildCapabilities(state.capabilities, state.events);
     for (const listener of [...listeners]) {
       try {
         listener();
@@ -117,10 +136,21 @@ function isShellInit(v: unknown): v is ShellInit {
     typeof r.insets === "object" &&
     r.insets !== null &&
     (r.controls === null || typeof r.controls === "object") &&
-    typeof caps === "object" &&
-    caps !== null &&
-    Object.values(caps).every((names) => Array.isArray(names))
+    isDescriptors(caps) &&
+    (r.events === undefined || isDescriptors(r.events))
   );
+}
+
+function isDescriptors(v: unknown): v is CapabilityDescriptors {
+  return (
+    typeof v === "object" && v !== null && Object.values(v).every((names) => Array.isArray(names))
+  );
+}
+
+function isEventMessage(v: unknown): v is { doc: string; id: number; payload: unknown } {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.doc === "string" && typeof r.id === "number";
 }
 
 function isCallResult(v: unknown): v is ShellCallResult {
@@ -134,8 +164,11 @@ export interface ShellPreloadDeps {
   ipcRenderer: {
     sendSync(channel: string): unknown;
     invoke(channel: string, payload: unknown): Promise<unknown>;
+    send(channel: string, payload: unknown): void;
     on(channel: string, listener: (event: unknown, payload: unknown) => void): unknown;
   };
+  /** A fresh random id for this document (`crypto.randomUUID()`). */
+  randomId(): string;
   contextBridge: {
     executeInMainWorld(script: { func: (...a: never[]) => unknown; args: unknown[] }): unknown;
   };
@@ -167,6 +200,16 @@ export function bootShellPreload(deps: ShellPreloadDeps): boolean {
   }
   if (!isShellInit(init) || init.origin !== deps.location.origin) return false;
 
+  // This document's subscriptions: main sends each event with the document id and the id.
+  const doc = deps.randomId();
+  if (!DOC_ID_PATTERN.test(doc)) return false;
+  const listeners = new Map<number, (payload: unknown) => void>();
+  let nextId = 1;
+  let listening = false;
+  // A new document of this window: main ends what an earlier document subscribed (IPC from one
+  // renderer stays in order, so this arrives before any subscription of this document).
+  deps.ipcRenderer.send(SHELL_CHANNELS.unsubscribe, { doc });
+
   const bridge: ShellBridge = {
     async call(key, fn, args) {
       const activation = deps.userActivation();
@@ -184,6 +227,30 @@ export function bootShellPreload(deps: ShellPreloadDeps): boolean {
     },
     onChange(listener) {
       deps.ipcRenderer.on(SHELL_CHANNELS.change, (_event, state) => listener(state as ShellState));
+    },
+    subscribe(key, event, listener) {
+      const id = nextId++;
+      listeners.set(id, listener);
+      if (!listening) {
+        listening = true;
+        deps.ipcRenderer.on(SHELL_CHANNELS.event, (_event, message) => {
+          if (!isEventMessage(message) || message.doc !== doc) return;
+          listeners.get(message.id)?.(message.payload);
+        });
+      }
+      const refused = () => {
+        listeners.delete(id);
+      };
+      deps.ipcRenderer.invoke(SHELL_CHANNELS.subscribe, { key, event, id, doc }).then((ok) => {
+        if (ok !== true) refused();
+      }, refused);
+      let ended = false;
+      return () => {
+        if (ended) return;
+        ended = true;
+        listeners.delete(id);
+        deps.ipcRenderer.send(SHELL_CHANNELS.unsubscribe, { id, doc });
+      };
     },
   };
   deps.contextBridge.executeInMainWorld({ func: installShellEnvironment, args: [init, bridge] });

@@ -22,6 +22,14 @@ export function profileWebPreferences(o: { partition: string; preload: string })
   return { ...BASE_PREFERENCES, partition: o.partition, preload: o.preload };
 }
 
+/**
+ * A window of the profile's partition that is not a deployment window (the device verification
+ * page, spec §9.2): the signed-in session, but no preload, so no Shell environment.
+ */
+export function childWebPreferences(o: { partition: string }) {
+  return { ...BASE_PREFERENCES, partition: o.partition };
+}
+
 /** The address page: an in-memory partition of its own, never a profile's. */
 export const ADDRESS_PARTITION = "address";
 

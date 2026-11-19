@@ -251,3 +251,43 @@ test("a throwing line listener is logged and does not fail the command", async (
   expect(seen).toEqual([{ a: 1 }, { b: 2 }]);
   expect(logged).toHaveLength(2);
 });
+
+test("an abort signal ends the command like a timeout's SIGTERM (closing the verification window)", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const ac = new AbortController();
+  const done = cli(["login", "--json"], { timeoutMs: 0, signal: ac.signal });
+  expect(f.calls[0]?.child.kills).toEqual([]);
+  ac.abort();
+  expect(f.calls[0]?.child.kills).toEqual(["SIGTERM"]);
+  await finish(f.calls[0], null, "SIGTERM");
+  expect((await done).code).toBe(143);
+});
+
+test("an already aborted signal never leaves the command running", async () => {
+  const f = fakeSpawn();
+  const t = manualTimers();
+  const cli = createDeviceCli({ resourcesPath: RESOURCES, spawn: f.spawn, env: {}, ...t });
+  const ac = new AbortController();
+  ac.abort();
+  const done = cli(["login", "--json"], { signal: ac.signal });
+  expect(f.calls[0]?.child.kills).toEqual(["SIGTERM"]);
+  await finish(f.calls[0], null, "SIGTERM");
+  await done;
+});
+
+test("a call may replace an inherited variable, and only an inherited one", async () => {
+  const f = fakeSpawn();
+  const cli = createDeviceCli({
+    resourcesPath: RESOURCES,
+    spawn: f.spawn,
+    env: { PATH: "/usr/bin:/bin", HOME: "/h" },
+  });
+  const done = cli(["service", "install"], {
+    env: { PATH: "/usr/bin:/bin:/opt/homebrew/bin", NODE_OPTIONS: "--inspect" } as never,
+  });
+  expect(f.calls[0]?.env).toEqual({ PATH: "/usr/bin:/bin:/opt/homebrew/bin", HOME: "/h" });
+  await finish(f.calls[0], 0);
+  await done;
+});

@@ -34,6 +34,7 @@ function fakeBridge() {
     onChange(listener) {
       changed = listener;
     },
+    subscribe: vi.fn((_key: string, _name: string, _listener: (p: unknown) => void) => vi.fn()),
     fire(s) {
       changed?.(s);
     },
@@ -131,6 +132,55 @@ describe("the Shell environment object", () => {
     );
   });
 
+  test("an event name becomes a subscribe function that returns an unsubscribe", () => {
+    const bridge = fakeBridge();
+    const target: { capybaraShell?: CapybaraShell } = {};
+    installShellEnvironment(
+      {
+        ...init,
+        capabilities: { ...init.capabilities, "device@1": ["status"] },
+        events: { "device@1": ["onStatus"] },
+      },
+      bridge,
+      target,
+    );
+    const device = target.capybaraShell?.capabilities["device@1"] as {
+      status: unknown;
+      onStatus(l: (s: unknown) => void): () => void;
+    };
+    expect(typeof device.status).toBe("function");
+    const listener = vi.fn();
+    const off = device.onStatus(listener);
+    expect(bridge.subscribe).toHaveBeenCalledWith("device@1", "onStatus", expect.any(Function));
+    // The page's listener is wrapped: a throw in it is logged, not raised into the shell.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const forward = vi.mocked(bridge.subscribe).mock.calls[0]?.[2] as (p: unknown) => void;
+    forward({ state: "not_connected" });
+    expect(listener).toHaveBeenCalledWith({ state: "not_connected" });
+    listener.mockImplementationOnce(() => {
+      throw new Error("page bug");
+    });
+    expect(() => forward({})).not.toThrow();
+    error.mockRestore();
+    off();
+    expect(vi.mocked(bridge.subscribe).mock.results[0]?.value).toHaveBeenCalled();
+    // Not a function: nothing is subscribed.
+    expect(typeof device.onStatus("x" as unknown as () => void)).toBe("function");
+    expect(bridge.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test("events appear with a change, like functions", () => {
+    const { shell, bridge } = install();
+    bridge.fire({
+      ...chromeState("macos", false),
+      capabilities: { "device@1": ["status"] },
+      events: { "device@1": ["onStatus"] },
+    });
+    expect(typeof (shell.capabilities["device@1"] as Record<string, unknown>).onStatus).toBe(
+      "function",
+    );
+  });
+
   test("a throwing listener does not stop the others", () => {
     const { shell, bridge } = install();
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -163,6 +213,7 @@ function fakePreloadDeps(
   over: { origin?: string; windowOrigin?: string; top?: boolean; init?: unknown } = {},
 ) {
   const changeListeners: ((e: unknown, s: unknown) => void)[] = [];
+  const eventListeners: ((e: unknown, m: unknown) => void)[] = [];
   let active = false;
   const deps = {
     ipcRenderer: {
@@ -170,10 +221,13 @@ function fakePreloadDeps(
       invoke: vi.fn(
         async (_channel: string, _req: unknown): Promise<unknown> => ({ ok: true, value: 1 }),
       ),
-      on: vi.fn((_channel: string, l: (e: unknown, s: unknown) => void) => {
-        changeListeners.push(l);
+      on: vi.fn((channel: string, l: (e: unknown, s: unknown) => void) => {
+        if (channel === SHELL_CHANNELS.event) eventListeners.push(l);
+        else changeListeners.push(l);
       }),
+      send: vi.fn((_channel: string, _payload: unknown) => undefined),
     },
+    randomId: () => "doc-11111111",
     contextBridge: {
       executeInMainWorld: vi.fn((_s: { func: unknown; args: unknown[] }) => undefined),
     },
@@ -185,6 +239,7 @@ function fakePreloadDeps(
       active = v;
     },
     changeListeners,
+    eventListeners,
   };
   return deps;
 }
@@ -263,6 +318,76 @@ describe("the preload", () => {
     const state = { ...chromeState("macos", true), capabilities: {} };
     for (const l of deps.changeListeners) l({}, state);
     expect(listener).toHaveBeenCalledWith(state);
+  });
+});
+
+describe("the preload's event subscriptions", () => {
+  function booted() {
+    const deps = fakePreloadDeps();
+    bootShellPreload(deps);
+    const bridge = deps.contextBridge.executeInMainWorld.mock.calls[0]?.[0].args[1] as ShellBridge;
+    return { deps, bridge };
+  }
+
+  test("subscribe asks main with a per-document id; events for it reach the listener", async () => {
+    const { deps, bridge } = booted();
+    deps.ipcRenderer.invoke.mockResolvedValueOnce(true);
+    const listener = vi.fn();
+    bridge.subscribe("device@1", "onStatus", listener);
+    expect(deps.ipcRenderer.invoke).toHaveBeenCalledWith(SHELL_CHANNELS.subscribe, {
+      key: "device@1",
+      event: "onStatus",
+      id: 1,
+      doc: "doc-11111111",
+    });
+    for (const l of deps.eventListeners) l({}, { doc: "doc-11111111", id: 1, payload: "p" });
+    expect(listener).toHaveBeenCalledWith("p");
+    // Another document's or another id's message is not this listener's.
+    for (const l of deps.eventListeners) l({}, { doc: "doc-22222222", id: 1, payload: "x" });
+    for (const l of deps.eventListeners) l({}, { doc: "doc-11111111", id: 2, payload: "y" });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  test("a new document announces itself before anything else, so main ends the old one's", () => {
+    const { deps } = booted();
+    expect(deps.ipcRenderer.send).toHaveBeenCalledWith(SHELL_CHANNELS.unsubscribe, {
+      doc: "doc-11111111",
+    });
+  });
+
+  test("one IPC listener for every subscription", () => {
+    const { deps, bridge } = booted();
+    bridge.subscribe("device@1", "onStatus", vi.fn());
+    bridge.subscribe("device@1", "onStatus", vi.fn());
+    expect(deps.eventListeners).toHaveLength(1);
+  });
+
+  test("unsubscribe tells main once and stops delivery", () => {
+    const { deps, bridge } = booted();
+    const listener = vi.fn();
+    const off = bridge.subscribe("device@1", "onStatus", listener);
+    deps.ipcRenderer.send.mockClear();
+    off();
+    off();
+    expect(deps.ipcRenderer.send).toHaveBeenCalledTimes(1);
+    expect(deps.ipcRenderer.send).toHaveBeenCalledWith(SHELL_CHANNELS.unsubscribe, {
+      id: 1,
+      doc: "doc-11111111",
+    });
+    for (const l of deps.eventListeners) l({}, { doc: "doc-11111111", id: 1, payload: "p" });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  test("a subscription main refuses delivers nothing", async () => {
+    const { deps, bridge } = booted();
+    deps.ipcRenderer.invoke.mockResolvedValueOnce(false);
+    const listener = vi.fn();
+    bridge.subscribe("device@1", "onStatus", listener);
+    await vi.waitFor(() => expect(deps.ipcRenderer.invoke).toHaveBeenCalled());
+    await Promise.resolve();
+    await Promise.resolve();
+    for (const l of deps.eventListeners) l({}, { doc: "doc-11111111", id: 1, payload: "p" });
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 

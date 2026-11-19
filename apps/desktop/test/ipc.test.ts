@@ -52,9 +52,13 @@ describe("the confirming-call gate", () => {
   });
 });
 
-function bridgeFor(target: { profile: Profile } | null = { profile }) {
+function bridgeFor(
+  target: { profile: Profile } | null = { profile },
+  sendEvent?: (t: { profile: Profile }, message: unknown) => void,
+) {
   return createShellBridge({
     resolveSender: () => target ?? undefined,
+    ...(sendEvent && { sendEvent }),
     stateFor: () => ({
       insets: { top: 28, right: 0, bottom: 0, left: 0 },
       controls: { x: 0, y: 0, width: 80, height: 28 },
@@ -81,7 +85,10 @@ describe("capability calls", () => {
       activation: false,
     });
     expect(r).toEqual({ ok: true, value: "opened https://x.example.com" });
-    expect(open).toHaveBeenCalledWith({ profile }, "https://x.example.com");
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({ profile }),
+      "https://x.example.com",
+    );
   });
 
   test("unknown keys, unknown functions and prototype names are failed", async () => {
@@ -296,5 +303,189 @@ describe("init", () => {
     ).toBeNull();
     expect(b.handleInit(topEvent("https://idp.example.com"))).toBeNull();
     expect(bridgeFor(null).handleInit(topEvent())).toBeNull();
+  });
+});
+
+describe("confirming only when it turns out to need it", () => {
+  test("ctx.confirm takes the slot: activation needed, busy while held, released after", async () => {
+    const b = bridgeFor();
+    let answer: (v: string) => void = () => {};
+    b.registerCapability("device@1", {
+      requestCeiling: (ctx: { confirm<T>(run: () => Promise<T>): Promise<T> }, widen: boolean) =>
+        widen
+          ? ctx.confirm(
+              () =>
+                new Promise<string>((resolve) => {
+                  answer = resolve;
+                }),
+            )
+          : Promise.resolve("applied"),
+    });
+    const req = (widen: boolean, activation: boolean) => ({
+      key: "device@1",
+      fn: "requestCeiling",
+      args: [widen],
+      activation,
+    });
+    // A narrowing needs neither an activation nor the slot.
+    expect(await b.handleCall(topEvent(), req(false, false))).toEqual({
+      ok: true,
+      value: "applied",
+    });
+    expect(await b.handleCall(topEvent(), req(true, false))).toEqual({
+      ok: false,
+      code: "no_activation",
+    });
+    const first = b.handleCall(topEvent(), req(true, true));
+    await Promise.resolve();
+    expect(await b.handleCall(topEvent(), req(true, true))).toEqual({ ok: false, code: "busy" });
+    answer("applied");
+    expect(await first).toEqual({ ok: true, value: "applied" });
+    const again = b.handleCall(topEvent(), req(true, true));
+    await Promise.resolve();
+    answer("cancelled");
+    expect(await again).toEqual({ ok: true, value: "cancelled" });
+  });
+
+  test("ctx.confirm inside a statically confirming call reuses its slot", async () => {
+    const b = bridgeFor();
+    b.registerCapability(
+      "device@1",
+      {
+        resume: (ctx: { confirm<T>(run: () => Promise<T>): Promise<T> }) =>
+          ctx.confirm(async () => "resumed"),
+      },
+      { confirming: ["resume"] },
+    );
+    const req = { key: "device@1", fn: "resume", args: [], activation: true };
+    expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "resumed" });
+    expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "resumed" });
+  });
+});
+
+describe("events (device@1.onStatus)", () => {
+  function eventBridge() {
+    const sent: { message: unknown }[] = [];
+    const offs: string[] = [];
+    let emitters: ((p: unknown) => void)[] = [];
+    let available = true;
+    const b = bridgeFor({ profile }, (_t, message) => sent.push({ message }));
+    b.registerCapability(
+      "device@1",
+      { status: async () => "s" },
+      {
+        available: () => available,
+        events: {
+          onStatus: (_ctx, emit) => {
+            emitters.push(emit);
+            const n = emitters.length;
+            return () => offs.push(`off${n}`);
+          },
+        },
+      },
+    );
+    return {
+      b,
+      sent,
+      offs,
+      emit: (i: number, p: unknown) => emitters[i]?.(p),
+      setAvailable: (v: boolean) => {
+        available = v;
+      },
+      reset: () => {
+        emitters = [];
+      },
+    };
+  }
+  const sub = (id: number, doc = "doc-aaaaaaaa", event = "onStatus") => ({
+    key: "device@1",
+    event,
+    id,
+    doc,
+  });
+
+  test("events are described apart from functions", () => {
+    const { b } = eventBridge();
+    expect(b.describe(profile)).toEqual({ "device@1": ["status"] });
+    expect(b.describeEvents(profile)).toEqual({ "device@1": ["onStatus"] });
+    expect(b.handleInit(topEvent())).toMatchObject({ events: { "device@1": ["onStatus"] } });
+  });
+
+  test("a subscription delivers to the calling document; unsubscribe ends it", () => {
+    const e = eventBridge();
+    expect(e.b.handleSubscribe(topEvent(), sub(1))).toBe(true);
+    e.emit(0, { state: "not_connected" });
+    expect(e.sent).toEqual([
+      { message: { doc: "doc-aaaaaaaa", id: 1, payload: { state: "not_connected" } } },
+    ]);
+    e.b.handleUnsubscribe(topEvent(), { id: 1, doc: "doc-aaaaaaaa" });
+    expect(e.offs).toEqual(["off1"]);
+    e.emit(0, { state: "x" });
+    expect(e.sent).toHaveLength(1);
+  });
+
+  test("a sub-frame, another origin, an unknown event or an unavailable capability is refused", () => {
+    const e = eventBridge();
+    expect(
+      e.b.handleSubscribe(
+        { sender: { id: 1 }, senderFrame: fakeFrame(profile.origin, {}) },
+        sub(1),
+      ),
+    ).toBe(false);
+    expect(e.b.handleSubscribe(topEvent("https://evil.example.com"), sub(2))).toBe(false);
+    expect(e.b.handleSubscribe(topEvent(), sub(3, "doc-aaaaaaaa", "status"))).toBe(false);
+    expect(e.b.handleSubscribe(topEvent(), sub(4, "doc-aaaaaaaa", "toString"))).toBe(false);
+    for (const raw of [
+      null,
+      { ...sub(5), id: -1 },
+      { ...sub(6), id: 1.5 },
+      { ...sub(7), doc: "x" },
+    ]) {
+      expect(e.b.handleSubscribe(topEvent(), raw)).toBe(false);
+    }
+    e.setAvailable(false);
+    expect(e.b.handleSubscribe(topEvent(), sub(8))).toBe(false);
+  });
+
+  test("a new document of the same window ends the old document's subscriptions", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1, "doc-aaaaaaaa"));
+    e.b.handleSubscribe(topEvent(), sub(2, "doc-aaaaaaaa"));
+    e.b.handleSubscribe(topEvent(), sub(1, "doc-bbbbbbbb"));
+    expect(e.offs).toEqual(["off1", "off2"]);
+  });
+
+  test("a closed window drops every subscription it had", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1));
+    e.b.handleSubscribe(topEvent(), sub(2));
+    e.b.dropSubscriptions(1);
+    expect(e.offs).toEqual(["off1", "off2"]);
+  });
+
+  test("a capability that becomes unavailable loses its subscriptions", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1));
+    e.b.pruneSubscriptions();
+    expect(e.offs).toEqual([]);
+    e.setAvailable(false);
+    e.b.pruneSubscriptions();
+    expect(e.offs).toEqual(["off1"]);
+  });
+
+  test("a new document announcing itself ends the old document's subscriptions", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1, "doc-aaaaaaaa"));
+    // The same document announcing again changes nothing.
+    e.b.handleUnsubscribe(topEvent(), { doc: "doc-aaaaaaaa" });
+    expect(e.offs).toEqual([]);
+    e.b.handleUnsubscribe(topEvent(), { doc: "doc-bbbbbbbb" });
+    expect(e.offs).toEqual(["off1"]);
+  });
+
+  test("an id already in use is refused", () => {
+    const e = eventBridge();
+    expect(e.b.handleSubscribe(topEvent(), sub(1))).toBe(true);
+    expect(e.b.handleSubscribe(topEvent(), sub(1))).toBe(false);
   });
 });

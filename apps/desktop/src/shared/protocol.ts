@@ -10,6 +10,12 @@ export const SHELL_CHANNELS = {
   call: "capybara-shell:call",
   /** Main → preload: `ShellState` after insets, controls or capabilities changed. */
   change: "capybara-shell:change",
+  /** Invoke: start one event subscription, `ShellSubscribeRequest` → boolean. */
+  subscribe: "capybara-shell:subscribe",
+  /** Send: end one subscription, `ShellUnsubscribeRequest`. */
+  unsubscribe: "capybara-shell:unsubscribe",
+  /** Main → preload: one event of a subscription, `ShellEventMessage`. */
+  event: "capybara-shell:event",
 } as const;
 
 /** Channels of the address page's preload. It never sees the Shell environment. */
@@ -39,6 +45,11 @@ export interface ShellState {
   insets: Insets;
   controls: Controls | null;
   capabilities: CapabilityDescriptors;
+  /**
+   * Key → event names (`device@1.onStatus`): each becomes a function that takes a listener and
+   * returns an unsubscribe. Absent when no capability offered has events.
+   */
+  events?: CapabilityDescriptors;
 }
 
 export interface ShellInit extends ShellState {
@@ -55,6 +66,31 @@ export interface ShellCallRequest {
   /** `navigator.userActivation.isActive`, read by the preload at call time. */
   activation: boolean;
 }
+
+/**
+ * One subscription of one document. `doc` is random per document (made by its preload), so main
+ * can tell a new document of the same window from the old one and end the old one's subscriptions.
+ */
+export interface ShellSubscribeRequest {
+  key: string;
+  event: string;
+  id: number;
+  doc: string;
+}
+
+export interface ShellUnsubscribeRequest {
+  id: number;
+  doc: string;
+}
+
+export interface ShellEventMessage {
+  doc: string;
+  id: number;
+  payload: unknown;
+}
+
+/** The shape of a document id: what the preload makes, and all main accepts. */
+export const DOC_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
 // A Record, so this fails to compile when the SDK adds a code it lacks.
 const CALL_ERRORS: Record<ShellCallError, true> = {
