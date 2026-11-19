@@ -1,7 +1,7 @@
 // End-to-end smoke of the desktop app against a fake deployment (no network, no real sign-in, no
 // OS protocol handler, no system browser). See e2e/README.md for what this covers and what stays
 // manual. Run: pnpm e2e
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,9 +37,18 @@ test.beforeAll(async () => {
   peer = await startFakeDeployment();
   fake = await startFakeDeployment({ peer: peer.base });
   userData = mkdtempSync(join(tmpdir(), "capybara-e2e-"));
+  // The app under test never sees the developer's real device: its state directory and control
+  // socket (`$XDG_CONFIG_HOME/capybara-device`, else `$HOME/.config/...`) live in the temp dir.
+  const home = join(userData, "home");
+  mkdirSync(join(home, ".config"), { recursive: true });
   // Electron started as Node would not open windows: ELECTRON_RUN_AS_NODE stays out.
   const env = Object.fromEntries(
-    Object.entries({ ...process.env, CAPYBARA_E2E_USER_DATA: userData }).filter(
+    Object.entries({
+      ...process.env,
+      CAPYBARA_E2E_USER_DATA: join(userData, "app"),
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+    }).filter(
       (entry): entry is [string, string] =>
         entry[1] !== undefined && entry[0] !== "ELECTRON_RUN_AS_NODE",
     ),
@@ -65,11 +74,14 @@ test.afterEach(() => {
 });
 
 test.afterAll(async () => {
-  await app?.context().tracing.stop(failed ? { path: test.info().outputPath("trace.zip") } : {});
-  await app?.close();
-  await fake?.close();
-  await peer?.close();
-  if (userData) rmSync(userData, { recursive: true, force: true });
+  try {
+    await app?.context().tracing.stop(failed ? { path: test.info().outputPath("trace.zip") } : {});
+  } finally {
+    await app?.close();
+    await fake?.close();
+    await peer?.close();
+    if (userData) rmSync(userData, { recursive: true, force: true });
+  }
 });
 
 const openedUrls = () => app.evaluate(() => (globalThis as { __opened?: string[] }).__opened ?? []);
@@ -229,7 +241,7 @@ test("the callback deep link exchanges the code; the cookie lands in the profile
   expect(fake.accepted).toBe(1);
   expect(fake.refused).toEqual([]);
 
-  const profiles = JSON.parse(readFileSync(join(userData, "profiles.json"), "utf8")) as {
+  const profiles = JSON.parse(readFileSync(join(userData, "app", "profiles.json"), "utf8")) as {
     profiles: { id: string; base: string }[];
   };
   const profile = profiles.profiles.find((p) => p.base === fake.base);
