@@ -38,22 +38,24 @@ test.beforeAll(async () => {
   fake = await startFakeDeployment({ peer: peer.base });
   userData = mkdtempSync(join(tmpdir(), "capybara-e2e-"));
   // The app under test never sees the developer's real device: its state directory and control
-  // socket (`$XDG_CONFIG_HOME/capybara-device`, else `$HOME/.config/...`) live in the temp dir.
-  const home = join(userData, "home");
-  mkdirSync(join(home, ".config"), { recursive: true });
+  // socket (`$XDG_CONFIG_HOME/capybara-device`) live in the temp dir.
+  const configHome = join(userData, "config");
+  mkdirSync(configHome, { recursive: true });
   // Electron started as Node would not open windows: ELECTRON_RUN_AS_NODE stays out.
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
       CAPYBARA_E2E_USER_DATA: join(userData, "app"),
-      HOME: home,
-      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_CONFIG_HOME: configHome,
     }).filter(
       (entry): entry is [string, string] =>
         entry[1] !== undefined && entry[0] !== "ELECTRON_RUN_AS_NODE",
     ),
   );
-  app = await electron.launch({ args: [appDir], cwd: appDir, env });
+  // `--use-mock-keychain`: Chromium keeps the cookie encryption key of a persistent partition in
+  // the login Keychain ("Electron Safe Storage"); the run never reads or writes the real one, and
+  // never waits on a Keychain prompt.
+  app = await electron.launch({ args: [appDir, "--use-mock-keychain"], cwd: appDir, env });
   // `use.trace` records nothing for `_electron.launch`: trace the app's context here and keep the
   // trace only when a test failed (afterAll).
   await app.context().tracing.start({ screenshots: true, snapshots: true });
