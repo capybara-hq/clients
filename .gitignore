@@ -7,3 +7,7 @@ coverage
 .worktrees/
 .superpowers/
 .DS_Store
+# Filled by apps/desktop/scripts/bundle-node.ts (downloads and the bundled runtime)
+apps/desktop/build/.cache/
+apps/desktop/build/node/
+apps/desktop/build/device/

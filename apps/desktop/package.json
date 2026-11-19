@@ -10,13 +10,15 @@
     "icons": "node scripts/icons.ts",
     "start": "electron .",
     "dev": "node scripts/build.ts && electron .",
-    "dist": "node scripts/build.ts && electron-builder --config electron-builder.config.mjs"
+    "dist": "node scripts/build.ts && electron-builder --config electron-builder.config.mjs",
+    "bundle-node": "node scripts/bundle-node.ts"
   },
   "dependencies": {
     "@capybara-hq/shell": "workspace:*",
     "electron-updater": "^6.8.11"
   },
   "devDependencies": {
+    "@capybara-hq/device": "0.1.0-rc.18",
     "@electron/fuses": "^2.1.3",
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
