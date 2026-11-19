@@ -11,6 +11,7 @@ import {
   TRAFFIC_LIGHT_POSITION,
 } from "../shared/protocol.ts";
 import { type Profile, partitionFor } from "./profiles.ts";
+import { blockInWindowSignIn, type WebRequestSession } from "./request-guard.ts";
 import {
   ADDRESS_PARTITION,
   addressWebPreferences,
@@ -27,6 +28,7 @@ export interface WebContentsLike extends ContentsLike {
   id: number;
   mainFrame: { origin: string };
   send(channel: string, payload: unknown): void;
+  reload(): void;
   isDestroyed(): boolean;
 }
 
@@ -62,7 +64,7 @@ export interface WindowOptions {
 
 export interface WindowManagerDeps {
   createWindow(options: WindowOptions): WindowLike;
-  sessionFor(partition: string): PermissionSession;
+  sessionFor(partition: string): PermissionSession & WebRequestSession;
   preloadPath: string;
   addressPreloadPath: string;
   platform: ShellPlatform;
@@ -158,7 +160,9 @@ export function createWindowManager(deps: WindowManagerDeps) {
   function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
     const partition = partitionFor(profile.id);
     if (!permissionsInstalled.has(partition)) {
-      installPermissionHandlers(deps.sessionFor(partition), profile.origin);
+      const ses = deps.sessionFor(partition);
+      installPermissionHandlers(ses, profile.origin);
+      blockInWindowSignIn(ses, profile.base);
       permissionsInstalled.add(partition);
     }
     const win = deps.createWindow({
@@ -202,6 +206,34 @@ export function createWindowManager(deps: WindowManagerDeps) {
       }
       bringToFront(entry.window);
       if (url !== undefined) load(entry.window, url);
+    },
+
+    /**
+     * After a sign-in: every window of the profile reloads (a window that left the origin goes back
+     * to the base), and one comes forward from behind the browser. Opens a window when none is.
+     */
+    reloadProfile(profile: Profile): void {
+      const open = profileEntries(profile.id);
+      if (open.length === 0) {
+        openProfileWindow(profile);
+        return;
+      }
+      for (const e of open) {
+        const wc = e.window.webContents;
+        let onOrigin = false;
+        try {
+          onOrigin = !wc.isDestroyed() && wc.mainFrame.origin === profile.origin;
+        } catch {
+          onOrigin = false;
+        }
+        if (onOrigin) wc.reload();
+        else load(e.window, profile.base);
+      }
+      const front =
+        lastFocused?.kind === "profile" && lastFocused.profile.id === profile.id
+          ? lastFocused
+          : open[open.length - 1];
+      if (front) bringToFront(front.window);
     },
 
     openAddressWindow(prefill?: string): WindowLike {

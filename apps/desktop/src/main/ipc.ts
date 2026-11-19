@@ -1,6 +1,7 @@
 // The page boundary on the main side (mobile spec §9.4): every Shell environment message is checked
 // against the calling frame, capabilities are a registry of named functions (nothing generic), and
-// confirming calls need a user activation and run one at a time per profile.
+// confirming calls need a user activation and run one at a time per profile; activation-only calls
+// need the activation alone.
 import {
   type CapabilityDescriptors,
   type Controls,
@@ -78,6 +79,11 @@ export type CapabilityFn<C> = (ctx: C, ...args: any[]) => unknown;
 export interface CapabilityOptions {
   /** Functions that raise a native confirmation: activation and one-at-a-time gate. */
   confirming?: string[];
+  /**
+   * Functions that need a user activation but confirm nothing natively, so they take no slot
+   * (`signIn@1.start`, spec §8: it grants the page nothing).
+   */
+  activation?: string[];
   /** Whether the profile is offered this capability now (`device@1` appears later). */
   available?: (profile: Profile) => boolean;
 }
@@ -85,6 +91,7 @@ export interface CapabilityOptions {
 interface Registered<C> {
   fns: Map<string, CapabilityFn<C>>;
   confirming: Set<string>;
+  activation: Set<string>;
   available: (profile: Profile) => boolean;
 }
 
@@ -152,10 +159,16 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
       if (registry.has(key)) throw new Error(`capability ${key} is already registered`);
       const fns = new Map(Object.entries(impl).filter(([, f]) => typeof f === "function"));
       const confirming = new Set(opts.confirming ?? []);
-      for (const name of confirming) {
+      const activation = new Set(opts.activation ?? []);
+      for (const name of [...confirming, ...activation]) {
         if (!fns.has(name)) throw new Error(`${key}.${name} is not a function of the capability`);
       }
-      registry.set(key, { fns, confirming, available: opts.available ?? (() => true) });
+      registry.set(key, {
+        fns,
+        confirming,
+        activation,
+        available: opts.available ?? (() => true),
+      });
     },
 
     describe,
@@ -180,6 +193,8 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
       if (!reg?.available(t.profile)) return FAILED;
       const fn = reg.fns.get(raw.fn);
       if (!fn) return FAILED;
+      if (reg.activation.has(raw.fn) && !raw.activation)
+        return { ok: false, code: "no_activation" };
       const confirming = reg.confirming.has(raw.fn);
       if (confirming) {
         const decision = gate.isConfirmingCallAllowed(t.profile.id, raw.activation);

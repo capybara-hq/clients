@@ -99,6 +99,43 @@ describe("profile windows", () => {
     expect(s?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
   });
 
+  test("the profile partition blocks in-window sign-in once; the address partition has no guard", () => {
+    const { windows, sessions } = setup();
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openAddressWindow();
+    const s = sessions.get("persist:profile-p1");
+    expect(s?.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
+    expect(s?.beforeRequest("POST", "https://a.example.com/team/api/v1/auth/login")).toBe(true);
+    expect(s?.beforeRequest("GET", "https://a.example.com/team/api/v1/auth/sso/x/start")).toBe(
+      true,
+    );
+    expect(s?.beforeRequest("GET", "https://a.example.com/team/chat/1")).toBe(false);
+    expect(sessions.get("address")?.webRequest.onBeforeRequest).not.toHaveBeenCalled();
+  });
+
+  test("reloadProfile reloads the profile's windows on its origin and brings one forward", () => {
+    const { windows, created } = setup();
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    // The second window wandered off the origin (an identity provider): it goes back to the base.
+    if (created[1]) created[1].webContents.mainFrame.origin = "https://idp.example.com";
+    windows.reloadProfile(p1);
+    expect(created[0]?.webContents.reload).toHaveBeenCalledTimes(1);
+    expect(created[1]?.webContents.reload).not.toHaveBeenCalled();
+    expect(created[1]?.loadURL).toHaveBeenLastCalledWith("https://a.example.com/team");
+    expect(created[2]?.webContents.reload).not.toHaveBeenCalled();
+    expect(created[1]?.focus).toHaveBeenCalled();
+  });
+
+  test("reloadProfile opens a window when the profile has none", () => {
+    const { windows, created } = setup();
+    windows.reloadProfile(p1);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.loadURL).toHaveBeenCalledWith("https://a.example.com/team");
+  });
+
   test("senders resolve to their profile; unknown senders do not", () => {
     const { windows, created } = setup();
     windows.openProfileWindow(p1);

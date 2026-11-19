@@ -84,6 +84,7 @@ export function fakeWebContents(origin = "https://capybara.example.com") {
     mainFrame: { origin, parent: null },
     send: vi.fn(),
     loadURL: vi.fn(async (_url: string) => undefined),
+    reload: vi.fn(),
     isDestroyed: () => false,
     setWindowOpenHandler(h: (d: { url: string }) => unknown) {
       openHandler = h;
@@ -114,7 +115,27 @@ export function fakeSession() {
       ) => boolean)
     | undefined;
   let device: ((d: unknown) => boolean) | undefined;
+  let beforeRequest:
+    | ((
+        details: { url: string; method: string },
+        cb: (response: { cancel?: boolean }) => void,
+      ) => void)
+    | undefined;
   return {
+    webRequest: {
+      onBeforeRequest: vi.fn((l: typeof beforeRequest) => {
+        beforeRequest = l;
+      }),
+    },
+    /** Runs a request through the webRequest listener: true when cancelled, false otherwise. */
+    beforeRequest(method: string, url: string): boolean {
+      if (!beforeRequest) return false;
+      let cancel = false;
+      beforeRequest({ method, url }, (r) => {
+        cancel = r.cancel === true;
+      });
+      return cancel;
+    },
     setPermissionRequestHandler(h: typeof request) {
       request = h;
     },

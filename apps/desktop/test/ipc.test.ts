@@ -188,6 +188,38 @@ describe("capability calls", () => {
     expect(await second).toEqual({ ok: true, value: "cancelled" });
   });
 
+  test("activation-only calls need an activation but are not one-at-a-time (signIn@1)", async () => {
+    const b = bridgeFor();
+    let finish: (v: string) => void = () => {};
+    const start = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    b.registerCapability("signIn@1", { start }, { activation: ["start"] });
+    const req = (activation: boolean) => ({ key: "signIn@1", fn: "start", args: [], activation });
+    expect(await b.handleCall(topEvent(), req(false))).toEqual({
+      ok: false,
+      code: "no_activation",
+    });
+    expect(start).not.toHaveBeenCalled();
+    const first = b.handleCall(topEvent(), req(true));
+    // No busy gate: a second start runs (and replaces the first attempt in the sign-in module).
+    const second = b.handleCall(topEvent(), req(true));
+    expect(start).toHaveBeenCalledTimes(2);
+    finish("signedIn");
+    expect(await second).toEqual({ ok: true, value: "signedIn" });
+    void first;
+  });
+
+  test("activation names must be functions of the capability", () => {
+    const b = bridgeFor();
+    expect(() =>
+      b.registerCapability("x@1", { a: async () => undefined }, { activation: ["b"] }),
+    ).toThrow();
+  });
+
   test("the busy flag is cleared when a confirming call rejects", async () => {
     const b = bridgeFor();
     b.registerCapability(
