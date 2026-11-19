@@ -24,10 +24,16 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Validates one preferences dictionary. Unknown keys and malformed values are dropped. */
-export function parseManagedConfig(raw: unknown): ManagedConfig {
-  if (!isRecord(raw)) return {};
+interface ParsedLevel {
+  config: ManagedConfig;
+  /** An `updateFeed` was present but unusable: updates must go off, never to the default feed. */
+  feedInvalid: boolean;
+}
+
+function parseLevel(raw: unknown): ParsedLevel {
+  if (!isRecord(raw)) return { config: {}, feedInvalid: false };
   const out: ManagedConfig = {};
+  let feedInvalid = false;
   if (Array.isArray(raw.profiles)) {
     const bases: string[] = [];
     for (const entry of raw.profiles) {
@@ -39,18 +45,30 @@ export function parseManagedConfig(raw: unknown): ManagedConfig {
   }
   if (typeof raw.lockDeployments === "boolean") out.lockDeployments = raw.lockDeployments;
   if (typeof raw.autoUpdate === "boolean") out.autoUpdate = raw.autoUpdate;
-  if (typeof raw.updateFeed === "string") {
+  if ("updateFeed" in raw && raw.updateFeed !== null && raw.updateFeed !== undefined) {
     try {
-      const url = new URL(raw.updateFeed);
+      const url = new URL(String(typeof raw.updateFeed === "string" ? raw.updateFeed : ""));
       if (url.protocol === "https:" && url.username === "" && url.password === "") {
         out.updateFeed = url.toString();
+      } else {
+        feedInvalid = true;
       }
     } catch {
-      // Not a URL: ignored.
+      feedInvalid = true;
     }
   }
   if (typeof raw.connectThisMachine === "boolean") out.connectThisMachine = raw.connectThisMachine;
-  return out;
+  // Ruling R9: a feed that was set but is unusable turns automatic updates off.
+  if (feedInvalid) out.autoUpdate = false;
+  return { config: out, feedInvalid };
+}
+
+/**
+ * Validates one preferences dictionary. Unknown keys and malformed values are dropped; an
+ * `updateFeed` that is present but not an https URL yields `autoUpdate: false` (never the default feed).
+ */
+export function parseManagedConfig(raw: unknown): ManagedConfig {
+  return parseLevel(raw).config;
 }
 
 export interface ManagedDeps {
@@ -72,14 +90,23 @@ const MANAGED_DIRECTORY = "/Library/Managed Preferences";
  */
 export function readManagedConfig(deps: ManagedDeps): ManagedConfig {
   const dir = deps.directory ?? MANAGED_DIRECTORY;
-  const system = parseManagedConfig(deps.readPlist(`${dir}/${deps.appId}.plist`));
-  const user = /^[A-Za-z0-9._-]{1,64}$/.test(deps.user)
-    ? parseManagedConfig(deps.readPlist(`${dir}/${deps.user}/${deps.appId}.plist`))
-    : {};
+  const sys = parseLevel(deps.readPlist(`${dir}/${deps.appId}.plist`));
+  const usr = /^[A-Za-z0-9._-]{1,64}$/.test(deps.user)
+    ? parseLevel(deps.readPlist(`${dir}/${deps.user}/${deps.appId}.plist`))
+    : { config: {} as ManagedConfig, feedInvalid: false };
+  const system = sys.config;
+  const user = usr.config;
   const merged: ManagedConfig = { ...system, ...user };
   if (system.lockDeployments === true || user.lockDeployments === true) {
     merged.lockDeployments = true;
   }
+  // The per-user file cannot replace the list a system-wide lock was set for.
+  if (system.lockDeployments === true) {
+    if (system.profiles) merged.profiles = system.profiles;
+    else delete merged.profiles;
+  }
+  // An unusable feed at either level keeps updates off, whatever the other level says.
+  if (sys.feedInvalid || usr.feedInvalid) merged.autoUpdate = false;
   return merged;
 }
 

@@ -294,10 +294,13 @@ export function createWindowManager(deps: WindowManagerDeps) {
       }
     },
 
-    /** Focuses the most recently focused window; false when none is open. */
-    focusLast(): boolean {
-      const all = entries();
-      const target = lastFocused ?? all[all.length - 1];
+    /**
+     * Focuses the most recently focused window; false when none is open. With `accept`, profile
+     * windows of a profile it refuses (a managed lock) are skipped; the address window is not.
+     */
+    focusLast(accept?: (profile: Profile) => boolean): boolean {
+      const all = entries().filter((e) => e.kind === "address" || !accept || accept(e.profile));
+      const target = lastFocused && all.includes(lastFocused) ? lastFocused : all[all.length - 1];
       if (!target) return false;
       bringToFront(target.window);
       return true;

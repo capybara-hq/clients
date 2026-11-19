@@ -53,6 +53,7 @@ import type { WebRequestSession } from "./request-guard.ts";
 import { ADDRESS_PARTITION, hardenAnyContents, type PermissionSession } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
+import { createUiRefresh } from "./ui-refresh.ts";
 import { setupUpdates } from "./updates.ts";
 import { createWindowManager, type ProfileTarget, type WindowLike } from "./windows.ts";
 
@@ -128,7 +129,7 @@ function start(): void {
       describe: (profile) => bridge.describe(profile),
       onFocusProfile: (profile) => {
         profiles.setLastUsed(profile.id);
-        refreshUi();
+        ui.stateChanged();
       },
       onAddressClosed: (id) => addressHost.forget(id),
       backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
@@ -175,7 +176,7 @@ function start(): void {
       isAllowed: (address) => isAddressAllowed(managed, address),
       addProfile: (candidate) => {
         const profile = profiles.add(candidate);
-        refreshUi();
+        ui.profilesChanged();
         return profile;
       },
       openProfile: (profile) => {
@@ -188,10 +189,9 @@ function start(): void {
 
     // Under `lockDeployments` the app offers only the managed profiles (an older saved one stays
     // on disk but is not offered).
-    const visibleProfiles = (): Profile[] =>
-      managed.lockDeployments === true
-        ? profiles.list().filter((p) => isAddressAllowed(managed, p.base))
-        : profiles.list();
+    const isVisible = (p: Profile): boolean =>
+      managed.lockDeployments !== true || isAddressAllowed(managed, p.base);
+    const visibleProfiles = (): Profile[] => profiles.list().filter(isVisible);
 
     const openDefault = () => {
       const visible = visibleProfiles();
@@ -207,38 +207,39 @@ function start(): void {
     const locale = localeFrom(app.getLocale());
     const uiActions = {
       showProfile: (id: string) => {
-        const profile = profiles.get(id);
+        const profile = visibleProfiles().find((p) => p.id === id);
         if (!profile) return;
         profiles.setLastUsed(id);
         windows.showProfile(profile);
-        refreshUi();
+        ui.stateChanged();
       },
       addPlatform: () => {
         windows.openAddressWindow();
       },
       openWindow: () => {
-        if (!windows.focusLast()) openDefault();
+        if (!windows.focusLast(isVisible)) openDefault();
       },
       quit: () => app.quit(),
       setStartAtLogin: (on: boolean) => {
         startAtLogin.set(on);
-        refreshUi();
+        ui.stateChanged();
       },
     };
     const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
-    const trayIcon = () => {
+    // trayTemplate.png and trayTemplate@2x.png: macOS picks the @2x by itself.
+    const trayIcon = (() => {
       const file = iconFile("trayTemplate.png");
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
       const image = nativeImage.createFromPath(file);
       image.setTemplateImage(true);
       return { image, found: true };
-    };
+    })();
     const tray = createTrayController({
-      createTray: () => new Tray(trayIcon().image) as unknown as TrayLike,
+      createTray: () => new Tray(trayIcon.image) as unknown as TrayLike,
       buildMenu: (template) => Menu.buildFromTemplate(template as unknown as never),
       tooltip: brand.productName,
-      // Until the tray icon asset exists, the tray shows the name instead of an invisible image.
-      ...(trayIcon().found ? {} : { fallbackTitle: brand.productName }),
+      // Without the tray icon file the tray shows the name instead of an invisible image.
+      ...(trayIcon.found ? {} : { fallbackTitle: brand.productName }),
       actions: uiActions,
     });
     const dockIcon = createDockIcon({
@@ -255,7 +256,7 @@ function start(): void {
       ...createDockIconCache(join(app.getPath("userData"), "dock-icons"), fs as DockCacheFs),
       log: (message, err) => console.error(message, err ?? ""),
     });
-    function refreshUi(): void {
+    function render(): void {
       const visible = visibleProfiles();
       const state = {
         locale,
@@ -276,8 +277,12 @@ function start(): void {
           ) as unknown as never,
         ),
       );
-      void dockIcon.update(visible);
     }
+    const ui = createUiRefresh({
+      render,
+      updateDock: () => dockIcon.update(visibleProfiles()),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
 
     // `connect` only prefills the address page; `open` only focuses an existing profile.
     const deepLinkHandlers = createDeepLinkHandlers({
@@ -303,7 +308,7 @@ function start(): void {
     // last window comes forward. On macOS links arrive through `open-url` instead.
     app.on("second-instance", (_event, argv) => {
       if (links.fromSecondInstance(argv)) return;
-      if (!windows.focusLast()) openDefault();
+      if (!windows.focusLast(isVisible)) openDefault();
     });
 
     app.on("activate", () => {
@@ -314,7 +319,7 @@ function start(): void {
       if (platform !== "macos") app.quit();
     });
 
-    refreshUi();
+    ui.profilesChanged();
     openDefault();
 
     // Managed profiles (spec §6.4) are ensured lazily and never block the start: each one that is
@@ -325,7 +330,7 @@ function start(): void {
       discover: (base) => discoverDeployment(base, { fetch: net.fetch as typeof fetch }),
       add: (candidate) => profiles.add(candidate),
     }).then((added) => {
-      if (added > 0) refreshUi();
+      if (added > 0) ui.profilesChanged();
     });
 
     // electron-updater works only in a packaged app. `afterUpdate` is Task 17's hook (device

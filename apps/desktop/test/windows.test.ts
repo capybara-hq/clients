@@ -197,6 +197,17 @@ describe("profile windows", () => {
     expect(created[0]?.focus).toHaveBeenCalled();
   });
 
+  test("focusLast skips windows of profiles the filter refuses", () => {
+    const { windows, created } = setup();
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    created[1]?.emit("focus");
+    expect(windows.focusLast((p) => p.id === "p1")).toBe(true);
+    expect(created[0]?.focus).toHaveBeenCalled();
+    expect(created[1]?.focus).not.toHaveBeenCalled();
+    expect(windows.focusLast(() => false)).toBe(false);
+  });
+
   test("closeProfileWindows closes every window of a profile", () => {
     const { windows, created } = setup();
     windows.openProfileWindow(p1);
