@@ -1,0 +1,10 @@
+{
+  "name": "@capybara-hq/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "electron": "^45.4.1"
+  }
+}
