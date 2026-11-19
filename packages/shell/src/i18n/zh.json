@@ -8,5 +8,15 @@
   "address.error.insecure": "只有本机地址可以使用 http，其他地址请使用 https",
   "address.error.unreachable": "无法连接到这个地址",
   "address.error.not_capybara": "这个地址不是 Capybara 平台",
-  "address.error.too_old": "该平台版本过旧"
+  "address.error.too_old": "该平台版本过旧",
+  "address.error.sign_in_unavailable": "该平台尚未设置公开访问地址（http.publicUrl），无法在桌面端登录。请联系超级管理员。",
+  "address.checking": "正在连接…",
+  "address.open": "打开",
+  "address.change": "修改地址",
+  "address.error.failed": "出了点问题，请重试",
+  "tray.open_window": "打开窗口",
+  "tray.quit": "退出",
+  "menu.platforms": "平台",
+  "menu.start_at_login": "登录时启动",
+  "address.error.locked": "管理员未允许使用这个平台"
 }

@@ -1,0 +1,119 @@
+// The IPC protocol between the main process and the two preloads, plus the desktop's Shell
+// environment values. Shared by main and preload code; no Electron imports.
+import type { CapybaraShell, ShellCallError } from "@capybara-hq/plugin-sdk";
+
+/** Channels of the deployment window's preload (the Shell environment). */
+export const SHELL_CHANNELS = {
+  /** Sync, at preload start: answers `ShellInit` or null (the frame gets nothing). */
+  init: "capybara-shell:init",
+  /** Invoke: one capability call, `ShellCallRequest` → `ShellCallResult`. */
+  call: "capybara-shell:call",
+  /** Main → preload: `ShellState` after insets, controls or capabilities changed. */
+  change: "capybara-shell:change",
+} as const;
+
+/** Channels of the address page's preload. It never sees the Shell environment. */
+export const ADDRESS_CHANNELS = {
+  /** Sync, at preload start: answers `AddressInit` or null. */
+  init: "capybara-address:init",
+  /** Invoke: `submit(address)` → `AddressResult`. */
+  submit: "capybara-address:submit",
+  /** Invoke: open the last discovered deployment → `AddressOpenResult`. */
+  open: "capybara-address:open",
+} as const;
+
+/** The app's own scheme, which serves only the address page. */
+export const APP_SCHEME = "app";
+export const ADDRESS_HOST = "address";
+export const ADDRESS_ORIGIN = `${APP_SCHEME}://${ADDRESS_HOST}`;
+export const ADDRESS_URL = `${ADDRESS_ORIGIN}/index.html`;
+
+export type Insets = CapybaraShell["insets"];
+export type Controls = { x: number; y: number; width: number; height: number };
+export type ShellPlatform = "macos" | "windows" | "linux";
+
+/** Key → function names; the preload builds callers from this list and nothing else. */
+export type CapabilityDescriptors = Record<string, string[]>;
+
+export interface ShellState {
+  insets: Insets;
+  controls: Controls | null;
+  capabilities: CapabilityDescriptors;
+}
+
+export interface ShellInit extends ShellState {
+  /** The profile origin; the preload re-checks it against `location.origin`. */
+  origin: string;
+  platform: ShellPlatform;
+  shellVersion: string;
+}
+
+export interface ShellCallRequest {
+  key: string;
+  fn: string;
+  args: unknown[];
+  /** `navigator.userActivation.isActive`, read by the preload at call time. */
+  activation: boolean;
+}
+
+// A Record, so this fails to compile when the SDK adds a code it lacks.
+const CALL_ERRORS: Record<ShellCallError, true> = {
+  busy: true,
+  no_activation: true,
+  cancelled: true,
+  failed: true,
+};
+/** Every `ShellCallError`, as a runtime list: the codes a call result may carry. */
+export const SHELL_CALL_ERRORS: readonly ShellCallError[] = Object.keys(
+  CALL_ERRORS,
+) as ShellCallError[];
+
+/** Errors are carried as data: Electron drops the properties of a thrown Error across IPC. */
+export type ShellCallResult = { ok: true; value: unknown } | { ok: false; code: ShellCallError };
+
+export type AddressErrorKind =
+  | "invalid"
+  | "insecure"
+  | "unreachable"
+  | "not_capybara"
+  | "too_old"
+  | "sign_in_unavailable"
+  | "locked"
+  | "failed";
+
+export type AddressResult =
+  | { ok: true; name: string; host: string; icon: string | null }
+  | { ok: false; error: AddressErrorKind };
+
+export type AddressOpenResult = { ok: true } | { ok: false; error: AddressErrorKind };
+
+export interface AddressInit {
+  locale: "zh" | "en";
+  strings: Record<string, string>;
+  /** An address to prefill (a `capybara://connect` link); never submitted on its own. */
+  prefill: string | null;
+}
+
+/** macOS with `titleBarStyle: "hiddenInset"` (desktop spec §7.3). */
+export const DESKTOP_INSETS: Insets = { top: 28, right: 0, bottom: 0, left: 0 };
+/** The traffic lights' rectangle at `TRAFFIC_LIGHT_POSITION`, margins included. */
+export const DESKTOP_CONTROLS: Controls = { x: 0, y: 0, width: 80, height: 28 };
+/** The fixed traffic light position the controls rectangle is measured for. */
+export const TRAFFIC_LIGHT_POSITION = { x: 12, y: 8 } as const;
+
+/** Insets and controls for a window: fullscreen hides the title bar band and the controls. */
+export function chromeState(
+  platform: ShellPlatform,
+  fullscreen: boolean,
+): { insets: Insets; controls: Controls | null } {
+  if (platform !== "macos" || fullscreen) {
+    return { insets: { ...DESKTOP_INSETS, top: 0 }, controls: null };
+  }
+  return { insets: { ...DESKTOP_INSETS }, controls: { ...DESKTOP_CONTROLS } };
+}
+
+export function platformFrom(nodePlatform: string): ShellPlatform {
+  if (nodePlatform === "darwin") return "macos";
+  if (nodePlatform === "win32") return "windows";
+  return "linux";
+}
