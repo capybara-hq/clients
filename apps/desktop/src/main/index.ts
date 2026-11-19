@@ -84,6 +84,7 @@ function start(): void {
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       onFocusProfile: (profile) => profiles.setLastUsed(profile.id),
+      onAddressClosed: (id) => addressHost.forget(id),
       backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
       log: (message, err) => console.error(message, err),
     });
@@ -99,12 +100,12 @@ function start(): void {
       SHELL_CAPABILITY_KEYS.openExternal,
       createOpenExternalCapability({ openExternal: (url) => shell.openExternal(url) }),
     );
-    bridge.registerCapability("chrome@1", createChromeCapability());
+    bridge.registerCapability(SHELL_CAPABILITY_KEYS.chrome, createChromeCapability());
     // signIn@1 (Task 14) and device@1 (Task 18, with `available` and windows.broadcastChange) plug
     // in here through bridge.registerCapability.
 
     bridge.install(ipcMain as unknown as IpcMainLike);
-    createAddressHost({
+    const addressHost = createAddressHost({
       discover: (input) => discoverDeployment(input, { fetch: net.fetch as typeof fetch }),
       isAddressSender: (sender) => windows.isAddressSender(sender),
       locale: localeFrom(app.getLocale()),
@@ -115,7 +116,8 @@ function start(): void {
         windows.showProfile(profile);
       },
       closeSender: (sender) => windows.closeSender(sender),
-    }).install(ipcMain as unknown as IpcMainLike);
+    });
+    addressHost.install(ipcMain as unknown as IpcMainLike);
 
     const openDefault = () => {
       const last = profiles.lastUsed();

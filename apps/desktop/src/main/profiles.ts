@@ -19,7 +19,10 @@ export type NewProfile = Omit<Profile, "id">;
 
 export interface ProfileFs {
   readFileSync(path: string, encoding: "utf8"): string;
-  writeFileSync(path: string, data: string): void;
+  openSync(path: string, flags: "w"): number;
+  writeSync(fd: number, data: string): unknown;
+  fsyncSync(fd: number): void;
+  closeSync(fd: number): void;
   renameSync(from: string, to: string): void;
   mkdirSync(path: string, options: { recursive: true }): unknown;
 }
@@ -79,15 +82,37 @@ function parseProfile(v: unknown): Profile | null {
   return { id, base, origin, name, ...(iconHash === undefined ? {} : { iconHash }) };
 }
 
+function isMissing(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "ENOENT";
+}
+
+/**
+ * Reads the store; an unreadable or corrupt file is moved aside to `<file>.corrupt` (so the next
+ * save never overwrites what might be recovered) and reads as empty. A missing file is just empty.
+ */
 function readStore(fs: ProfileFs, file: string): StoreFile {
   const empty: StoreFile = { version: 1, profiles: [], lastUsedId: null };
+  const setAside = () => {
+    try {
+      fs.renameSync(file, `${file}.corrupt`);
+    } catch {
+      // Nothing more to do: the store still starts empty.
+    }
+    return empty;
+  };
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    return isMissing(err) ? empty : setAside();
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    raw = JSON.parse(text);
   } catch {
-    return empty;
+    return setAside();
   }
-  if (!isRecord(raw) || !Array.isArray(raw.profiles)) return empty;
+  if (!isRecord(raw) || !Array.isArray(raw.profiles)) return setAside();
   const profiles: Profile[] = [];
   for (const entry of raw.profiles) {
     const p = parseProfile(entry);
@@ -108,7 +133,15 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   function save(): void {
     fs.mkdirSync(dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    // Write and fsync the temporary file before the rename, so a crash leaves the old file or the
+    // complete new one, never a truncated one.
+    const fd = fs.openSync(tmp, "w");
+    try {
+      fs.writeSync(fd, `${JSON.stringify(state, null, 2)}\n`);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, file);
   }
 

@@ -38,6 +38,8 @@ export const SHELL_CAPABILITY_KEYS = {
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
+  /** The mobile spec's key (§9.2), not in core Task 2's constant: local until the SDK has it. */
+  chrome: "chrome@1",
 } as const;
 
 export type KeepAwakeMode = "off" | "while-busy" | "connected";

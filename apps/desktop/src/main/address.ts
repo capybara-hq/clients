@@ -195,12 +195,23 @@ export function createAddressHost(deps: AddressHostDeps) {
       pending.set(id, { seq: entry.seq });
       try {
         const profile = deps.addProfile(entry.candidate);
+        pending.delete(id);
         deps.openProfile(profile);
         deps.closeSender(event.sender);
         return { ok: true };
       } catch {
         return { ok: false, error: "failed" };
       }
+    },
+
+    /** Drops what was pending for a closed address window. */
+    forget(webContentsId: number): void {
+      pending.delete(webContentsId);
+    },
+
+    /** How many address windows have something pending (for tests). */
+    pendingCount(): number {
+      return pending.size;
     },
 
     install(ipcMain: IpcMainLike): void {

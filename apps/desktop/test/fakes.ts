@@ -3,21 +3,48 @@ import { vi } from "vitest";
 
 export function memoryFs(initial: Record<string, string> = {}) {
   const files = new Map<string, string>(Object.entries(initial));
+  const open = new Map<number, { path: string; data: string; synced: boolean }>();
+  /** The order of write, fsync, close and rename calls. */
+  const log: string[] = [];
+  let nextFd = 3;
   return {
     files,
+    log,
     readFileSync: (path: string, _enc: "utf8") => {
       const v = files.get(path);
       if (v === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       return v;
     },
-    writeFileSync: (path: string, data: string) => {
-      files.set(path, data);
+    openSync: (path: string, _flags: "w") => {
+      const fd = nextFd++;
+      open.set(fd, { path, data: "", synced: false });
+      return fd;
+    },
+    writeSync: (fd: number, data: string) => {
+      const f = open.get(fd);
+      if (!f) throw new Error("EBADF");
+      f.data += data;
+      log.push(`write ${f.path}`);
+    },
+    fsyncSync: (fd: number) => {
+      const f = open.get(fd);
+      if (!f) throw new Error("EBADF");
+      f.synced = true;
+      log.push(`fsync ${f.path}`);
+    },
+    closeSync: (fd: number) => {
+      const f = open.get(fd);
+      if (!f) throw new Error("EBADF");
+      files.set(f.path, f.data);
+      open.delete(fd);
+      log.push(`close ${f.path}`);
     },
     renameSync: (from: string, to: string) => {
       const v = files.get(from);
       if (v === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       files.delete(from);
       files.set(to, v);
+      log.push(`rename ${from} ${to}`);
     },
     mkdirSync: (_path: string, _opts: { recursive: true }) => undefined,
   };

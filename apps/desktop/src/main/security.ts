@@ -103,6 +103,13 @@ export function installPermissionHandlers(session: PermissionSession, profileOri
   session.setDevicePermissionHandler(() => false);
 }
 
+/** The address page needs no permission: every request and check is denied. */
+export function installDenyAllPermissions(session: PermissionSession): void {
+  session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  session.setPermissionCheckHandler(() => false);
+  session.setDevicePermissionHandler(() => false);
+}
+
 function isHttp(url: URL): boolean {
   return url.protocol === "https:" || url.protocol === "http:";
 }

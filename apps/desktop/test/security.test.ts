@@ -5,6 +5,7 @@ import {
   GRANTED_PERMISSIONS,
   hardenAddressContents,
   hardenProfileContents,
+  installDenyAllPermissions,
   installPermissionHandlers,
   isNavigationAllowed,
   profileWebPreferences,
@@ -73,6 +74,18 @@ describe("permissions", () => {
     }
     expect(await s.request("notifications", "not a url")).toBe(false);
     expect(s.device({ deviceType: "usb", origin: ORIGIN })).toBe(false);
+  });
+});
+
+describe("the address partition's permissions", () => {
+  test("everything is denied, whatever the origin", async () => {
+    const s = fakeSession();
+    installDenyAllPermissions(s);
+    for (const p of [...GRANTED_PERMISSIONS, "media", "geolocation"]) {
+      expect(await s.request(p, "app://address/index.html")).toBe(false);
+      expect(s.check(p, "app://address")).toBe(false);
+    }
+    expect(s.device({ deviceType: "usb" })).toBe(false);
   });
 });
 

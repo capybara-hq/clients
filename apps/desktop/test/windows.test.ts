@@ -22,6 +22,7 @@ function setup() {
   const sessions = new Map<string, ReturnType<typeof fakeSession>>();
   const options: Record<string, unknown>[] = [];
   const onFocusProfile = vi.fn();
+  const onAddressClosed = vi.fn();
   const openExternal = vi.fn();
   function fakeWindow(origin: string) {
     const em = fakeEmitter();
@@ -68,8 +69,9 @@ function setup() {
     openExternal,
     describe: () => ({}),
     onFocusProfile,
+    onAddressClosed,
   });
-  return { windows, created, options, sessions, onFocusProfile, openExternal };
+  return { windows, created, options, sessions, onFocusProfile, onAddressClosed, openExternal };
 }
 
 describe("profile windows", () => {
@@ -189,6 +191,23 @@ describe("the address window", () => {
     windows.openAddressWindow();
     expect(created).toHaveLength(1);
     expect(windows.prefillFor(created[0]?.webContents)).toBe("a.example.com");
+  });
+
+  test("the address partition denies every permission", async () => {
+    const { windows, sessions } = setup();
+    windows.openAddressWindow();
+    const s = sessions.get("address");
+    expect(s?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
+    expect(await s?.request("notifications", "app://address/index.html")).toBe(false);
+    expect(s?.check("clipboard-sanitized-write", "app://address")).toBe(false);
+  });
+
+  test("closing the address window reports its webContents id", () => {
+    const { windows, created, onAddressClosed } = setup();
+    windows.openAddressWindow();
+    const id = created[0]?.webContents.id;
+    created[0]?.close();
+    expect(onAddressClosed).toHaveBeenCalledWith(id);
   });
 
   test("a profile window is not an address sender", () => {

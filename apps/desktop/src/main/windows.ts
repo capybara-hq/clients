@@ -12,10 +12,12 @@ import {
 } from "../shared/protocol.ts";
 import { type Profile, partitionFor } from "./profiles.ts";
 import {
+  ADDRESS_PARTITION,
   addressWebPreferences,
   type ContentsLike,
   hardenAddressContents,
   hardenProfileContents,
+  installDenyAllPermissions,
   installPermissionHandlers,
   type PermissionSession,
   profileWebPreferences,
@@ -69,6 +71,8 @@ export interface WindowManagerDeps {
   describe(profile: Profile): CapabilityDescriptors;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
+  /** An address window closed: what was pending for its webContents id can go. */
+  onAddressClosed?: (webContentsId: number) => void;
   backgroundColor?: () => string;
   /** Errors that have nowhere else to go (a failed load). */
   log?: (message: string, err: unknown) => void;
@@ -121,6 +125,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     });
     win.on("closed", () => {
       byContents.delete(id);
+      if (entry.kind === "address") deps.onAddressClosed?.(id);
       if (lastFocused === entry) lastFocused = undefined;
     });
     win.on("ready-to-show", () => win.show());
@@ -208,6 +213,10 @@ export function createWindowManager(deps: WindowManagerDeps) {
         }
         bringToFront(existing.window);
         return existing.window;
+      }
+      if (!permissionsInstalled.has(ADDRESS_PARTITION)) {
+        installDenyAllPermissions(deps.sessionFor(ADDRESS_PARTITION));
+        permissionsInstalled.add(ADDRESS_PARTITION);
       }
       const win = deps.createWindow({
         width: 560,

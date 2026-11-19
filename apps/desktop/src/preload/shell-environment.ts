@@ -140,6 +140,11 @@ export interface ShellPreloadDeps {
     executeInMainWorld(script: { func: (...a: never[]) => unknown; args: unknown[] }): unknown;
   };
   location: { origin: string };
+  /**
+   * `window.origin`: "null" for a document with an opaque origin (a sandbox CSP) even though its
+   * URL, and so `location.origin`, is the profile's.
+   */
+  windowOrigin: string;
   /** `window.top === window`. */
   isTopFrame: boolean;
   /** `navigator.userActivation.isActive`, read in the isolated world the page cannot patch. */
@@ -153,6 +158,7 @@ export interface ShellPreloadDeps {
  */
 export function bootShellPreload(deps: ShellPreloadDeps): boolean {
   if (!deps.isTopFrame) return false;
+  if (deps.windowOrigin === "null" || deps.windowOrigin !== deps.location.origin) return false;
   let init: unknown;
   try {
     init = deps.ipcRenderer.sendSync(SHELL_CHANNELS.init);

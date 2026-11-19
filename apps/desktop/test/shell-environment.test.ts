@@ -159,7 +159,9 @@ describe("the Shell environment object", () => {
   });
 });
 
-function fakePreloadDeps(over: { origin?: string; top?: boolean; init?: unknown } = {}) {
+function fakePreloadDeps(
+  over: { origin?: string; windowOrigin?: string; top?: boolean; init?: unknown } = {},
+) {
   const changeListeners: ((e: unknown, s: unknown) => void)[] = [];
   let active = false;
   const deps = {
@@ -176,6 +178,7 @@ function fakePreloadDeps(over: { origin?: string; top?: boolean; init?: unknown 
       executeInMainWorld: vi.fn((_s: { func: unknown; args: unknown[] }) => undefined),
     },
     location: { origin: over.origin ?? ORIGIN },
+    windowOrigin: over.windowOrigin ?? over.origin ?? ORIGIN,
     isTopFrame: over.top ?? true,
     userActivation: () => active,
     setActive(v: boolean) {
@@ -201,6 +204,15 @@ describe("the preload", () => {
     expect(bootShellPreload(deps)).toBe(false);
     expect(deps.ipcRenderer.sendSync).not.toHaveBeenCalled();
     expect(deps.contextBridge.executeInMainWorld).not.toHaveBeenCalled();
+  });
+
+  test("does nothing in a document with an opaque origin (a sandbox CSP)", () => {
+    for (const windowOrigin of ["null", "https://other.example.com"]) {
+      const deps = fakePreloadDeps({ windowOrigin });
+      expect(bootShellPreload(deps)).toBe(false);
+      expect(deps.ipcRenderer.sendSync).not.toHaveBeenCalled();
+      expect(deps.contextBridge.executeInMainWorld).not.toHaveBeenCalled();
+    }
   });
 
   test("does nothing when main refuses or the origin differs", () => {

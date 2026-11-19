@@ -235,6 +235,18 @@ describe("the address page IPC", () => {
     expect(await h.handleOpen(ADDRESS_EVENT())).toEqual({ ok: false, error: "failed" });
   });
 
+  test("pending entries go when the window closes or the profile is opened", async () => {
+    const h = host();
+    await h.handleSubmit(ADDRESS_EVENT(), "capybara.example.com");
+    expect(h.pendingCount()).toBe(1);
+    h.forget(ADDRESS_SENDER.id);
+    expect(h.pendingCount()).toBe(0);
+    expect(await h.handleOpen(ADDRESS_EVENT())).toEqual({ ok: false, error: "failed" });
+    await h.handleSubmit(ADDRESS_EVENT(), "capybara.example.com");
+    expect(await h.handleOpen(ADDRESS_EVENT())).toEqual({ ok: true });
+    expect(h.pendingCount()).toBe(0);
+  });
+
   test("a non-string address is invalid", async () => {
     const h = host();
     expect(await h.handleSubmit(ADDRESS_EVENT(), 42)).toEqual({ ok: false, error: "invalid" });

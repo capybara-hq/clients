@@ -7,6 +7,7 @@ bootShellPreload({
   ipcRenderer,
   contextBridge,
   location: { origin: window.location.origin },
+  windowOrigin: window.origin,
   isTopFrame: window.top === window,
   userActivation: () => navigator.userActivation?.isActive === true,
 });

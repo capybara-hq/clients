@@ -98,6 +98,31 @@ describe("profiles", () => {
     expect(setup({ [FILE]: JSON.stringify({ profiles: "x" }) }).store.list()).toEqual([]);
   });
 
+  test("a corrupt file is moved aside, never overwritten by the next save", () => {
+    const { fs, store } = setup({ [FILE]: "{not json" });
+    expect(fs.files.get(`${FILE}.corrupt`)).toBe("{not json");
+    store.add(example);
+    expect(fs.files.get(`${FILE}.corrupt`)).toBe("{not json");
+    expect(JSON.parse(fs.files.get(FILE) as string).profiles).toHaveLength(1);
+  });
+
+  test("a missing file is not moved aside", () => {
+    const { fs } = setup();
+    expect(fs.files.has(`${FILE}.corrupt`)).toBe(false);
+    expect(fs.log).toEqual([]);
+  });
+
+  test("the temporary file is synced before the rename", () => {
+    const { fs, store } = setup();
+    store.add(example);
+    expect(fs.log).toEqual([
+      `write ${FILE}.tmp`,
+      `fsync ${FILE}.tmp`,
+      `close ${FILE}.tmp`,
+      `rename ${FILE}.tmp ${FILE}`,
+    ]);
+  });
+
   test("invalid entries are dropped on read", () => {
     const file = JSON.stringify({
       version: 1,
