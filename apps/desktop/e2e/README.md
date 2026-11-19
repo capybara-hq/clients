@@ -64,7 +64,10 @@ and a version that offers local devices.
       `controls` is `null`.
 - [ ] After sign-in the app window comes forward from behind the browser (macOS may not bring a
       background app forward without `app.focus({ steal: true })`).
-- [ ] A signed-in session survives quitting and relaunching; removing the platform clears it.
+- [ ] A signed-in session survives quitting and relaunching. 「移除平台」 (app menu 平台 and the
+      tray) asks natively with the platform's name and host (取消 is the default), asks whether
+      to disconnect this computer too when it is connected there, closes the platform's windows
+      and clears its session; it is not offered under `lockDeployments`.
 
 ### Connect this machine
 
@@ -83,17 +86,25 @@ and a version that offers local devices.
 - [ ] Lid closed on battery: the Mac sleeps (expected), the device goes offline, and after wake it
       reconnects and the conversation shows the note 「电脑曾休眠」.
 - [ ] Lid closed on power with keep-awake `connected`: stays online (clamshell rules apply).
-- [ ] Disconnect from the app's menu removes the device and stops the service
-      (`launchctl print` no longer finds it); Pause/Resume (暂停 / 恢复) behave.
-- [ ] An app update that replaces the bundled device restarts the service (`afterUpdate`); an app
-      moved to another folder repairs the service at the next start.
+- [ ] 断开 in the tray (menu bar icon) stops the service (`launchctl print` no longer finds it)
+      and logs the device out on this computer; the device stays registered on the platform until
+      someone deletes it. Pause/Resume (暂停 / 恢复) behave.
+- [ ] An app update that replaces the bundled device restarts the service at the next start
+      (`repairService().then(afterUpdate)`); an app moved to another folder repairs the service
+      at the next start.
+- [ ] A running app checks for updates every 6 hours; a downloaded update shows one notification,
+      and clicking it restarts into the new version.
 
 ### Menus, Dock, managed settings
 
-- [ ] The tray icon shows platforms and the actions; the app menu and the Dock icon follow the
-      focused platform (custom Dock icon; reverting needs `build/icons/icon.png`).
+- [ ] The tray icon shows platforms and the actions; the app menu follows the focused platform.
+      The Dock icon shows the platform's icon only when exactly one platform is saved and it has
+      set an icon (spec §11), else the app's own icon (reverting needs `build/icons/icon.png`).
+- [ ] With the system language set to Chinese, every app menu item (including the ones macOS adds,
+      such as the window list and the Edit menu's extras) is Chinese; in English, English.
 - [ ] Managed preferences on a real MDM profile (`plutil` output): `lockDeployments`,
-      `connectThisMachine: false` (no 「连接本机」), `profiles`, `autoUpdate`, `updateFeed`.
+      `connectThisMachine: false` (no 「连接本机」 and no device section in the tray), `profiles`,
+      `autoUpdate`, `updateFeed`.
 - [ ] A packaged build starts `electron-updater` (it works only packaged) and the bundle includes it.
 
 ### Known caveats to keep in mind
