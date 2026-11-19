@@ -1,9 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  createDeepLinkHandlers,
   createDeepLinkRouter,
   deepLinkFromArgv,
   installDeepLinks,
 } from "../src/main/deep-links.ts";
+import type { Profile } from "../src/main/profiles.ts";
 import { fakeEmitter } from "./fakes.ts";
 
 const AUTH = "capybara://auth/callback?code=cap_ac_1&state=s1&iss=https%3A%2F%2Fa.example.com";
@@ -148,5 +150,109 @@ describe("installDeepLinks", () => {
     const route = vi.fn();
     links.ready(route);
     expect(route.mock.calls.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe("connect and open (spec 6.4)", () => {
+  const a: Profile = {
+    id: "a",
+    base: "https://a.example.com",
+    origin: "https://a.example.com",
+    name: "A",
+  };
+  const team: Profile = {
+    id: "team",
+    base: "https://b.example.com/team",
+    origin: "https://b.example.com",
+    name: "Team",
+  };
+  const wide: Profile = {
+    id: "wide",
+    base: "https://b.example.com",
+    origin: "https://b.example.com",
+    name: "Wide",
+  };
+
+  function setup(over: Partial<Parameters<typeof createDeepLinkHandlers>[0]> = {}) {
+    const actions = {
+      profiles: () => [a, team, wide] as readonly Profile[],
+      isAllowedAddress: () => true,
+      openAddress: vi.fn(),
+      showProfile: vi.fn(),
+      ...over,
+    };
+    const handlers = createDeepLinkHandlers(actions);
+    const router = createDeepLinkRouter({ onAuth: async () => undefined, ...handlers });
+    return { actions, router };
+  }
+
+  test("connect prefills the address page and does nothing else", () => {
+    const { actions, router } = setup();
+    router.routeDeepLink("capybara://connect?url=new.example.com");
+    expect(actions.openAddress).toHaveBeenCalledExactlyOnceWith("new.example.com");
+    // Never a saved profile, never a window of a profile: only the address page.
+    expect(actions.showProfile).not.toHaveBeenCalled();
+  });
+
+  test("connect to an address the lock does not allow is ignored", () => {
+    const { actions, router } = setup({ isAllowedAddress: (addr) => addr === "ok.example.com" });
+    router.routeDeepLink("capybara://connect?url=evil.example.com");
+    expect(actions.openAddress).not.toHaveBeenCalled();
+    router.routeDeepLink("capybara://connect?url=ok.example.com");
+    expect(actions.openAddress).toHaveBeenCalledWith("ok.example.com");
+  });
+
+  test("an absurdly long connect address is ignored", () => {
+    const { actions, router } = setup();
+    router.routeDeepLink(`capybara://connect?url=${"a".repeat(3000)}.example.com`);
+    expect(actions.openAddress).not.toHaveBeenCalled();
+  });
+
+  test("open focuses the profile of the URL's own origin and navigates to that URL", () => {
+    const { actions, router } = setup();
+    router.routeDeepLink(
+      `capybara://open?url=${encodeURIComponent("https://a.example.com/chat/1?x=2#top")}`,
+    );
+    expect(actions.showProfile).toHaveBeenCalledExactlyOnceWith(
+      a,
+      "https://a.example.com/chat/1?x=2#top",
+    );
+  });
+
+  test("open picks the profile whose base prefix the URL is under", () => {
+    const { actions, router } = setup();
+    router.routeDeepLink(
+      `capybara://open?url=${encodeURIComponent("https://b.example.com/team/chat")}`,
+    );
+    expect(actions.showProfile).toHaveBeenLastCalledWith(team, "https://b.example.com/team/chat");
+    router.routeDeepLink(
+      `capybara://open?url=${encodeURIComponent("https://b.example.com/teammate")}`,
+    );
+    expect(actions.showProfile).toHaveBeenLastCalledWith(wide, "https://b.example.com/teammate");
+  });
+
+  test("open for any other origin, scheme or spelling is ignored", () => {
+    const { actions, router } = setup();
+    for (const target of [
+      "https://evil.example.com/chat",
+      "https://a.example.com.evil.com/chat",
+      "http://a.example.com/chat",
+      "https://a.example.com:8443/chat",
+      "https://user:pw@a.example.com/chat",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "a.example.com/chat",
+      "x",
+    ]) {
+      router.routeDeepLink(`capybara://open?url=${encodeURIComponent(target)}`);
+    }
+    expect(actions.showProfile).not.toHaveBeenCalled();
+  });
+
+  test("open never creates a profile: with none saved nothing happens", () => {
+    const { actions, router } = setup({ profiles: () => [] });
+    router.routeDeepLink(`capybara://open?url=${encodeURIComponent("https://a.example.com/")}`);
+    expect(actions.showProfile).not.toHaveBeenCalled();
+    expect(actions.openAddress).not.toHaveBeenCalled();
   });
 });

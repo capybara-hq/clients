@@ -1,17 +1,18 @@
 // Deep links (spec §6.4, §6.5): the app registers its scheme, receives `capybara://` links through
 // `open-url` (macOS; may fire before `ready`) or a second instance's arguments (Windows, Linux),
 // and routes them. Links are untrusted input: unknown or malformed ones are ignored.
-import { type AuthCallback, parseDeepLink } from "@capybara-hq/shell";
+import { type AuthCallback, normalizeAddress, parseDeepLink } from "@capybara-hq/shell";
+import type { Profile } from "./profiles.ts";
 
 export interface DeepLinkHandlers {
   /** `capybara://auth/callback`: the sign-in module decides whether it matches an attempt. */
   onAuth(cb: AuthCallback): Promise<void>;
   /**
-   * `capybara://connect?url=`: Task 15 opens the address page prefilled; never connects silently.
+   * `capybara://connect?url=`: opens the address page prefilled; never connects silently.
    * Without a handler the link does nothing.
    */
   onConnect?: (address: string) => void;
-  /** `capybara://open?url=`: Task 15 focuses the matching profile. Without one, nothing. */
+  /** `capybara://open?url=`: focuses the matching profile. Without one, nothing. */
   onOpen?: (url: string) => void;
   log?: (message: string, err?: unknown) => void;
 }
@@ -28,14 +29,65 @@ export function createDeepLinkRouter(handlers: DeepLinkHandlers) {
           });
           return;
         case "connect":
-          // TODO(Task 15): the address page prefilled with `link.address`, confirmed by the person.
           handlers.onConnect?.(link.address);
           return;
         case "open":
-          // TODO(Task 15): focus the profile whose origin matches and navigate there.
           handlers.onOpen?.(link.url);
           return;
       }
+    },
+  };
+}
+
+/** The address page takes no more than this many characters. */
+const MAX_LINK_ADDRESS = 2048;
+
+export interface DeepLinkActions {
+  /** The profiles this app offers now (under a managed lock: the managed ones). */
+  profiles(): readonly Profile[];
+  /** Managed `lockDeployments`: false for an address that is not on the managed list. */
+  isAllowedAddress(address: string): boolean;
+  /** Opens (or reuses) the address page with `prefill` in its field; the person confirms. */
+  openAddress(prefill: string): void;
+  /** Focuses a window of the profile and loads `url` there. */
+  showProfile(profile: Profile, url: string): void;
+}
+
+/** The profile a page URL belongs to: the same origin exactly (the longest matching base wins). */
+export function profileForUrl(
+  profiles: readonly Profile[],
+  url: string,
+): { profile: Profile; url: string } | undefined {
+  const address = normalizeAddress(url);
+  if (!address.ok) return undefined;
+  let target: URL;
+  try {
+    target = new URL(url.trim());
+  } catch {
+    return undefined;
+  }
+  const same = profiles.filter((p) => p.origin === address.origin);
+  const path = target.pathname.replace(/\/+$/, "");
+  const full = `${address.origin}${path}`;
+  const within = same
+    .filter((p) => full === p.base || full.startsWith(`${p.base}/`))
+    .sort((a, b) => b.base.length - a.base.length);
+  const profile = within[0] ?? same[0];
+  return profile ? { profile, url: target.href } : undefined;
+}
+
+/** The `connect` and `open` handlers. Links are untrusted: nothing here saves or signs in. */
+export function createDeepLinkHandlers(actions: DeepLinkActions) {
+  return {
+    /** Prefills the address page and stops there: the person presses continue. */
+    onConnect(address: string): void {
+      if (address.length > MAX_LINK_ADDRESS || !actions.isAllowedAddress(address)) return;
+      actions.openAddress(address);
+    },
+    /** Only for a profile that already exists, and only to a URL on its own origin. */
+    onOpen(url: string): void {
+      const match = profileForUrl(actions.profiles(), url);
+      if (match) actions.showProfile(match.profile, match.url);
     },
   };
 }

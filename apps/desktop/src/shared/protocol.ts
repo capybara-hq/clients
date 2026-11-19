@@ -65,6 +65,7 @@ export type AddressErrorKind =
   | "unreachable"
   | "not_capybara"
   | "too_old"
+  | "locked"
   | "failed";
 
 export type AddressResult =

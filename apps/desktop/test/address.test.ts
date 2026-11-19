@@ -308,3 +308,37 @@ describe("the app:// protocol", () => {
     for (const call of readFile.mock.calls) expect(Object.keys(files)).toContain(call[0]);
   });
 });
+
+describe("a managed lock on the address page", () => {
+  const onlyA = (address: string) => address === "a.example.com";
+
+  test("an address that is not allowed is refused before any discovery", async () => {
+    const h = host({ isAllowed: onlyA });
+    expect(await h.handleSubmit(ADDRESS_EVENT(), "evil.example.com")).toEqual({
+      ok: false,
+      error: "locked",
+    });
+    expect(h.deps.discover).not.toHaveBeenCalled();
+    expect(await h.handleOpen(ADDRESS_EVENT())).toEqual({ ok: false, error: "failed" });
+    expect(h.deps.addProfile).not.toHaveBeenCalled();
+  });
+
+  test("an allowed address goes through; the saved candidate is checked again", async () => {
+    const h = host({
+      isAllowed: (a) => a === "a.example.com" || a === "https://capybara.example.com",
+    });
+    expect((await h.handleSubmit(ADDRESS_EVENT(), "a.example.com")).ok).toBe(true);
+    expect(await h.handleOpen(ADDRESS_EVENT())).toEqual({ ok: true });
+
+    // A typed address the lock allows that discovers a different base is refused at open.
+    const sneaky = host({ isAllowed: onlyA });
+    await sneaky.handleSubmit(ADDRESS_EVENT(), "a.example.com");
+    expect(await sneaky.handleOpen(ADDRESS_EVENT())).toEqual({ ok: false, error: "locked" });
+    expect(sneaky.deps.addProfile).not.toHaveBeenCalled();
+  });
+
+  test("the locked message is in the page's strings", () => {
+    const init = host().handleInit(ADDRESS_EVENT());
+    expect(init?.strings["address.error.locked"]).toBeTruthy();
+  });
+});

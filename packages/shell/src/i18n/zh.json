@@ -12,5 +12,10 @@
   "address.checking": "正在连接…",
   "address.open": "打开",
   "address.change": "修改地址",
-  "address.error.failed": "出了点问题，请重试"
+  "address.error.failed": "出了点问题，请重试",
+  "tray.open_window": "打开窗口",
+  "tray.quit": "退出",
+  "menu.platforms": "平台",
+  "menu.start_at_login": "登录时启动",
+  "address.error.locked": "管理员未允许使用这个平台"
 }

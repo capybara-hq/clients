@@ -12,5 +12,10 @@
   "address.checking": "Connecting…",
   "address.open": "Open",
   "address.change": "Change address",
-  "address.error.failed": "Something went wrong, try again"
+  "address.error.failed": "Something went wrong, try again",
+  "tray.open_window": "Open window",
+  "tray.quit": "Quit",
+  "menu.platforms": "Platforms",
+  "menu.start_at_login": "Start at login",
+  "address.error.locked": "Your administrator has not allowed this platform"
 }

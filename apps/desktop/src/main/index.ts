@@ -1,26 +1,32 @@
 // The main process entry: wiring only. Every module it calls takes its Electron objects as
 // parameters and is tested without Electron; the casts below adapt Electron's overloaded types to
 // those narrow interfaces.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { readFile } from "node:fs/promises";
-import { hostname } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
   Notification,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
   session,
   shell,
+  Tray,
 } from "electron";
+import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
 import { SHELL_CAPABILITY_KEYS } from "../shared/sdk-shell-types.ts";
 import { createAddressHost, discoverDeployment, localeFrom } from "./address.ts";
+import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
 import {
   createChromeCapability,
@@ -28,12 +34,26 @@ import {
   createOpenExternalCapability,
   type NotificationClass,
 } from "./capabilities.ts";
-import { createDeepLinkRouter, type DeepLinkApp, installDeepLinks } from "./deep-links.ts";
+import {
+  createDeepLinkHandlers,
+  createDeepLinkRouter,
+  type DeepLinkApp,
+  installDeepLinks,
+} from "./deep-links.ts";
+import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
 import { createShellBridge, type IpcMainLike } from "./ipc.ts";
-import { createProfileStore, partitionFor } from "./profiles.ts";
+import {
+  createPlistReader,
+  ensureManagedProfiles,
+  isAddressAllowed,
+  readManagedConfig,
+} from "./managed.ts";
+import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import type { WebRequestSession } from "./request-guard.ts";
 import { ADDRESS_PARTITION, hardenAnyContents, type PermissionSession } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
+import { createTrayController, type TrayLike } from "./tray.ts";
+import { setupUpdates } from "./updates.ts";
 import { createWindowManager, type ProfileTarget, type WindowLike } from "./windows.ts";
 
 // Before `ready`: app:// is a standard, secure scheme so the address page has a real origin.
@@ -69,6 +89,13 @@ function start(): void {
   });
 
   app.whenReady().then(() => {
+    // Managed preferences (MDM): read once at start; a missing or malformed file is `{}`.
+    const managed = readManagedConfig({
+      appId: brand.appId,
+      user: userInfo().username,
+      readPlist: createPlistReader({ existsSync: fs.existsSync, execFileSync }),
+    });
+
     session
       .fromPartition(ADDRESS_PARTITION)
       .protocol.handle(
@@ -99,7 +126,10 @@ function start(): void {
       platform,
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
-      onFocusProfile: (profile) => profiles.setLastUsed(profile.id),
+      onFocusProfile: (profile) => {
+        profiles.setLastUsed(profile.id);
+        refreshUi();
+      },
       onAddressClosed: (id) => addressHost.forget(id),
       backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
       log: (message, err) => console.error(message, err),
@@ -142,7 +172,12 @@ function start(): void {
       isAddressSender: (sender) => windows.isAddressSender(sender),
       locale: localeFrom(app.getLocale()),
       prefillFor: (sender) => windows.prefillFor(sender),
-      addProfile: (candidate) => profiles.add(candidate),
+      isAllowed: (address) => isAddressAllowed(managed, address),
+      addProfile: (candidate) => {
+        const profile = profiles.add(candidate);
+        refreshUi();
+        return profile;
+      },
       openProfile: (profile) => {
         profiles.setLastUsed(profile.id);
         windows.showProfile(profile);
@@ -151,15 +186,115 @@ function start(): void {
     });
     addressHost.install(ipcMain as unknown as IpcMainLike);
 
+    // Under `lockDeployments` the app offers only the managed profiles (an older saved one stays
+    // on disk but is not offered).
+    const visibleProfiles = (): Profile[] =>
+      managed.lockDeployments === true
+        ? profiles.list().filter((p) => isAddressAllowed(managed, p.base))
+        : profiles.list();
+
     const openDefault = () => {
+      const visible = visibleProfiles();
       const last = profiles.lastUsed();
-      if (last) windows.showProfile(last);
-      else windows.openAddressWindow();
+      const target = last && visible.some((p) => p.id === last.id) ? last : visible[0];
+      if (target) windows.showProfile(target);
+      // First launch of a managed install: the address page, with the first managed address ready.
+      else windows.openAddressWindow(managed.profiles?.[0]);
     };
+
+    // Tray, app menu and Dock icon: one refresh after anything that changes the profiles.
+    const startAtLogin = createStartAtLogin(app);
+    const locale = localeFrom(app.getLocale());
+    const uiActions = {
+      showProfile: (id: string) => {
+        const profile = profiles.get(id);
+        if (!profile) return;
+        profiles.setLastUsed(id);
+        windows.showProfile(profile);
+        refreshUi();
+      },
+      addPlatform: () => {
+        windows.openAddressWindow();
+      },
+      openWindow: () => {
+        if (!windows.focusLast()) openDefault();
+      },
+      quit: () => app.quit(),
+      setStartAtLogin: (on: boolean) => {
+        startAtLogin.set(on);
+        refreshUi();
+      },
+    };
+    const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
+    const trayIcon = () => {
+      const file = iconFile("trayTemplate.png");
+      if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
+      const image = nativeImage.createFromPath(file);
+      image.setTemplateImage(true);
+      return { image, found: true };
+    };
+    const tray = createTrayController({
+      createTray: () => new Tray(trayIcon().image) as unknown as TrayLike,
+      buildMenu: (template) => Menu.buildFromTemplate(template as unknown as never),
+      tooltip: brand.productName,
+      // Until the tray icon asset exists, the tray shows the name instead of an invisible image.
+      ...(trayIcon().found ? {} : { fallbackTitle: brand.productName }),
+      actions: uiActions,
+    });
+    const dockIcon = createDockIcon({
+      fetch: net.fetch as typeof fetch,
+      setIcon: (png) => {
+        const image = nativeImage.createFromBuffer(Buffer.from(png));
+        if (image.isEmpty()) throw new Error("the Dock icon could not be decoded");
+        app.dock?.setIcon(image);
+      },
+      restoreDefault: () => {
+        const file = iconFile("icon.png");
+        if (fs.existsSync(file)) app.dock?.setIcon(nativeImage.createFromPath(file));
+      },
+      ...createDockIconCache(join(app.getPath("userData"), "dock-icons"), fs as DockCacheFs),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    function refreshUi(): void {
+      const visible = visibleProfiles();
+      const state = {
+        locale,
+        profiles: visible.map((p) => ({ id: p.id, name: p.name })),
+        activeId: profiles.lastUsed()?.id,
+        lockDeployments: managed.lockDeployments === true,
+      };
+      tray.update(state);
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate(
+          appMenuTemplate(
+            {
+              ...state,
+              productName: brand.productName,
+              startAtLogin: startAtLogin.enabled(),
+            },
+            uiActions,
+          ) as unknown as never,
+        ),
+      );
+      void dockIcon.update(visible);
+    }
+
+    // `connect` only prefills the address page; `open` only focuses an existing profile.
+    const deepLinkHandlers = createDeepLinkHandlers({
+      profiles: visibleProfiles,
+      isAllowedAddress: (address) => isAddressAllowed(managed, address),
+      openAddress: (prefill) => {
+        windows.openAddressWindow(prefill);
+      },
+      showProfile: (profile, url) => {
+        profiles.setLastUsed(profile.id);
+        windows.showProfile(profile, url);
+      },
+    });
 
     const router = createDeepLinkRouter({
       onAuth: (cb) => signIn.handleCallback(cb),
-      // connect / open: Task 15 adds onConnect and onOpen; until then those links do nothing.
+      ...deepLinkHandlers,
       log: (message, err) => console.error(message, err ?? ""),
     });
     links.ready((url) => router.routeDeepLink(url));
@@ -179,6 +314,30 @@ function start(): void {
       if (platform !== "macos") app.quit();
     });
 
+    refreshUi();
     openDefault();
+
+    // Managed profiles (spec §6.4) are ensured lazily and never block the start: each one that is
+    // not saved yet is discovered like an address typed on the address page and saved when it
+    // answers; one that does not answer is tried again at the next launch.
+    void ensureManagedProfiles(managed.profiles ?? [], {
+      has: (base) => profiles.list().some((p) => p.base === base),
+      discover: (base) => discoverDeployment(base, { fetch: net.fetch as typeof fetch }),
+      add: (candidate) => profiles.add(candidate),
+    }).then((added) => {
+      if (added > 0) refreshUi();
+    });
+
+    // electron-updater works only in a packaged app. `afterUpdate` is Task 17's hook (device
+    // `service restart` when the bundled device changed).
+    if (app.isPackaged) {
+      const updates = setupUpdates({
+        autoUpdater,
+        managed,
+        logger: { info: console.info, error: console.error },
+        afterUpdate: async () => {},
+      });
+      void updates.check();
+    }
   });
 }

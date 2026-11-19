@@ -33,6 +33,7 @@ export const ADDRESS_STRING_KEYS = [
   "address.error.not_capybara",
   "address.error.too_old",
   "address.error.failed",
+  "address.error.locked",
 ] as const;
 
 export const ICON_MAX_BYTES = 256 * 1024;
@@ -47,7 +48,7 @@ export interface Discovery {
   candidate?: NewProfile;
 }
 
-async function readCapped(res: Response, limit: number): Promise<Uint8Array | null> {
+export async function readCapped(res: Response, limit: number): Promise<Uint8Array | null> {
   if (!res.body) return null;
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -135,6 +136,8 @@ export interface AddressHostDeps {
   addProfile(candidate: NewProfile): Profile;
   openProfile(profile: Profile): void;
   closeSender(sender: unknown): void;
+  /** Managed `lockDeployments`: false refuses an address that is not on the managed list. */
+  isAllowed?: (address: string) => boolean;
 }
 
 interface AddressEvent {
@@ -172,6 +175,7 @@ export function createAddressHost(deps: AddressHostDeps) {
       if (typeof raw !== "string" || raw.length > MAX_ADDRESS_LENGTH) {
         return { ok: false, error: "invalid" };
       }
+      if (deps.isAllowed && !deps.isAllowed(raw)) return { ok: false, error: "locked" };
       const seq = (pending.get(id)?.seq ?? 0) + 1;
       pending.set(id, { seq });
       let found: Discovery;
@@ -193,6 +197,9 @@ export function createAddressHost(deps: AddressHostDeps) {
       const entry = pending.get(id);
       if (!entry?.candidate) return { ok: false, error: "failed" };
       pending.set(id, { seq: entry.seq });
+      if (deps.isAllowed && !deps.isAllowed(entry.candidate.base)) {
+        return { ok: false, error: "locked" };
+      }
       try {
         const profile = deps.addProfile(entry.candidate);
         pending.delete(id);
