@@ -19,9 +19,10 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
 
 ## Rules
 
-- Depend on published npm packages only (`@capybara-hq/plugin-sdk`, `@capybara-hq/device`, an exact
-  version) and Electron. Never the kernel, never `@capybara-hq/design`, never a `workspace:` /
-  `file:` / `link:` reference or a path into a core checkout in anything committed.
+- Depend on published npm packages only for Capybara core packages (`@capybara-hq/plugin-sdk`,
+  `@capybara-hq/device`, an exact version) and Electron: never the kernel, never
+  `@capybara-hq/design`, never a `workspace:` / `file:` / `link:` reference or a path into a core
+  checkout. Packages of this repository link to each other with `workspace:*`.
 - Main-process modules take their Electron objects as parameters, so they test without Electron.
 - Tests: `pnpm test` (vitest) from the root; no fixed sleeps, no per-test timeouts.
 - English for code, comments, identifiers and commit messages. UI text goes through the shell i18n
