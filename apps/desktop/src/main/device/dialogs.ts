@@ -31,8 +31,15 @@ export interface DeviceDialogs {
   /** This machine is logged in to `origin`: disconnect it first (spec §9.3)? */
   confirmDisconnectOther(parent: unknown, origin: string): Promise<boolean>;
   confirmResume(parent: unknown, profile: Profile): Promise<boolean>;
-  /** `texts` are the device program's own risk texts, shown as given (spec §9.5). */
-  confirmWidenCeiling(parent: unknown, texts: string[]): Promise<boolean>;
+  /**
+   * Names each widened item first, so a page asking for both cannot pass as asking for one; then
+   * `texts`, the device program's own risk texts, as given (spec §9.5).
+   */
+  confirmWidenCeiling(
+    parent: unknown,
+    widened: { fullAccess: boolean; projectReach: boolean },
+    texts: string[],
+  ): Promise<boolean>;
   confirmRaiseKeepAwake(parent: unknown, mode: Exclude<KeepAwakeMode, "off">): Promise<boolean>;
   /** Removing a profile this machine is connected to: disconnect and log the device out too? */
   confirmRemoveDevice(parent: unknown, profile: Profile): Promise<boolean>;
@@ -55,6 +62,8 @@ export function platformLabel(profile: Pick<Profile, "name" | "origin">): {
 export function createDeviceDialogs(deps: {
   showMessageBox: ShowMessageBox;
   locale: Locale;
+  /** `process.platform`: the keep-awake limits differ on Linux (the lid switch, spec §9.7). */
+  platform: string;
 }): DeviceDialogs {
   const { locale } = deps;
   const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
@@ -111,18 +120,26 @@ export function createDeviceDialogs(deps: {
         confirm: tr("device.resume.confirm"),
       }),
 
-    confirmWidenCeiling: (parent, texts) =>
+    confirmWidenCeiling: (parent, widened, texts) =>
       ask(parent, {
         type: "warning",
         message: tr("device.ceiling.message"),
-        detail: texts.join("\n\n"),
+        detail: [
+          [
+            ...(widened.fullAccess ? [tr("device.ceiling.change.full_access")] : []),
+            ...(widened.projectReach ? [tr("device.ceiling.change.project_reach")] : []),
+          ].join("\n"),
+          ...texts,
+        ].join("\n\n"),
         confirm: tr("device.ceiling.confirm"),
       }),
 
     confirmRaiseKeepAwake: (parent, mode) =>
       ask(parent, {
         message: tr("device.keep_awake.message"),
-        detail: `${tr(`device.keep_awake.detail.${mode}`)}\n\n${tr("device.keep_awake.limits")}`,
+        detail: `${tr(`device.keep_awake.detail.${mode}`)}\n\n${tr(
+          deps.platform === "linux" ? "device.keep_awake.limits_linux" : "device.keep_awake.limits",
+        )}`,
         confirm: tr("device.keep_awake.confirm"),
       }),
 

@@ -331,7 +331,11 @@ describe("requestCeiling", () => {
     expect(ctx.confirm).toHaveBeenCalledOnce();
     expect(s.dialogs.asked[0]).toEqual({
       name: "confirmWidenCeiling",
-      args: [ctx.window, [TEXTS.ceilingWidening, TEXTS.fullAccessRisk]],
+      args: [
+        ctx.window,
+        { fullAccess: true, projectReach: true },
+        [TEXTS.ceilingWidening, TEXTS.fullAccessRisk],
+      ],
     });
     expect(s.cli.writes()).toEqual([
       "ceiling set --full-access allow --project-reach os-user --yes",
@@ -342,7 +346,63 @@ describe("requestCeiling", () => {
     const s = setup({ status: loggedIn() });
     const ctx = ctxFor();
     await s.device.impl.requestCeiling(ctx, { fullAccess: false, projectReach: "os-user" });
-    expect(s.dialogs.asked[0]?.args[1]).toEqual([TEXTS.ceilingWidening]);
+    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+      { fullAccess: false, projectReach: true },
+      [TEXTS.ceilingWidening],
+    ]);
+  });
+
+  test("in docker mode widening Full access still names it, without the os risk text", async () => {
+    const s = setup({ status: loggedIn({ mode: "docker" }) });
+    await s.device.impl.requestCeiling(ctxFor(), { fullAccess: true, projectReach: "workspace" });
+    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+      { fullAccess: true, projectReach: false },
+      [TEXTS.ceilingWidening],
+    ]);
+  });
+
+  test("a widening that grew while the dialog was open is refused", async () => {
+    let reads = 0;
+    const s = setup(
+      { status: loggedIn() },
+      {
+        handlers: {
+          "ceiling show --json": () => {
+            reads++;
+            // Before: full access already allowed; after the dialog it was narrowed meanwhile.
+            return {
+              lines: [{ fullAccess: reads === 1, projectReach: "workspace", revision: null }],
+            };
+          },
+        },
+      },
+    );
+    await expect(s.device.impl.requestCeiling(ctxFor(), wide)).rejects.toMatchObject({
+      code: "failed",
+    });
+    expect(reads).toBe(2);
+    expect(s.cli.writes()).toEqual([]);
+  });
+
+  test("a widening that shrank meanwhile still applies what was confirmed", async () => {
+    let reads = 0;
+    const s = setup(
+      { status: loggedIn() },
+      {
+        handlers: {
+          "ceiling show --json": () => {
+            reads++;
+            return {
+              lines: [{ fullAccess: reads === 2, projectReach: "workspace", revision: null }],
+            };
+          },
+        },
+      },
+    );
+    expect(await s.device.impl.requestCeiling(ctxFor(), wide)).toBe("applied");
+    expect(s.cli.writes()).toEqual([
+      "ceiling set --full-access allow --project-reach os-user --yes",
+    ]);
   });
 
   test("a widening refused: cancelled, nothing written", async () => {
@@ -423,6 +483,25 @@ describe("setKeepAwake", () => {
       args: [ctx.window, "connected"],
     });
     expect(s.cli.writes()).toEqual(["keep-awake connected --yes"]);
+  });
+
+  test("a raise that grew while the dialog was open is refused", async () => {
+    let reads = 0;
+    const s = setup(
+      { status: loggedIn() },
+      {
+        handlers: {
+          "keep-awake show --json": () => {
+            reads++;
+            return { lines: [{ keepAwake: reads === 1 ? "while-busy" : "off" }] };
+          },
+        },
+      },
+    );
+    await expect(s.device.impl.setKeepAwake(ctxFor(), "connected")).rejects.toMatchObject({
+      code: "failed",
+    });
+    expect(s.cli.writes()).toEqual([]);
   });
 
   test("raising refused: cancelled", async () => {

@@ -206,6 +206,9 @@ export function bootShellPreload(deps: ShellPreloadDeps): boolean {
   const listeners = new Map<number, (payload: unknown) => void>();
   let nextId = 1;
   let listening = false;
+  // A new document of this window: main ends what an earlier document subscribed (IPC from one
+  // renderer stays in order, so this arrives before any subscription of this document).
+  deps.ipcRenderer.send(SHELL_CHANNELS.unsubscribe, { doc });
 
   const bridge: ShellBridge = {
     async call(key, fn, args) {

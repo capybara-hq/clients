@@ -20,13 +20,13 @@ const unnamed: Profile = {
   name: "b.example.com:8443",
 };
 
-function setup(response = 0, locale: "zh" | "en" = "zh") {
+function setup(response = 0, locale: "zh" | "en" = "zh", platform = "darwin") {
   const shown: { parent: unknown; options: MessageBoxOptions }[] = [];
   const showMessageBox = vi.fn(async (parent: unknown, options: MessageBoxOptions) => {
     shown.push({ parent, options });
     return { response };
   });
-  return { dialogs: createDeviceDialogs({ showMessageBox, locale }), shown };
+  return { dialogs: createDeviceDialogs({ showMessageBox, locale, platform }), shown };
 }
 
 describe("the platform label", () => {
@@ -86,7 +86,9 @@ describe("the other confirmations", () => {
     const { dialogs, shown } = setup(1);
     expect(await dialogs.confirmDisconnectOther(null, "https://other.example.com")).toBe(false);
     expect(await dialogs.confirmResume(null, named)).toBe(false);
-    expect(await dialogs.confirmWidenCeiling(null, ["Widening text.", "Risk text."])).toBe(false);
+    expect(
+      await dialogs.confirmWidenCeiling(null, { fullAccess: true, projectReach: false }, ["W."]),
+    ).toBe(false);
     expect(await dialogs.confirmRaiseKeepAwake(null, "connected")).toBe(false);
     expect(await dialogs.confirmRemoveDevice(null, named)).toBe(false);
     for (const { options } of shown) {
@@ -103,11 +105,29 @@ describe("the other confirmations", () => {
     expect(shown[0]?.options.message).toContain("https://other.example.com");
   });
 
-  test("the widening dialog shows the device program's own texts as given", async () => {
-    const { dialogs, shown } = setup(0);
-    await dialogs.confirmWidenCeiling(null, ["Widening text.", "Risk text."]);
-    expect(shown[0]?.options.type).toBe("warning");
-    expect(shown[0]?.options.detail).toBe("Widening text.\n\nRisk text.");
+  test("the widening dialog names each widened item, then the program's own texts", async () => {
+    const cases = [
+      [{ fullAccess: true, projectReach: false }, "完全访问：允许"],
+      [{ fullAccess: false, projectReach: true }, "项目范围：整个系统用户（os-user）"],
+      [
+        { fullAccess: true, projectReach: true },
+        "完全访问：允许\n项目范围：整个系统用户（os-user）",
+      ],
+    ] as const;
+    for (const [widened, lines] of cases) {
+      const { dialogs, shown } = setup(0);
+      await dialogs.confirmWidenCeiling(null, widened, ["Widening text.", "Risk text."]);
+      expect(shown[0]?.options.type).toBe("warning");
+      expect(shown[0]?.options.detail).toBe(`${lines}\n\nWidening text.\n\nRisk text.`);
+    }
+  });
+
+  test("the widened items in English", async () => {
+    const { dialogs, shown } = setup(0, "en");
+    await dialogs.confirmWidenCeiling(null, { fullAccess: true, projectReach: true }, ["W."]);
+    expect(shown[0]?.options.detail).toBe(
+      "Full access: allowed\nProject reach: the whole OS user (os-user)\n\nW.",
+    );
   });
 
   test("the keep-awake dialog says what it cannot prevent", async () => {
@@ -116,6 +136,16 @@ describe("the other confirmations", () => {
     await dialogs.confirmRaiseKeepAwake(null, "connected");
     expect(shown[0]?.options.detail).not.toBe(shown[1]?.options.detail);
     for (const { options } of shown) expect(options.detail).toContain("合上");
+  });
+
+  test("on Linux the keep-awake limits name the lid switch instead", async () => {
+    const { dialogs, shown } = setup(0, "zh", "linux");
+    await dialogs.confirmRaiseKeepAwake(null, "connected");
+    expect(shown[0]?.options.detail).toContain("盖子开关");
+    expect(shown[0]?.options.detail).not.toContain("Mac");
+    const en = setup(0, "en", "linux");
+    await en.dialogs.confirmRaiseKeepAwake(null, "connected");
+    expect(en.shown[0]?.options.detail).toContain("lid switch");
   });
 
   test("profile removal asks 是 / 否 about the device", async () => {

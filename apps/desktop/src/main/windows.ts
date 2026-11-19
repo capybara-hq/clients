@@ -56,8 +56,8 @@ export interface WindowOptions {
   minHeight?: number;
   show: boolean;
   title: string;
-  titleBarStyle: "hiddenInset";
-  trafficLightPosition: { x: number; y: number };
+  titleBarStyle?: "hiddenInset";
+  trafficLightPosition?: { x: number; y: number };
   backgroundColor?: string;
   resizable?: boolean;
   /** A child window (the device verification page) stays above its parent and closes with it. */
@@ -336,9 +336,8 @@ export function createWindowManager(deps: WindowManagerDeps) {
         width: 560,
         height: 720,
         show: false,
+        // The default title bar: the page has no inset for traffic lights.
         title: profile.name,
-        titleBarStyle: "hiddenInset",
-        trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
         ...(parentAlive ? { parent } : {}),
         ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
         webPreferences: childWebPreferences({ partition: preparePartition(profile) }),

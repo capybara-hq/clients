@@ -90,6 +90,8 @@ type LoginOutcome = "done" | "closed" | "denied" | "failed";
 
 export function createConnect(deps: ConnectDeps) {
   const log = deps.log ?? (() => {});
+  /** One machine, one login at a time: a connect from any other profile meanwhile is busy. */
+  let connecting = false;
 
   /** Runs `login --json`; the verification page opens in the child window. */
   async function login(target: DeviceTarget, orgId: string): Promise<LoginOutcome> {
@@ -149,6 +151,19 @@ export function createConnect(deps: ConnectDeps) {
   ): Promise<"connected" | "cancelled"> {
     // deviceId is accepted for the contract; the link page takes only org= today (core Task 8).
     const { orgId } = parseInput(input);
+    if (connecting) throw { code: "busy" };
+    connecting = true;
+    try {
+      return await connectOnce(target, orgId);
+    } finally {
+      connecting = false;
+    }
+  };
+
+  async function connectOnce(
+    target: DeviceTarget,
+    orgId: string,
+  ): Promise<"connected" | "cancelled"> {
     const machine = await readMachine(deps.cli);
     // One runner, one deployment (spec §9.3): already here, nothing to do.
     if (isThisDeployment(machine, target.profile)) return "connected";
@@ -175,5 +190,5 @@ export function createConnect(deps: ConnectDeps) {
       deps.onChanged?.();
     }
     return "connected";
-  };
+  }
 }

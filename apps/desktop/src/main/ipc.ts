@@ -181,13 +181,27 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
   const registry = new Map<string, Registered<C>>();
   const gate = createConfirmGate();
   /** Per webContents: the document subscribed now and its subscriptions (id → stop). */
-  const subscriptions = new Map<number, { doc: string; stops: Map<number, () => void> }>();
+  const subscriptions = new Map<
+    number,
+    { doc: string; stops: Map<number, { key: string; profile: Profile; stop: () => void }> }
+  >();
 
   function dropSubscriptions(contentsId: number): void {
     const entry = subscriptions.get(contentsId);
     if (!entry) return;
     subscriptions.delete(contentsId);
-    for (const stop of entry.stops.values()) stop();
+    for (const s of entry.stops.values()) s.stop();
+  }
+
+  /** Ends every subscription whose capability is no longer offered to its profile. */
+  function pruneSubscriptions(): void {
+    for (const entry of subscriptions.values()) {
+      for (const [id, s] of entry.stops) {
+        if (registry.get(s.key)?.available(s.profile)) continue;
+        entry.stops.delete(id);
+        s.stop();
+      }
+    }
   }
 
   function target(event: IpcEventLike): C | undefined {
@@ -246,6 +260,7 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
     describe,
     describeEvents,
     dropSubscriptions,
+    pruneSubscriptions,
 
     /** Sync init at preload start: the environment values, or null for any other frame. */
     handleInit(event: IpcEventLike): ShellInit | null {
@@ -336,22 +351,35 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
       } catch {
         return false;
       }
-      entry.stops.set(id, () => {
-        active = false;
-        stop();
+      entry.stops.set(id, {
+        key: raw.key,
+        profile: t.profile,
+        stop: () => {
+          active = false;
+          stop();
+        },
       });
       return true;
     },
 
+    /**
+     * Ends one subscription (`{ id, doc }`), or, with `{ doc }` alone (sent by every new document's
+     * preload before anything else), every subscription of an earlier document of this window.
+     */
     handleUnsubscribe(event: IpcEventLike, raw: unknown): void {
       const contentsId = contentsIdOf(event.sender);
       if (contentsId === undefined || typeof raw !== "object" || raw === null) return;
       const { id, doc } = raw as Record<string, unknown>;
       const entry = subscriptions.get(contentsId);
-      if (!entry || entry.doc !== doc || typeof id !== "number") return;
-      const stop = entry.stops.get(id);
+      if (!entry) return;
+      if (id === undefined) {
+        if (typeof doc === "string" && entry.doc !== doc) dropSubscriptions(contentsId);
+        return;
+      }
+      if (entry.doc !== doc || typeof id !== "number") return;
+      const s = entry.stops.get(id);
       entry.stops.delete(id);
-      stop?.();
+      s?.stop();
     },
 
     install(ipcMain: IpcMainLike): void {

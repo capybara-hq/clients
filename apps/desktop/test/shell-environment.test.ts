@@ -348,6 +348,13 @@ describe("the preload's event subscriptions", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  test("a new document announces itself before anything else, so main ends the old one's", () => {
+    const { deps } = booted();
+    expect(deps.ipcRenderer.send).toHaveBeenCalledWith(SHELL_CHANNELS.unsubscribe, {
+      doc: "doc-11111111",
+    });
+  });
+
   test("one IPC listener for every subscription", () => {
     const { deps, bridge } = booted();
     bridge.subscribe("device@1", "onStatus", vi.fn());
@@ -359,6 +366,7 @@ describe("the preload's event subscriptions", () => {
     const { deps, bridge } = booted();
     const listener = vi.fn();
     const off = bridge.subscribe("device@1", "onStatus", listener);
+    deps.ipcRenderer.send.mockClear();
     off();
     off();
     expect(deps.ipcRenderer.send).toHaveBeenCalledTimes(1);

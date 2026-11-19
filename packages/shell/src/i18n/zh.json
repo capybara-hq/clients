@@ -41,5 +41,8 @@
   "device.remove.message": "也断开本机并让设备退出登录吗？",
   "device.remove.detail": "这台电脑作为本地设备连接到 {platform}。选择「否」会保留设备，它继续运行。",
   "device.remove.yes": "是",
-  "device.remove.no": "否"
+  "device.remove.no": "否",
+  "device.ceiling.change.full_access": "完全访问：允许",
+  "device.ceiling.change.project_reach": "项目范围：整个系统用户（os-user）",
+  "device.keep_awake.limits_linux": "保持唤醒无法阻止以下情况：由系统处理的盖子开关、选择睡眠、电量严重不足或过热。睡眠中的电脑对平台显示为离线。"
 }

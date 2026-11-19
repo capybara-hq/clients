@@ -274,7 +274,17 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
           texts.ceilingWidening,
           ...(widensFull && machine.mode !== "docker" ? [texts.fullAccessRisk] : []),
         ];
-        if (!(await dialogs.confirmWidenCeiling(ctx.window, shown))) return "cancelled";
+        const widened = { fullAccess: widensFull, projectReach: widensReach };
+        if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown))) return "cancelled";
+        // The ceiling may have narrowed while the dialog was open: --yes must not widen more than
+        // the person saw.
+        const now = await readCeiling(cli);
+        if (
+          (!now.fullAccess && fullAccess && !widensFull) ||
+          (now.projectReach === "workspace" && projectReach === "os-user" && !widensReach)
+        ) {
+          throw failed();
+        }
         await run(cli, [...args, "--yes"]);
         return "applied";
       });
@@ -295,6 +305,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       const raised = mode as Exclude<KeepAwakeMode, "off">;
       return ctx.confirm(async () => {
         if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised))) return "cancelled";
+        // Lowered while the dialog was open: the raise would be larger than the one confirmed.
+        if (rank(await readKeepAwake(cli)) < rank(cur)) throw failed();
         await run(cli, ["keep-awake", raised, "--yes"]);
         changed();
         return "applied";

@@ -344,6 +344,9 @@ describe("device@1 support", () => {
       webPreferences: { partition: "persist:profile-p1", contextIsolation: true, sandbox: true },
     });
     expect(options[1]?.webPreferences).not.toHaveProperty("preload");
+    // An ordinary window: the default title bar, no inset traffic lights.
+    expect(options[1]).not.toHaveProperty("titleBarStyle");
+    expect(options[1]).not.toHaveProperty("trafficLightPosition");
     expect(created[1]?.loadURL).toHaveBeenCalledWith(
       "https://a.example.com/team/devices/link?code=X&org=o",
     );

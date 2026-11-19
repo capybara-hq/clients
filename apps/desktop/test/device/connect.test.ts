@@ -226,6 +226,32 @@ describe("connect", () => {
     await result;
   });
 
+  test("one connect at a time across every profile: another answers busy", async () => {
+    const s = setup();
+    const first = s.connect(ctxFor(), { orgId: "org_1" });
+    await s.login.started;
+    const other = {
+      ...profileA,
+      id: "pb",
+      base: "https://b.example.com",
+      origin: "https://b.example.com",
+    };
+    await expect(s.connect(ctxFor(other), { orgId: "org_2" })).rejects.toMatchObject({
+      code: "busy",
+    });
+    s.login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
+    s.login.exit(0);
+    expect(await first).toBe("connected");
+    // Free again afterwards: the next connect runs its own login.
+    const again = s.connect(ctxFor(), { orgId: "org_1" });
+    await vi.waitFor(() =>
+      expect(s.cli.writes().filter((c) => c.startsWith("login"))).toHaveLength(2),
+    );
+    s.login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
+    s.login.exit(0);
+    expect(await again).toBe("connected");
+  });
+
   test("ids are checked before anything runs", async () => {
     const s = setup();
     for (const input of [

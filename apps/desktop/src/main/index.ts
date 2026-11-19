@@ -158,11 +158,17 @@ function start(): void {
       sendEvent: (target, message) => windows.sendEvent(target, message),
     });
 
+    // `managed` is read once at start (no re-read path exists yet); a re-read would have to call
+    // `evaluate` again for every profile so a changed `connectThisMachine` takes effect.
     const deviceAvailability = createDeviceAvailability({
       platform: process.platform,
       managed,
       fetchMeta: (base) => fetchMeta(base, net.fetch as typeof fetch),
-      onChange: (profileId) => windows.broadcastChange(profileId),
+      onChange: (profileId) => {
+        // A capability no longer offered keeps no subscriptions.
+        bridge.pruneSubscriptions();
+        windows.broadcastChange(profileId);
+      },
       log: (message, err) => console.error(message, err ?? ""),
     });
 
@@ -233,6 +239,7 @@ function start(): void {
             ? dialog.showMessageBox(parent, options)
             : dialog.showMessageBox(options),
         locale: localeFrom(app.getLocale()),
+        platform: process.platform,
       }),
       texts: createDeviceTexts({
         resourcesPath,

@@ -463,6 +463,26 @@ describe("events (device@1.onStatus)", () => {
     expect(e.offs).toEqual(["off1", "off2"]);
   });
 
+  test("a capability that becomes unavailable loses its subscriptions", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1));
+    e.b.pruneSubscriptions();
+    expect(e.offs).toEqual([]);
+    e.setAvailable(false);
+    e.b.pruneSubscriptions();
+    expect(e.offs).toEqual(["off1"]);
+  });
+
+  test("a new document announcing itself ends the old document's subscriptions", () => {
+    const e = eventBridge();
+    e.b.handleSubscribe(topEvent(), sub(1, "doc-aaaaaaaa"));
+    // The same document announcing again changes nothing.
+    e.b.handleUnsubscribe(topEvent(), { doc: "doc-aaaaaaaa" });
+    expect(e.offs).toEqual([]);
+    e.b.handleUnsubscribe(topEvent(), { doc: "doc-bbbbbbbb" });
+    expect(e.offs).toEqual(["off1"]);
+  });
+
   test("an id already in use is refused", () => {
     const e = eventBridge();
     expect(e.b.handleSubscribe(topEvent(), sub(1))).toBe(true);
