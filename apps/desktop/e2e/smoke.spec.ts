@@ -147,11 +147,15 @@ test("a call without a user activation is refused", async () => {
   // Playwright's evaluate carries a user gesture; wait on the condition until the transient
   // activation has expired, then call.
   const code = await page.evaluate(async () => {
-    await new Promise<void>((resolve) => {
-      const check = () =>
-        (navigator as unknown as { userActivation: { isActive: boolean } }).userActivation.isActive
-          ? setTimeout(check, 50)
-          : resolve();
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 10_000;
+      const check = () => {
+        const active = (navigator as unknown as { userActivation: { isActive: boolean } })
+          .userActivation.isActive;
+        if (!active) resolve();
+        else if (Date.now() > deadline) reject(new Error("the user activation did not expire"));
+        else setTimeout(check, 50);
+      };
       check();
     });
     return (window as unknown as { capybaraShell: PageShell }).capybaraShell.capabilities[
@@ -243,11 +247,16 @@ test("a replayed callback does nothing", async () => {
   await app.evaluate(({ app: electronApp }, url) => {
     electronApp.emit("open-url", { preventDefault() {} }, url);
   }, link);
-  // A reload round trip orders after the (synchronous) lookup that finds no pending attempt.
+  // The router looks the state up synchronously and a miss sends nothing, so the reload round
+  // trip below orders after it. For a stronger signal, poll for a token hit that must stay absent.
   await page.reload();
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  await expect
+    .poll(() => fake.requests.filter((r) => r.path === "/api/v1/app-auth/token").length, {
+      timeout: 2000,
+    })
+    .toBe(1);
   expect(fake.accepted).toBe(1);
-  expect(fake.requests.filter((r) => r.path === "/api/v1/app-auth/token")).toHaveLength(1);
 });
 
 test("a contextBridge subscription returns a working unsubscribe", async () => {

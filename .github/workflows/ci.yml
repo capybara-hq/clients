@@ -84,6 +84,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm e2e
+      # The app writes no logs of its own under the seam; the traces and error context are what a
+      # macOS-only failure leaves.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: e2e-failure
+          path: apps/desktop/e2e/test-results
+          if-no-files-found: ignore
 
   commitlint:
     if: github.event_name == 'pull_request'

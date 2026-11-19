@@ -10,5 +10,8 @@ export default defineConfig({
   fullyParallel: false,
   timeout: 0,
   globalTimeout: 10 * 60 * 1000,
+  // Failure artifacts (traces, error context) land here; CI uploads the directory.
+  outputDir: "./test-results",
+  use: { trace: "retain-on-failure" },
   reporter: [["list"]],
 });
