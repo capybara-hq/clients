@@ -65,7 +65,7 @@ import { ADDRESS_PARTITION, hardenAnyContents } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
-import { setupUpdates } from "./updates.ts";
+import { setupUpdates, updateNotice } from "./updates.ts";
 import { desktopUserAgent } from "./user-agent.ts";
 import {
   createWindowManager,
@@ -465,7 +465,8 @@ function start(): void {
     });
 
     // electron-updater works only in a packaged app. An update installs on quit, so the
-    // `afterUpdate` call at the next start is the one that finds the new device on disk.
+    // `afterUpdate` call at the next start is the one that finds the new device on disk and
+    // restarts the service on it.
     if (app.isPackaged) {
       void deviceService
         .repairService()
@@ -475,8 +476,15 @@ function start(): void {
         autoUpdater,
         managed,
         logger: { info: console.info, error: console.error },
-        afterUpdate: () => deviceService.afterUpdate(),
+        // Once per version: a notification whose click restarts into the new version now.
+        onDownloaded: (info) => notice(info),
       });
+      const notice = updateNotice({
+        Notification: Notification as unknown as NotificationClass,
+        locale,
+        restart: () => updates.restart(),
+      });
+      app.on("will-quit", () => updates.dispose());
       void updates.check();
     }
   });

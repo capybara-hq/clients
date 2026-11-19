@@ -82,5 +82,7 @@
   "menu.window": "Window",
   "menu.minimize": "Minimize",
   "menu.zoom": "Zoom",
-  "menu.front": "Bring All to Front"
+  "menu.front": "Bring All to Front",
+  "update.ready.title": "A new version of {name} is ready",
+  "update.ready.body": "{version} has been downloaded and installs when you quit. Click to restart and update now."
 }

@@ -82,5 +82,7 @@
   "menu.window": "窗口",
   "menu.minimize": "最小化",
   "menu.zoom": "缩放",
-  "menu.front": "前置全部窗口"
+  "menu.front": "前置全部窗口",
+  "update.ready.title": "{name} 有新版本",
+  "update.ready.body": "{version} 已下载，退出时安装。点按此处立即重新启动并更新。"
 }
