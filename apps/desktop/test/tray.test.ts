@@ -85,6 +85,37 @@ describe("the tray menu model", () => {
     expect(labels(platformItems(locked, actions()))).toEqual(["Example", "Other"]);
   });
 
+  test("移除平台 lists each platform; a click removes that one (spec 6.3)", () => {
+    const a = { ...actions(), removeProfile: vi.fn() };
+    const items = platformItems(state, a);
+    expect(labels(items)).toEqual(["Example", "Other", "-", "添加平台", "移除平台"]);
+    const sub = items.at(-1)?.submenu ?? [];
+    expect(labels(sub)).toEqual(["Example…", "Other…"]);
+    sub[1]?.click?.({ checked: false });
+    expect(a.removeProfile).toHaveBeenCalledExactlyOnceWith("p2");
+    expect(a.showProfile).not.toHaveBeenCalled();
+    // The tray carries the same entries.
+    expect(labels(trayMenuModel(state, a))).toContain("移除平台");
+    expect(labels(platformItems({ ...state, locale: "en" }, a)).at(-1)).toBe("Remove platform");
+  });
+
+  test("with lockDeployments or without profiles there is no 移除平台", () => {
+    const a = { ...actions(), removeProfile: vi.fn() };
+    expect(labels(platformItems({ ...state, lockDeployments: true }, a))).toEqual([
+      "Example",
+      "Other",
+    ]);
+    expect(labels(platformItems({ ...state, profiles: [] }, a))).toEqual(["添加平台"]);
+    expect(
+      labels(
+        appMenuTemplate(
+          { ...state, lockDeployments: true, productName: "Capybara", startAtLogin: false },
+          { ...a, setStartAtLogin: vi.fn() },
+        )[1]?.submenu ?? [],
+      ),
+    ).toEqual(["Example", "Other"]);
+  });
+
   test("without profiles the menu starts at the entries that remain", () => {
     expect(labels(trayMenuModel({ ...state, profiles: [] }, actions()))).toEqual([
       "添加平台",

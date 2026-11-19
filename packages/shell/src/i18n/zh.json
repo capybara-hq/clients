@@ -84,5 +84,11 @@
   "menu.zoom": "缩放",
   "menu.front": "前置全部窗口",
   "update.ready.title": "{name} 有新版本",
-  "update.ready.body": "{version} 已下载，退出时安装。点按此处立即重新启动并更新。"
+  "update.ready.body": "{version} 已下载，退出时安装。点按此处立即重新启动并更新。",
+  "platform.remove": "移除平台",
+  "platform.remove.message": "要移除 {name}（{host}）吗？",
+  "platform.remove.message_host": "要移除 {host} 吗？",
+  "platform.remove.detail": "这台电脑上该平台的登录和本地数据（Cookie、缓存）都会被删除。之后可以重新添加。",
+  "platform.remove.confirm": "移除",
+  "platform.remove.cancel": "取消"
 }

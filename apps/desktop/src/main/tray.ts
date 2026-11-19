@@ -54,6 +54,8 @@ export interface TrayDeviceActions {
 export interface TrayActions {
   showProfile(id: string): void;
   addPlatform(): void;
+  /** Asks, then removes the platform (remove-profile.ts). Absent: no 「移除平台」. */
+  removeProfile?: (id: string) => void;
   openWindow(): void;
   quit(): void;
   device?: TrayDeviceActions;
@@ -61,7 +63,11 @@ export interface TrayActions {
 
 const SEPARATOR: MenuItemModel = { type: "separator" };
 
-/** The profile switcher and 「添加平台」: shared by the tray and the app menu. */
+/**
+ * The profile switcher, 「添加平台」 and 「移除平台」 (one entry per platform): shared by the tray and
+ * the app menu. Under `lockDeployments` the offered profiles are the managed ones, and neither
+ * adding nor removing is offered.
+ */
 export function platformItems(state: TrayState, actions: TrayActions): MenuItemModel[] {
   const items: MenuItemModel[] = state.profiles.map((p) => ({
     label: p.name,
@@ -72,6 +78,13 @@ export function platformItems(state: TrayState, actions: TrayActions): MenuItemM
   if (!state.lockDeployments) {
     if (items.length > 0) items.push(SEPARATOR);
     items.push({ label: t(state.locale, "platform.add"), click: () => actions.addPlatform() });
+    const remove = actions.removeProfile;
+    if (remove && state.profiles.length > 0) {
+      items.push({
+        label: t(state.locale, "platform.remove"),
+        submenu: state.profiles.map((p) => ({ label: `${p.name}…`, click: () => remove(p.id) })),
+      });
+    }
   }
   return items;
 }

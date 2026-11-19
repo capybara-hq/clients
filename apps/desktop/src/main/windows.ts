@@ -137,6 +137,16 @@ export function createWindowManager(deps: WindowManagerDeps) {
     win.loadURL(url).catch((err: unknown) => deps.log?.(`could not load ${url}`, err));
   }
 
+  /** Forgets a window (once): no IPC resolves to it any more. */
+  function untrack(entry: Entry): void {
+    const id = entry.window.webContents.id;
+    if (byContents.get(id) !== entry) return;
+    byContents.delete(id);
+    if (entry.kind === "address") deps.onAddressClosed?.(id);
+    else deps.onProfileClosed?.(id);
+    if (lastFocused === entry) lastFocused = undefined;
+  }
+
   function track(entry: Entry): void {
     const { window: win } = entry;
     const id = win.webContents.id;
@@ -145,12 +155,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       lastFocused = entry;
       if (entry.kind === "profile") deps.onFocusProfile(entry.profile);
     });
-    win.on("closed", () => {
-      byContents.delete(id);
-      if (entry.kind === "address") deps.onAddressClosed?.(id);
-      else deps.onProfileClosed?.(id);
-      if (lastFocused === entry) lastFocused = undefined;
-    });
+    win.on("closed", () => untrack(entry));
     win.on("ready-to-show", () => win.show());
   }
 
@@ -402,8 +407,29 @@ export function createWindowManager(deps: WindowManagerDeps) {
       return true;
     },
 
+    /**
+     * Closes every window of a profile and forgets them at once: a real close is asynchronous,
+     * and a profile being removed must not pass the IPC checks while its partition is cleared.
+     */
     closeProfileWindows(profileId: string): void {
-      for (const e of profileEntries(profileId)) e.window.close();
+      for (const e of profileEntries(profileId)) {
+        untrack(e);
+        e.window.close();
+      }
+    },
+
+    /**
+     * The window a dialog about a profile attaches to: that profile's last focused (or newest)
+     * window, else the most recently focused window, else the newest one; undefined when none.
+     */
+    dialogParent(profileId: string): WindowLike | undefined {
+      const own = profileEntries(profileId);
+      if (lastFocused?.kind === "profile" && lastFocused.profile.id === profileId) {
+        return lastFocused.window;
+      }
+      const all = entries();
+      return (own.at(-1) ?? (lastFocused && all.includes(lastFocused) ? lastFocused : all.at(-1)))
+        ?.window;
     },
 
     hasWindows(): boolean {

@@ -84,5 +84,11 @@
   "menu.zoom": "Zoom",
   "menu.front": "Bring All to Front",
   "update.ready.title": "A new version of {name} is ready",
-  "update.ready.body": "{version} has been downloaded and installs when you quit. Click to restart and update now."
+  "update.ready.body": "{version} has been downloaded and installs when you quit. Click to restart and update now.",
+  "platform.remove": "Remove platform",
+  "platform.remove.message": "Remove {name} ({host})?",
+  "platform.remove.message_host": "Remove {host}?",
+  "platform.remove.detail": "This signs you out of the platform on this computer and deletes its local data (cookies, cache). You can add it again later.",
+  "platform.remove.confirm": "Remove",
+  "platform.remove.cancel": "Cancel"
 }

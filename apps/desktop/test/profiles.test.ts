@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createProfileStore, partitionFor } from "../src/main/profiles.ts";
 import { fakeSession, memoryFs } from "./fakes.ts";
 
@@ -73,46 +73,6 @@ describe("profiles", () => {
     await store.remove(p.id);
     const s = sessions.get("persist:profile-p1");
     expect(s?.clearStorageData).toHaveBeenCalledTimes(1);
-    expect(store.list()).toEqual([]);
-  });
-
-  test("remove asks the device hook first (spec 6.3), then clears and forgets", async () => {
-    const fs = memoryFs();
-    const order: string[] = [];
-    const session = fakeSession();
-    session.clearStorageData.mockImplementation(async () => {
-      order.push("clear");
-    });
-    const beforeRemove = vi.fn(async (p: { id: string }) => {
-      order.push(`before ${p.id}`);
-    });
-    const store = createProfileStore({
-      file: FILE,
-      fs,
-      sessionFor: () => session,
-      newId: () => "p1",
-      beforeRemove,
-    });
-    const p = store.add(example);
-    await store.remove(p.id);
-    expect(beforeRemove).toHaveBeenCalledWith(p);
-    expect(order).toEqual(["before p1", "clear"]);
-    expect(store.list()).toEqual([]);
-  });
-
-  test("a failing device hook does not keep the profile", async () => {
-    const store = createProfileStore({
-      file: FILE,
-      fs: memoryFs(),
-      sessionFor: () => fakeSession(),
-      newId: () => "p1",
-      beforeRemove: async () => {
-        throw new Error("cli gone");
-      },
-      log: () => {},
-    });
-    const p = store.add(example);
-    await store.remove(p.id);
     expect(store.list()).toEqual([]);
   });
 
