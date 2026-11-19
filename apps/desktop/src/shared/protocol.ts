@@ -1,6 +1,6 @@
 // The IPC protocol between the main process and the two preloads, plus the desktop's Shell
 // environment values. Shared by main and preload code; no Electron imports.
-import type { CapybaraShell, ShellCallError } from "./sdk-shell-types.ts";
+import type { CapybaraShell, ShellCallError } from "@capybara-hq/plugin-sdk";
 
 /** Channels of the deployment window's preload (the Shell environment). */
 export const SHELL_CHANNELS = {
@@ -56,6 +56,18 @@ export interface ShellCallRequest {
   activation: boolean;
 }
 
+// A Record, so this fails to compile when the SDK adds a code it lacks.
+const CALL_ERRORS: Record<ShellCallError, true> = {
+  busy: true,
+  no_activation: true,
+  cancelled: true,
+  failed: true,
+};
+/** Every `ShellCallError`, as a runtime list: the codes a call result may carry. */
+export const SHELL_CALL_ERRORS: readonly ShellCallError[] = Object.keys(
+  CALL_ERRORS,
+) as ShellCallError[];
+
 /** Errors are carried as data: Electron drops the properties of a thrown Error across IPC. */
 export type ShellCallResult = { ok: true; value: unknown } | { ok: false; code: ShellCallError };
 
@@ -65,6 +77,7 @@ export type AddressErrorKind =
   | "unreachable"
   | "not_capybara"
   | "too_old"
+  | "sign_in_unavailable"
   | "locked"
   | "failed";
 

@@ -9,12 +9,10 @@ import { randomBytes } from "node:crypto";
 import { type AuthCallback, checkCallback, createPkce, SIGN_IN_TTL_MS } from "@capybara-hq/shell";
 import type { CallContext } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
+import { appVersionFrom, desktopUserAgent, machineNameFrom } from "./user-agent.ts";
 
 /** Must be listed in the kernel's `auth.appRedirectUris`. */
 export const REDIRECT_URI = "capybara://auth/callback";
-
-const MACHINE_NAME_MAX = 64;
-const APP_VERSION_MAX = 32;
 
 export type SignInResult = "signedIn" | "cancelled";
 
@@ -63,24 +61,21 @@ interface Pending {
 
 const FAILED = Object.freeze({ code: "failed" as const });
 
-/** The machine name the kernel shows: printable, trimmed, no `.local`, at most 64 characters. */
-export function machineNameFrom(hostname: string): string {
-  const printable = hostname
-    .replace(/\p{C}/gu, "")
-    .trim()
-    .replace(/\.local$/i, "");
-  const capped = [...printable].slice(0, MACHINE_NAME_MAX).join("").trim();
-  return capped === "" ? "Desktop" : capped;
-}
-
-function capVersion(version: string): string {
-  return [...version.replace(/\p{C}/gu, "").trim()].slice(0, APP_VERSION_MAX).join("");
-}
-
 function defaultSchedule(fn: () => void, ms: number): () => void {
   const t = setTimeout(fn, ms);
   t.unref?.();
   return () => clearTimeout(t);
+}
+
+/** The kernel's error code (`{ error: { code } }`), only when it looks like one; never the body. */
+async function errorCode(res: ResponseLike): Promise<string | undefined> {
+  try {
+    const body = await res.json();
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" && /^[a-z][a-z0-9_.]{0,63}$/.test(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function hasAccount(body: unknown): boolean {
@@ -95,7 +90,10 @@ export function createSignIn(deps: SignInDeps) {
   const newState = deps.newState ?? (() => randomBytes(32).toString("base64url"));
   const schedule = deps.schedule ?? defaultSchedule;
   const machineName = machineNameFrom(deps.machineName);
-  const appVersion = capVersion(deps.appVersion);
+  const appVersion = appVersionFrom(deps.appVersion);
+  // The kernel records the refresh request's user agent on the session: name the app from the
+  // first request (the partition's header listener does the same for the web's own requests).
+  const userAgent = desktopUserAgent(deps.appVersion, deps.machineName);
   const log = (message: string, err?: unknown) => deps.log?.(message, err);
 
   // A Map, so a `state` such as `__proto__` is just a key.
@@ -127,7 +125,12 @@ export function createSignIn(deps: SignInDeps) {
     try {
       const res = await deps.fetchFor(entry.profile)(`${entry.base}/api/v1/app-auth/token`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          // The kernel's CSRF header, required on every non-safe public route.
+          "X-Capybara-Csrf": "1",
+          "User-Agent": userAgent,
+        },
         body: JSON.stringify({ code, codeVerifier: entry.verifier, redirectUri: REDIRECT_URI }),
         // Send and store the partition's cookies; never follow a redirect elsewhere.
         credentials: "include",
@@ -136,9 +139,10 @@ export function createSignIn(deps: SignInDeps) {
         signal: (deps.timeoutSignal ?? AbortSignal.timeout)(EXCHANGE_TIMEOUT_MS),
       });
       if (!res.ok) {
-        // The kernel's error JSON (e.g. app_auth.code_invalid) carries no secret, but only the
-        // status is logged: the body is not needed to decide anything.
-        log(`sign-in exchange refused (${res.status})`);
+        // Only the status and the kernel's error code are logged (e.g. 503 app_auth.unavailable:
+        // the deployment has no http.publicUrl; the browser's authorize page already said so).
+        const code = await errorCode(res);
+        log(`sign-in exchange refused (${res.status}${code ? ` ${code}` : ""})`);
         return false;
       }
       if (!hasAccount(await res.json())) {

@@ -1,12 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 import type { Profile } from "../src/main/profiles.ts";
-import {
-  createSignIn,
-  machineNameFrom,
-  REDIRECT_URI,
-  type SignInDeps,
-} from "../src/main/sign-in.ts";
+import { createSignIn, REDIRECT_URI, type SignInDeps } from "../src/main/sign-in.ts";
+import { machineNameFrom } from "../src/main/user-agent.ts";
 
 const profile: Profile = {
   id: "p1",
@@ -155,7 +151,13 @@ describe("the callback", () => {
     expect(call?.init.method).toBe("POST");
     expect(call?.init.credentials).toBe("include");
     expect(call?.init.redirect).toBe("error");
-    expect(call?.init.headers).toEqual({ "content-type": "application/json" });
+    expect(call?.init.headers).toEqual({
+      "content-type": "application/json",
+      // The kernel requires it on every non-safe public route (login CSRF).
+      "X-Capybara-Csrf": "1",
+      // SessionService.refresh records the request's user agent on the session.
+      "User-Agent": "Capybara Desktop/0.1.0 (Grants-MacBook)",
+    });
     expect(JSON.parse(call?.init.body as string)).toEqual({
       code: "cap_ac_1",
       codeVerifier: "verifier-1",
@@ -271,6 +273,47 @@ describe("the callback", () => {
     await signIn.handleCallback(callback({}));
     await expect(result).rejects.toEqual({ code: "failed" });
     expect(onSignedIn).not.toHaveBeenCalled();
+  });
+
+  test("503 app_auth.unavailable fails and logs the code, never the body", async () => {
+    const { signIn, fetchImpl, onSignedIn, log } = setup();
+    fetchImpl.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        error: { code: "app_auth.unavailable", message: "BODY_TEXT http.publicUrl is not set" },
+      }),
+    });
+    const result = signIn.start(profile);
+    await flush();
+    await signIn.handleCallback(callback({}));
+    await expect(result).rejects.toEqual({ code: "failed" });
+    expect(onSignedIn).not.toHaveBeenCalled();
+    const logged = JSON.stringify(log.mock.calls);
+    expect(logged).toContain("503");
+    expect(logged).toContain("app_auth.unavailable");
+    expect(logged).not.toContain("BODY_TEXT");
+  });
+
+  test("a refusal whose body is not the kernel's error shape logs only the status", async () => {
+    for (const json of [
+      async () => {
+        throw new SyntaxError("bad json");
+      },
+      async () => ({ error: { code: "NOT A CODE <script>" } }),
+      async () => ({ error: { code: "x".repeat(200) } }),
+      async () => "BODY_TEXT",
+    ]) {
+      const { signIn, fetchImpl, log } = setup();
+      fetchImpl.mockResolvedValueOnce({ ok: false, status: 502, json } as never);
+      const result = signIn.start(profile);
+      await flush();
+      await signIn.handleCallback(callback({}));
+      await expect(result).rejects.toEqual({ code: "failed" });
+      const logged = JSON.stringify(log.mock.calls);
+      expect(logged).toContain("502");
+      expect(logged).not.toMatch(/BODY_TEXT|script|xxxxxxxx/);
+    }
   });
 
   test("a network error or a body without an account fails", async () => {
@@ -415,6 +458,7 @@ describe("no tokens are kept", () => {
     expect(imports.sort()).toEqual([
       "./ipc.ts",
       "./profiles.ts",
+      "./user-agent.ts",
       "@capybara-hq/shell",
       "node:crypto",
     ]);

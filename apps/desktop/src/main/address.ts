@@ -32,6 +32,7 @@ export const ADDRESS_STRING_KEYS = [
   "address.error.unreachable",
   "address.error.not_capybara",
   "address.error.too_old",
+  "address.error.sign_in_unavailable",
   "address.error.failed",
   "address.error.locked",
 ] as const;

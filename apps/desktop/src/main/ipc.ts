@@ -2,17 +2,18 @@
 // against the calling frame, capabilities are a registry of named functions (nothing generic), and
 // confirming calls need a user activation and run one at a time per profile; activation-only calls
 // need the activation alone.
+import type { ShellCallError } from "@capybara-hq/plugin-sdk";
 import {
   type CapabilityDescriptors,
   type Controls,
   type Insets,
+  SHELL_CALL_ERRORS,
   SHELL_CHANNELS,
   type ShellCallRequest,
   type ShellCallResult,
   type ShellInit,
   type ShellPlatform,
 } from "../shared/protocol.ts";
-import { SHELL_CALL_ERRORS, type ShellCallError } from "../shared/sdk-shell-types.ts";
 import type { Profile } from "./profiles.ts";
 
 export interface FrameLike {

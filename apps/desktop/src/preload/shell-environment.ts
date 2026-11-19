@@ -3,12 +3,12 @@
 // the frame and the origin itself, and installs `window.capybaraShell` in the page's world.
 import {
   type CapabilityDescriptors,
+  SHELL_CALL_ERRORS,
   SHELL_CHANNELS,
   type ShellCallResult,
   type ShellInit,
   type ShellState,
 } from "../shared/protocol.ts";
-import { SHELL_CALL_ERRORS } from "../shared/sdk-shell-types.ts";
 
 /** What the page's world gets from the isolated world: two functions, nothing generic. */
 export interface ShellBridge {

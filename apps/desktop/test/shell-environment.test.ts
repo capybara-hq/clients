@@ -1,3 +1,4 @@
+import type { CapybaraShell } from "@capybara-hq/plugin-sdk";
 import { describe, expect, test, vi } from "vitest";
 import { createWindowManager } from "../src/main/windows.ts";
 import {
@@ -11,7 +12,6 @@ import {
   type ShellInit,
   type ShellState,
 } from "../src/shared/protocol.ts";
-import type { CapybaraShell } from "../src/shared/sdk-shell-types.ts";
 import { fakeEmitter, fakeSession, fakeWebContents } from "./fakes.ts";
 
 const ORIGIN = "https://capybara.example.com";
@@ -302,6 +302,7 @@ describe("the main side announces fullscreen", () => {
       openExternal: vi.fn(),
       describe: () => ({ "notify@1": ["notify"] }),
       onFocusProfile: vi.fn(),
+      userAgent: "Capybara Desktop/0.1.0 (Box)",
     });
     windows.openProfileWindow({ id: "p1", base: ORIGIN, origin: ORIGIN, name: "E" });
     win.setFullScreenState(true);
@@ -330,6 +331,7 @@ describe("the main side announces fullscreen", () => {
       openExternal: vi.fn(),
       describe: () => ({}),
       onFocusProfile: vi.fn(),
+      userAgent: "Capybara Desktop/0.1.0 (Box)",
     });
     windows.openProfileWindow({ id: "p1", base: ORIGIN, origin: ORIGIN, name: "E" });
     win.setFullScreenState(true);

@@ -121,11 +121,29 @@ export function fakeSession() {
         cb: (response: { cancel?: boolean }) => void,
       ) => void)
     | undefined;
+  let beforeSendHeaders:
+    | ((
+        details: { url: string; requestHeaders: Record<string, string> },
+        cb: (response: { cancel?: boolean; requestHeaders?: Record<string, string> }) => void,
+      ) => void)
+    | undefined;
   return {
     webRequest: {
       onBeforeRequest: vi.fn((l: typeof beforeRequest) => {
         beforeRequest = l;
       }),
+      onBeforeSendHeaders: vi.fn((l: typeof beforeSendHeaders) => {
+        beforeSendHeaders = l;
+      }),
+    },
+    /** Runs a request's headers through the listener: the headers Chromium would send. */
+    beforeSendHeaders(url: string, requestHeaders: Record<string, string>): Record<string, string> {
+      if (!beforeSendHeaders) return requestHeaders;
+      let sent = requestHeaders;
+      beforeSendHeaders({ url, requestHeaders: { ...requestHeaders } }, (r) => {
+        sent = r.requestHeaders ?? requestHeaders;
+      });
+      return sent;
     },
     /** Runs a request through the webRequest listener: true when cancelled, false otherwise. */
     beforeRequest(method: string, url: string): boolean {

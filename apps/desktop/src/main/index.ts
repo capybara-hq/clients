@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { readFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
+import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
 import {
   app,
   BrowserWindow,
@@ -23,8 +24,8 @@ import {
 } from "electron";
 import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
+import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
-import { SHELL_CAPABILITY_KEYS } from "../shared/sdk-shell-types.ts";
 import { createAddressHost, discoverDeployment, localeFrom } from "./address.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
@@ -49,13 +50,18 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
-import type { WebRequestSession } from "./request-guard.ts";
-import { ADDRESS_PARTITION, hardenAnyContents, type PermissionSession } from "./security.ts";
+import { ADDRESS_PARTITION, hardenAnyContents } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
 import { setupUpdates } from "./updates.ts";
-import { createWindowManager, type ProfileTarget, type WindowLike } from "./windows.ts";
+import { desktopUserAgent } from "./user-agent.ts";
+import {
+  createWindowManager,
+  type ProfileSession,
+  type ProfileTarget,
+  type WindowLike,
+} from "./windows.ts";
 
 // Before `ready`: app:// is a standard, secure scheme so the address page has a real origin.
 protocol.registerSchemesAsPrivileged([
@@ -120,8 +126,7 @@ function start(): void {
 
     const windows = createWindowManager({
       createWindow: (options) => new BrowserWindow(options) as unknown as WindowLike,
-      sessionFor: (partition) =>
-        session.fromPartition(partition) as unknown as PermissionSession & WebRequestSession,
+      sessionFor: (partition) => session.fromPartition(partition) as unknown as ProfileSession,
       preloadPath: join(dist, "preload", "index.cjs"),
       addressPreloadPath: join(dist, "preload", "address.cjs"),
       platform,
@@ -132,6 +137,8 @@ function start(): void {
         ui.stateChanged();
       },
       onAddressClosed: (id) => addressHost.forget(id),
+      // Only to each profile's own origin; the token exchange sets the same value itself.
+      userAgent: desktopUserAgent(shellVersion, hostname()),
       backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
       log: (message, err) => console.error(message, err),
     });
@@ -147,7 +154,7 @@ function start(): void {
       SHELL_CAPABILITY_KEYS.openExternal,
       createOpenExternalCapability({ openExternal: (url) => shell.openExternal(url) }),
     );
-    bridge.registerCapability(SHELL_CAPABILITY_KEYS.chrome, createChromeCapability());
+    bridge.registerCapability(CHROME_CAPABILITY_KEY, createChromeCapability());
     // signIn@1 needs a user activation but confirms nothing natively (spec §8).
     const signIn = createSignIn({
       openExternal: (url) => shell.openExternal(url),

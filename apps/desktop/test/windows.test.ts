@@ -70,6 +70,7 @@ function setup() {
     describe: () => ({}),
     onFocusProfile,
     onAddressClosed,
+    userAgent: "Capybara Desktop/0.1.0 (Box)",
   });
   return { windows, created, options, sessions, onFocusProfile, onAddressClosed, openExternal };
 }
@@ -112,6 +113,21 @@ describe("profile windows", () => {
     );
     expect(s?.beforeRequest("GET", "https://a.example.com/team/chat/1")).toBe(false);
     expect(sessions.get("address")?.webRequest.onBeforeRequest).not.toHaveBeenCalled();
+  });
+
+  test("the profile partition sends the desktop user agent to its origin only", () => {
+    const { windows, sessions } = setup();
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openAddressWindow();
+    const s = sessions.get("persist:profile-p1");
+    expect(s?.webRequest.onBeforeSendHeaders).toHaveBeenCalledTimes(1);
+    const chromium = { "User-Agent": "Mozilla/5.0" };
+    expect(s?.beforeSendHeaders("https://a.example.com/team/api/v1/me", chromium)).toEqual({
+      "User-Agent": "Capybara Desktop/0.1.0 (Box)",
+    });
+    expect(s?.beforeSendHeaders("https://github.com/login", chromium)).toEqual(chromium);
+    expect(sessions.get("address")?.webRequest.onBeforeSendHeaders).not.toHaveBeenCalled();
   });
 
   test("reloadProfile reloads the profile's windows on its origin and brings one forward", () => {
