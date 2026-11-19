@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 import type { DeviceCli } from "../../src/main/device/cli.ts";
-import { createDeviceService, type ServiceStatus } from "../../src/main/device/service.ts";
+import {
+  createDeviceService,
+  type ServiceStatus,
+  withDockerPath,
+} from "../../src/main/device/service.ts";
 
 const RES = "/Applications/Capybara.app/Contents/Resources";
 const OWN_BIN = `${RES}/device/bin/capybara-device.mjs`;
@@ -196,4 +200,44 @@ test("afterUpdate never starts a service that is not running", async () => {
   const f = fakeCli({ ...stopped, running: false, installedVersion: "0.1.0-rc.19" });
   await service(f.cli).afterUpdate();
   expect(f.calls).toEqual(["service status --json"]);
+});
+
+test("withDockerPath adds the usual docker locations to the inherited PATH, once each", () => {
+  expect(withDockerPath("/usr/bin:/bin:/usr/sbin:/sbin")).toBe(
+    "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin",
+  );
+  // The person's own order wins; nothing is doubled.
+  expect(withDockerPath("/opt/homebrew/bin:/usr/bin:/usr/local/bin")).toBe(
+    "/opt/homebrew/bin:/usr/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin",
+  );
+  expect(withDockerPath(undefined)).toBe(
+    "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin",
+  );
+  expect(withDockerPath("::/usr/bin:")).toBe(
+    "/usr/bin:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin",
+  );
+});
+
+test("service install records a PATH that finds docker, not launchd's short one", async () => {
+  const envs: (Record<string, string> | undefined)[] = [];
+  const cli: DeviceCli = async (args, o) => {
+    if (args.join(" ") === "service status --json") {
+      o?.onLine?.({ installed: false, loaded: false, running: false, binExists: false });
+      return { code: 1, stderr: "" };
+    }
+    if (args[0] === "service" && args[1] === "install") envs.push(o?.env);
+    return { code: 0, stderr: "" };
+  };
+  const s = createDeviceService({
+    cli,
+    resourcesPath: RES,
+    realpath: (p) => p,
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+  });
+  expect(await s.ensureService()).toBe("installed");
+  expect(envs).toEqual([
+    {
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin",
+    },
+  ]);
 });

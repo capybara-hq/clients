@@ -5,12 +5,14 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { readFile } from "node:fs/promises";
-import { hostname, userInfo } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
+import { fetchMeta } from "@capybara-hq/shell";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   Notification,
@@ -41,8 +43,13 @@ import {
   type DeepLinkApp,
   installDeepLinks,
 } from "./deep-links.ts";
+import { createDeviceAvailability } from "./device/availability.ts";
+import { createDeviceCapability, type DeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
+import { controlClient, deviceStateDir } from "./device/control.ts";
+import { createDeviceDialogs, type MessageBoxOptions } from "./device/dialogs.ts";
 import { createDeviceService } from "./device/service.ts";
+import { createDeviceTexts } from "./device/texts.ts";
 import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
 import { createShellBridge, type IpcMainLike } from "./ipc.ts";
 import {
@@ -112,11 +119,35 @@ function start(): void {
         createAppProtocolHandler({ dir: join(dist, "address-page"), readFile }),
       );
 
+    // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
+    // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
+    // connecting (device@1 below); at start a packaged app only repairs an installed service whose
+    // app moved, then restarts it if an update replaced the bundled device it runs.
+    const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
+    const deviceCli = createDeviceCli({
+      resourcesPath,
+      spawn: spawn as unknown as SpawnLike,
+      env: process.env,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
+    // running for the app is ended with it.
+    app.on("will-quit", () => deviceCli.dispose());
+    // `env`: `service install` records a PATH that also finds docker (launchd's is short).
+    const deviceService = createDeviceService({ cli: deviceCli, resourcesPath, env: process.env });
+    // Set once device@1 exists; a profile removed before that has nothing to ask.
+    let device: DeviceCapability | undefined;
+
     const profiles = createProfileStore({
       file: join(app.getPath("userData"), "profiles.json"),
       fs,
       sessionFor: (partition) => session.fromPartition(partition),
       newId: () => randomUUID(),
+      // Spec §6.3: connected to that deployment → ask whether to disconnect and log out too.
+      beforeRemove: async (profile) => {
+        await device?.beforeRemoveProfile(profile, null);
+      },
+      log: (message, err) => console.error(message, err ?? ""),
     });
 
     const bridge = createShellBridge<ProfileTarget>({
@@ -124,16 +155,33 @@ function start(): void {
       stateFor: (target) => chromeState(platform, target.window.isFullScreen()),
       platform,
       shellVersion,
+      sendEvent: (target, message) => windows.sendEvent(target, message),
+    });
+
+    const deviceAvailability = createDeviceAvailability({
+      platform: process.platform,
+      managed,
+      fetchMeta: (base) => fetchMeta(base, net.fetch as typeof fetch),
+      onChange: (profileId) => windows.broadcastChange(profileId),
+      log: (message, err) => console.error(message, err ?? ""),
     });
 
     const windows = createWindowManager({
-      createWindow: (options) => new BrowserWindow(options) as unknown as WindowLike,
+      createWindow: (options) =>
+        // `parent` is typed unknown in the window module: it is always a BrowserWindow here.
+        new BrowserWindow(
+          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+        ) as unknown as WindowLike,
       sessionFor: (partition) => session.fromPartition(partition) as unknown as ProfileSession,
       preloadPath: join(dist, "preload", "index.cjs"),
       addressPreloadPath: join(dist, "preload", "address.cjs"),
       platform,
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
+      describeEvents: (profile) => bridge.describeEvents(profile),
+      // Each load of a deployment window asks its discovery again whether device@1 is offered.
+      onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
+      onProfileClosed: (id) => bridge.dropSubscriptions(id),
       onFocusProfile: (profile) => {
         profiles.setLastUsed(profile.id);
         ui.stateChanged();
@@ -174,7 +222,32 @@ function start(): void {
     bridge.registerCapability(SHELL_CAPABILITY_KEYS.signIn, signIn.capability, {
       activation: ["start"],
     });
-    // device@1 (Task 18, with `available` and windows.broadcastChange) plugs in here.
+    // device@1 (spec §8, §9): native confirmations attached to the calling window.
+    device = createDeviceCapability({
+      cli: deviceCli,
+      service: deviceService,
+      control: controlClient(deviceStateDir(process.env, homedir())),
+      dialogs: createDeviceDialogs({
+        showMessageBox: (parent, options: MessageBoxOptions) =>
+          parent instanceof BrowserWindow && !parent.isDestroyed()
+            ? dialog.showMessageBox(parent, options)
+            : dialog.showMessageBox(options),
+        locale: localeFrom(app.getLocale()),
+      }),
+      texts: createDeviceTexts({
+        resourcesPath,
+        spawn: spawn as unknown as SpawnLike,
+        env: process.env,
+      }),
+      openVerification: (target, url) =>
+        windows.openChildWindow(target.profile, target.window, url),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    bridge.registerCapability(SHELL_CAPABILITY_KEYS.device, device.impl, {
+      confirming: device.confirming,
+      events: device.events,
+      available: (profile) => deviceAvailability.isAvailable(profile),
+    });
 
     bridge.install(ipcMain as unknown as IpcMainLike);
     const addressHost = createAddressHost({
@@ -341,22 +414,6 @@ function start(): void {
     }).then((added) => {
       if (added > 0) ui.profilesChanged();
     });
-
-    // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
-    // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
-    // connecting (Task 18); at start a packaged app only repairs an installed service whose app
-    // moved, then restarts it if an update replaced the bundled device it runs.
-    const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
-    const deviceCli = createDeviceCli({
-      resourcesPath,
-      spawn: spawn as unknown as SpawnLike,
-      env: process.env,
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-    // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
-    // running for the app is ended with it.
-    app.on("will-quit", () => deviceCli.dispose());
-    const deviceService = createDeviceService({ cli: deviceCli, resourcesPath });
 
     // electron-updater works only in a packaged app. An update installs on quit, so the
     // `afterUpdate` call at the next start is the one that finds the new device on disk.

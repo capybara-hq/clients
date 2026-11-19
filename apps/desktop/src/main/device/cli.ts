@@ -33,6 +33,13 @@ export interface DeviceCliOptions {
   onLine?: (obj: unknown) => void;
   /** Overrides the default timeout for this command (`login --json` waits for a person); 0: none. */
   timeoutMs?: number;
+  /** Ends the command (SIGTERM, then SIGKILL after the grace) when it aborts. */
+  signal?: AbortSignal;
+  /**
+   * Replaces inherited variables for this command only (`service install` records PATH in the
+   * service file). Names outside {@link INHERITED_ENV} are ignored.
+   */
+  env?: Partial<Record<InheritedName, string>>;
 }
 
 export type DeviceCli = (args: string[], o?: DeviceCliOptions) => Promise<DeviceCliResult>;
@@ -87,6 +94,8 @@ export const INHERITED_ENV = [
   "LC_CTYPE",
 ] as const;
 
+export type InheritedName = (typeof INHERITED_ENV)[number];
+
 /** Most stderr bytes kept for the caller (the tail). */
 const STDERR_KEEP = 64 * 1024;
 /** A stdout line longer than this is dropped rather than buffered without bound. */
@@ -101,10 +110,13 @@ export function devicePaths(resourcesPath: string): { node: string; bin: string 
   };
 }
 
-export function deviceEnv(parent: Record<string, string | undefined>): Record<string, string> {
+export function deviceEnv(
+  parent: Record<string, string | undefined>,
+  override: Partial<Record<string, string>> = {},
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of INHERITED_ENV) {
-    const value = parent[name];
+    const value = Object.hasOwn(override, name) ? override[name] : parent[name];
     if (value !== undefined) env[name] = value;
   }
   return env;
@@ -131,7 +143,7 @@ export function createDeviceCli(deps: DeviceCliDeps): DeviceCliHandle {
   const cli: DeviceCli = (args, o) =>
     new Promise<DeviceCliResult>((resolve, reject) => {
       const child = deps.spawn(node, [bin, ...args], {
-        env: deviceEnv(deps.env),
+        env: deviceEnv(deps.env, o?.env),
         stdio: ["ignore", "pipe", "pipe"],
       });
       let settled = false;
@@ -150,15 +162,21 @@ export function createDeviceCli(deps: DeviceCliDeps): DeviceCliHandle {
           }, grace),
         );
       };
+      const onAbort = () => {
+        if (!settled) terminate();
+      };
       const settle = (result: DeviceCliResult | Error) => {
         if (settled) return;
         settled = true;
         for (const cancel of cancels) cancel();
         live.delete(terminate);
+        o?.signal?.removeEventListener("abort", onAbort);
         if (result instanceof Error) reject(result);
         else resolve(result);
       };
       live.add(terminate);
+      if (o?.signal?.aborted) terminate();
+      else o?.signal?.addEventListener("abort", onAbort, { once: true });
       const timeout = o?.timeoutMs ?? deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       if (timeout > 0) {
         cancels.push(

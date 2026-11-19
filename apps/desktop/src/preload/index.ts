@@ -10,4 +10,5 @@ bootShellPreload({
   windowOrigin: window.origin,
   isTopFrame: window.top === window,
   userActivation: () => navigator.userActivation?.isActive === true,
+  randomId: () => crypto.randomUUID(),
 });

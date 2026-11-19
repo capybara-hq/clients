@@ -39,6 +39,31 @@ export interface DeviceServiceDeps {
   resourcesPath: string;
   /** Resolves symlinks for path comparison; a missing path compares as written. */
   realpath?: (path: string) => string;
+  /** The app's environment: its PATH is the base of the PATH the service file records. */
+  env?: Record<string, string | undefined>;
+}
+
+/** Where docker usually lives on a Mac: Homebrew (Intel and Apple silicon) and Docker Desktop. */
+export const DOCKER_PATHS = [
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+  "/Applications/Docker.app/Contents/Resources/bin",
+] as const;
+
+/** launchd's own PATH, what an app started from the Finder inherits. */
+const LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+/**
+ * The PATH for `service install`, which records the installing process's PATH in the service file
+ * (device `serviceEnv`): the inherited one, then each usual docker location it lacks. An app
+ * started from the Finder has launchd's short PATH, which would leave a docker-mode device
+ * unable to find docker.
+ */
+export function withDockerPath(path: string | undefined): string {
+  const parts = (path ?? "").split(":").filter((p) => p !== "");
+  const out = parts.length > 0 ? parts : LAUNCHD_PATH.split(":");
+  for (const extra of DOCKER_PATHS) if (!out.includes(extra)) out.push(extra);
+  return [...new Set(out)].join(":");
 }
 
 export interface DeviceService {
@@ -125,8 +150,8 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
     return parsed;
   }
 
-  async function run(args: string[]): Promise<void> {
-    const { code, stderr } = await deps.cli(args);
+  async function run(args: string[], env?: { PATH: string }): Promise<void> {
+    const { code, stderr } = await deps.cli(args, env ? { env } : undefined);
     if (code !== 0) {
       throw new DeviceServiceError(
         "command_failed",
@@ -144,7 +169,7 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
         ),
       );
     }
-    return run(["service", "install"]);
+    return run(["service", "install"], { PATH: withDockerPath(deps.env?.PATH) });
   }
 
   /**

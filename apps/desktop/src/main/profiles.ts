@@ -39,6 +39,13 @@ export interface ProfileStoreDeps {
   /** `session.fromPartition`. */
   sessionFor(partition: string): PartitionSession;
   newId(): string;
+  /**
+   * Runs before a profile is removed: the device question of spec 6.3 (disconnect and log the
+   * device out when this machine is connected to that deployment). A failure is logged and the
+   * removal goes on.
+   */
+  beforeRemove?: (profile: Profile) => Promise<void>;
+  log?: (message: string, err?: unknown) => void;
 }
 
 export interface ProfileStore {
@@ -168,7 +175,13 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
       return { ...profile };
     },
     async remove(id) {
-      if (!state.profiles.some((p) => p.id === id)) return;
+      const existing = state.profiles.find((p) => p.id === id);
+      if (!existing) return;
+      try {
+        await deps.beforeRemove?.({ ...existing });
+      } catch (err) {
+        deps.log?.("the device step of a profile removal failed", err);
+      }
       const session = deps.sessionFor(partitionFor(id));
       await session.clearStorageData();
       await session.clearCache?.();
