@@ -207,7 +207,8 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
       const s = await status();
       if (!s.installed) return "absent";
       // Only an app copy is repaired at start; a broken CLI-installed service waits for the
-      // person to switch it to the app's copy (Task 18's UI, through ensureService).
+      // person to switch it to the app's copy (through ensureService; the UI for that is
+      // capybara-hq/clients#13).
       if (!s.loaded || !isAppCopy(s) || !needsReinstall(s)) return "kept";
       // Not from a temporary location: the next start from the real place repairs it.
       if (isTemporaryLocation(deps.resourcesPath)) return "kept";

@@ -307,6 +307,8 @@ function start(): void {
 
     // This machine's device in the tray (spec §9.6). Its actions are device@1's own functions.
     const trayDevice = createTrayDevice({
+      // Managed 「连接本机」 off: no device in the tray, like device@1 is not offered.
+      enabled: managed.connectThisMachine !== false,
       control,
       readMachine: () => readMachine(deviceCli),
       readKeepAwake: () => readKeepAwake(deviceCli),
