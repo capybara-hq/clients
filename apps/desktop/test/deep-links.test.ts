@@ -13,7 +13,7 @@ const AUTH = "capybara://auth/callback?code=cap_ac_1&state=s1&iss=https%3A%2F%2F
 describe("routeDeepLink", () => {
   test("an auth callback goes to the sign-in handler", () => {
     const onAuth = vi.fn(async () => undefined);
-    const router = createDeepLinkRouter({ onAuth });
+    const router = createDeepLinkRouter({ scheme: "capybara", onAuth });
     router.routeDeepLink(AUTH);
     expect(onAuth).toHaveBeenCalledExactlyOnceWith({
       kind: "auth",
@@ -25,7 +25,7 @@ describe("routeDeepLink", () => {
 
   test("a denial reaches the handler as an error", () => {
     const onAuth = vi.fn(async (_cb: unknown) => undefined);
-    createDeepLinkRouter({ onAuth }).routeDeepLink(
+    createDeepLinkRouter({ scheme: "capybara", onAuth }).routeDeepLink(
       "capybara://auth/callback?error=access_denied&state=s1&iss=https%3A%2F%2Fa.example.com",
     );
     expect(onAuth.mock.calls[0]?.[0]).toMatchObject({ kind: "auth", error: "access_denied" });
@@ -35,7 +35,7 @@ describe("routeDeepLink", () => {
     const onAuth = vi.fn(async () => undefined);
     const onConnect = vi.fn();
     const onOpen = vi.fn();
-    const router = createDeepLinkRouter({ onAuth, onConnect, onOpen });
+    const router = createDeepLinkRouter({ scheme: "capybara", onAuth, onConnect, onOpen });
     router.routeDeepLink("capybara://connect?url=a.example.com");
     router.routeDeepLink("capybara://open?url=https%3A%2F%2Fa.example.com%2Fchat%2F1");
     expect(onConnect).toHaveBeenCalledWith("a.example.com");
@@ -43,13 +43,23 @@ describe("routeDeepLink", () => {
     expect(onAuth).not.toHaveBeenCalled();
     // Without handlers they do nothing.
     expect(() =>
-      createDeepLinkRouter({ onAuth }).routeDeepLink("capybara://open?url=x"),
+      createDeepLinkRouter({ scheme: "capybara", onAuth }).routeDeepLink("capybara://open?url=x"),
     ).not.toThrow();
+  });
+
+  test("only links of the given scheme are routed", () => {
+    const onAuth = vi.fn(async () => undefined);
+    const onConnect = vi.fn();
+    const router = createDeepLinkRouter({ scheme: "acme", onAuth, onConnect });
+    router.routeDeepLink("capybara://connect?url=a.example.com");
+    expect(onConnect).not.toHaveBeenCalled();
+    router.routeDeepLink("acme://connect?url=a.example.com");
+    expect(onConnect).toHaveBeenCalledWith("a.example.com");
   });
 
   test("unknown or malformed links are ignored", () => {
     const onAuth = vi.fn(async () => undefined);
-    const router = createDeepLinkRouter({ onAuth });
+    const router = createDeepLinkRouter({ scheme: "capybara", onAuth });
     for (const url of [
       "capybara://auth/callback?code=x",
       "capybara://evil",
@@ -65,6 +75,7 @@ describe("routeDeepLink", () => {
   test("a failing handler is logged, never thrown into the event loop", async () => {
     const log = vi.fn();
     const router = createDeepLinkRouter({
+      scheme: "capybara",
       onAuth: async () => {
         throw new Error("boom");
       },
@@ -182,7 +193,11 @@ describe("connect and open (spec 6.4)", () => {
       ...over,
     };
     const handlers = createDeepLinkHandlers(actions);
-    const router = createDeepLinkRouter({ onAuth: async () => undefined, ...handlers });
+    const router = createDeepLinkRouter({
+      scheme: "capybara",
+      onAuth: async () => undefined,
+      ...handlers,
+    });
     return { actions, router };
   }
 

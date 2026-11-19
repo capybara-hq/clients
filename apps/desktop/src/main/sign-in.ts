@@ -7,12 +7,13 @@
 // account came back. Nothing here writes a token anywhere, and the page learns only `signedIn`.
 import { randomBytes } from "node:crypto";
 import { type AuthCallback, checkCallback, createPkce, SIGN_IN_TTL_MS } from "@capybara-hq/shell";
+import { brand } from "../../brand.ts";
 import type { CallContext } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
 import { appVersionFrom, desktopUserAgent, machineNameFrom } from "./user-agent.ts";
 
-/** Must be listed in the kernel's `auth.appRedirectUris`. */
-export const REDIRECT_URI = "capybara://auth/callback";
+/** Must be listed in the kernel's `auth.appRedirectUris`. The scheme is the brand's (spec §11). */
+export const REDIRECT_URI = `${brand.scheme}://auth/callback`;
 
 export type SignInResult = "signedIn" | "cancelled";
 

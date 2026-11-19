@@ -424,6 +424,7 @@ function start(): void {
     });
 
     const router = createDeepLinkRouter({
+      scheme: brand.scheme,
       onAuth: (cb) => signIn.handleCallback(cb),
       ...deepLinkHandlers,
       log: (message, err) => console.error(message, err ?? ""),

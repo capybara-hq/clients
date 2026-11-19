@@ -5,15 +5,18 @@ export type DeepLink =
 
 export type AuthCallback = Extract<DeepLink, { kind: "auth" }>;
 
-/** Parses a `capybara:` link. It only parses: the caller validates addresses and URLs. */
-export function parseDeepLink(raw: string): DeepLink | null {
+/**
+ * Parses a link of the app's own scheme (the brand's `scheme`, e.g. `capybara`). It only parses:
+ * the caller validates addresses and URLs.
+ */
+export function parseDeepLink(raw: string, scheme: string): DeepLink | null {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     return null;
   }
-  if (url.protocol !== "capybara:") return null;
+  if (url.protocol !== `${scheme.toLowerCase()}:`) return null;
   const q = url.searchParams;
   const host = url.hostname.toLowerCase();
   const path = url.pathname.replace(/\/+$/, "");
