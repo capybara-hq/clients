@@ -55,6 +55,7 @@ describe("the confirming-call gate", () => {
 function bridgeFor(
   target: { profile: Profile } | null = { profile },
   sendEvent?: (t: { profile: Profile }, message: unknown) => void,
+  gate?: ReturnType<typeof createConfirmGate>,
 ) {
   return createShellBridge({
     resolveSender: () => target ?? undefined,
@@ -65,6 +66,7 @@ function bridgeFor(
     }),
     platform: "macos",
     shellVersion: "1.2.3",
+    ...(gate && { gate }),
   });
 }
 
@@ -193,6 +195,19 @@ describe("capability calls", () => {
     const second = b.handleCall(topEvent(), req(true));
     answer("cancelled");
     expect(await second).toEqual({ ok: true, value: "cancelled" });
+  });
+
+  test("a slot held outside the bridge (the tray) makes a confirming call busy", async () => {
+    const gate = createConfirmGate();
+    const b = bridgeFor({ profile }, undefined, gate);
+    const connect = vi.fn(async () => "connected");
+    b.registerCapability("device@1", { connect }, { confirming: ["connect"] });
+    const req = { key: "device@1", fn: "connect", args: [], activation: true };
+    expect(gate.isConfirmingCallAllowed(profile.id, true)).toBe("ok");
+    expect(await b.handleCall(topEvent(), req)).toEqual({ ok: false, code: "busy" });
+    expect(connect).not.toHaveBeenCalled();
+    gate.release(profile.id);
+    expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "connected" });
   });
 
   test("activation-only calls need an activation but are not one-at-a-time (signIn@1)", async () => {
