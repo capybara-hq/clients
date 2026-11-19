@@ -256,6 +256,28 @@ describe("profile windows", () => {
     expect(windows.resolveSender(created[1]?.webContents)?.profile.id).toBe("p2");
   });
 
+  test("a closed window is forgotten without touching its destroyed webContents", () => {
+    const onProfileClosed = vi.fn();
+    const onAddressClosed = vi.fn();
+    const { windows, created } = setup({ onProfileClosed, onAddressClosed });
+    windows.openAddressWindow();
+    windows.openProfileWindow(p1);
+    const ids = created.map((w) => w.webContents.id);
+    // Electron: reading `webContents` of a window that emitted `closed` throws.
+    for (const w of created) {
+      Object.defineProperty(w, "webContents", {
+        get() {
+          throw new TypeError("Object has been destroyed");
+        },
+      });
+    }
+    expect(() => created[0]?.emit("closed")).not.toThrow();
+    expect(() => created[1]?.emit("closed")).not.toThrow();
+    expect(onAddressClosed).toHaveBeenCalledWith(ids[0]);
+    expect(onProfileClosed).toHaveBeenCalledWith(ids[1]);
+    expect(windows.hasWindows()).toBe(false);
+  });
+
   test("dialogParent: the profile's window (the front one if it is), else the front one", () => {
     const { windows, created } = setup();
     expect(windows.dialogParent("p1")).toBeUndefined();

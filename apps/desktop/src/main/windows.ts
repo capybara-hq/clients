@@ -137,10 +137,13 @@ export function createWindowManager(deps: WindowManagerDeps) {
     win.loadURL(url).catch((err: unknown) => deps.log?.(`could not load ${url}`, err));
   }
 
-  /** Forgets a window (once): no IPC resolves to it any more. */
-  function untrack(entry: Entry): void {
-    const id = entry.window.webContents.id;
-    if (byContents.get(id) !== entry) return;
+  /**
+   * Forgets a window (once): no IPC resolves to it any more. Takes the webContents id recorded at
+   * `track`: after `closed`, reading the window's `webContents` throws.
+   */
+  function untrack(id: number): void {
+    const entry = byContents.get(id);
+    if (!entry) return;
     byContents.delete(id);
     if (entry.kind === "address") deps.onAddressClosed?.(id);
     else deps.onProfileClosed?.(id);
@@ -155,7 +158,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       lastFocused = entry;
       if (entry.kind === "profile") deps.onFocusProfile(entry.profile);
     });
-    win.on("closed", () => untrack(entry));
+    win.on("closed", () => untrack(id));
     win.on("ready-to-show", () => win.show());
   }
 
@@ -412,8 +415,9 @@ export function createWindowManager(deps: WindowManagerDeps) {
      * and a profile being removed must not pass the IPC checks while its partition is cleared.
      */
     closeProfileWindows(profileId: string): void {
-      for (const e of profileEntries(profileId)) {
-        untrack(e);
+      for (const [id, e] of [...byContents]) {
+        if (e.kind !== "profile" || e.profile.id !== profileId) continue;
+        untrack(id);
         e.window.close();
       }
     },
