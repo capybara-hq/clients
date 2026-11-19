@@ -75,7 +75,7 @@ describe("fetchMeta", () => {
     expect(without).toEqual(good);
     expect(without).not.toHaveProperty("icons");
   });
-  test("malformed icons are not_capybara", async () => {
+  test("a malformed icons field is ignored (forward compatible); the meta stays valid", async () => {
     for (const icons of [
       null,
       "x",
@@ -84,9 +84,9 @@ describe("fetchMeta", () => {
       { app: null, maskable: null },
       { app: null, maskable: {}, favicon: null },
     ]) {
-      expect(await fetchMeta("https://x", fake(() => json({ ...good, icons })).fn)).toEqual({
-        error: "not_capybara",
-      });
+      const meta = await fetchMeta("https://x", fake(() => json({ ...good, icons })).fn);
+      expect(meta).toEqual(good);
+      expect(meta).not.toHaveProperty("icons");
     }
   });
   test("never follows redirects and has a timeout signal", async () => {

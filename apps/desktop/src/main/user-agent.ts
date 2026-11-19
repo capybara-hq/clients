@@ -28,10 +28,11 @@ export function appVersionFrom(version: string): string {
 
 /**
  * A header value must be bytes (Fetch rejects anything beyond Latin-1, and the name sits inside a
- * comment): non-ASCII characters and the comment's own parentheses are percent-encoded.
+ * comment): non-ASCII characters, `%` and the comment's own parentheses are percent-encoded, so
+ * the value reads back unambiguously.
  */
 function headerSafe(text: string): string {
-  return text.replace(/[^\x20-\x27\x2a-\x7e]/gu, (c) =>
+  return text.replace(/[^\x20-\x24\x26\x27\x2a-\x7e]/gu, (c) =>
     c === "(" || c === ")"
       ? `%${c.charCodeAt(0).toString(16).toUpperCase()}`
       : encodeURIComponent(c),
@@ -50,6 +51,8 @@ export interface SendHeadersDetails {
 }
 
 export interface HeaderSession {
+  /** Chromium's default user agent for the session (never changed by the app). */
+  getUserAgent(): string;
   webRequest: {
     onBeforeSendHeaders(
       listener: (
@@ -68,25 +71,43 @@ function originOf(url: string): string | null {
   }
 }
 
+/** The headers with every spelling of `user-agent` replaced by one `User-Agent: value`. */
+function withUserAgent(headers: Record<string, string>, value: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, v] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "user-agent") out[name] = v;
+  }
+  out["User-Agent"] = value;
+  return out;
+}
+
+function carriesDesktopUserAgent(headers: Record<string, string>): boolean {
+  return Object.entries(headers).some(
+    ([name, v]) => name.toLowerCase() === "user-agent" && v.startsWith(`${DESKTOP_PRODUCT}/`),
+  );
+}
+
 /**
  * Installs the partition's header listener: requests to `origin` (scheme, host and port, so any
- * path of a path-prefix deployment) carry `userAgent`; every other request is left as it is.
+ * path of a path-prefix deployment) carry `userAgent`. Every other request keeps Chromium's
+ * default: Chromium runs the listener again for each redirect hop with the headers the earlier hop
+ * was given, so a hop from the origin to another one (a connector's OAuth start redirecting to the
+ * provider) gets the session's default user agent back instead of the desktop one.
  */
 export function installDesktopUserAgent(
   session: HeaderSession,
   origin: string,
   userAgent: string,
 ): void {
+  // Read before anything could change it; the app never sets a session-wide user agent.
+  const chromiumDefault = session.getUserAgent();
   session.webRequest.onBeforeSendHeaders((details, callback) => {
-    if (originOf(details.url) !== origin) {
+    if (originOf(details.url) === origin) {
+      callback({ requestHeaders: withUserAgent(details.requestHeaders, userAgent) });
+    } else if (carriesDesktopUserAgent(details.requestHeaders)) {
+      callback({ requestHeaders: withUserAgent(details.requestHeaders, chromiumDefault) });
+    } else {
       callback({});
-      return;
     }
-    const requestHeaders: Record<string, string> = {};
-    for (const [name, value] of Object.entries(details.requestHeaders)) {
-      if (name.toLowerCase() !== "user-agent") requestHeaders[name] = value;
-    }
-    requestHeaders["User-Agent"] = userAgent;
-    callback({ requestHeaders });
   });
 }

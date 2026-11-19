@@ -31,12 +31,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 const nullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
 
-/** undefined when absent, null when malformed. */
-function parseIcons(v: unknown): MetaIcons | undefined | null {
-  if (v === undefined) return undefined;
-  if (!isRecord(v)) return null;
+/** undefined when absent or malformed: an unexpected shape is ignored, for forward compatibility. */
+function parseIcons(v: unknown): MetaIcons | undefined {
+  if (!isRecord(v)) return undefined;
   const { app, maskable, favicon } = v;
-  if (!nullableString(app) || !nullableString(maskable) || !nullableString(favicon)) return null;
+  if (!nullableString(app) || !nullableString(maskable) || !nullableString(favicon)) {
+    return undefined;
+  }
   return { app, maskable, favicon };
 }
 
@@ -50,7 +51,6 @@ function parseMeta(v: unknown): ParsedMeta | null {
   const { name, icon, protocols, features } = v;
   if (!nullableString(name) || !nullableString(icon)) return null;
   const icons = parseIcons(v.icons);
-  if (icons === null) return null;
   if (!isRecord(protocols) || !isRecord(protocols.device)) return null;
   const { min, max } = protocols.device;
   if (!Number.isInteger(min) || !Number.isInteger(max)) return null;

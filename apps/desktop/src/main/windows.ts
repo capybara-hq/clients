@@ -64,9 +64,10 @@ export interface WindowOptions {
 }
 
 /** A partition as the window manager configures it. */
-export type ProfileSession = PermissionSession & {
-  webRequest: WebRequestSession["webRequest"] & HeaderSession["webRequest"];
-};
+export type ProfileSession = PermissionSession &
+  Pick<HeaderSession, "getUserAgent"> & {
+    webRequest: WebRequestSession["webRequest"] & HeaderSession["webRequest"];
+  };
 
 export interface WindowManagerDeps {
   createWindow(options: WindowOptions): WindowLike;

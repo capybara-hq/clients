@@ -128,6 +128,11 @@ export function fakeSession() {
       ) => void)
     | undefined;
   return {
+    /** Chromium's default for the session (`session.getUserAgent()`). */
+    userAgent: "Mozilla/5.0 Chrome/140 Electron/45",
+    getUserAgent(): string {
+      return this.userAgent;
+    },
     webRequest: {
       onBeforeRequest: vi.fn((l: typeof beforeRequest) => {
         beforeRequest = l;
