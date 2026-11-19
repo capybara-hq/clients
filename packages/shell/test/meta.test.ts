@@ -54,4 +54,39 @@ describe("fetchMeta", () => {
     const f = fake(() => json({ ...good, features: { localDevices: true, appSignIn: false } }));
     expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "too_old" });
   });
+  test("never follows redirects and has a timeout signal", async () => {
+    const f = fake(() => json(good));
+    await fetchMeta("https://x", f.fn);
+    expect(f.calls[0]?.init?.redirect).toBe("error");
+    expect(f.calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+    const redirected = (async (_u: unknown, init?: RequestInit) => {
+      if (init?.redirect === "error") throw new TypeError("redirect mode is set to error");
+      return json(good);
+    }) as typeof fetch;
+    expect(await fetchMeta("https://x", redirected)).toEqual({ error: "unreachable" });
+  });
+  test("a stalled server is unreachable once the signal aborts", async () => {
+    const stalled = ((_u: unknown, init?: RequestInit) =>
+      new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener("abort", () =>
+          rej(new DOMException("aborted", "AbortError")),
+        );
+      })) as typeof fetch;
+    const ctl = new AbortController();
+    const p = fetchMeta("https://x", stalled, ctl.signal);
+    ctl.abort();
+    expect(await p).toEqual({ error: "unreachable" });
+  });
+  test("an oversized body is not_capybara", async () => {
+    const big = JSON.stringify({ ...good, name: "a".repeat(70 * 1024) });
+    expect(await fetchMeta("https://x", fake(() => new Response(big)).fn)).toEqual({
+      error: "not_capybara",
+    });
+  });
+  test("non-integer protocol bounds are not_capybara", async () => {
+    const bad = { ...good, protocols: { device: { min: 1.5, max: 3 } } };
+    expect(await fetchMeta("https://x", fake(() => json(bad)).fn)).toEqual({
+      error: "not_capybara",
+    });
+  });
 });

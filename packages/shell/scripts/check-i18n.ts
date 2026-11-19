@@ -2,11 +2,20 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-/** Returns one message per key that exists in only one of the catalogs. */
+const placeholders = (text: string) =>
+  [...new Set([...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1] as string))].sort().join(",");
+
+/** Returns one message per key that exists in only one catalog or whose placeholders differ. */
 export function checkCatalogs(zh: Record<string, string>, en: Record<string, string>): string[] {
   const problems: string[] = [];
   for (const key of Object.keys(zh)) if (!(key in en)) problems.push(`"${key}" is missing in en`);
   for (const key of Object.keys(en)) if (!(key in zh)) problems.push(`"${key}" is missing in zh`);
+  for (const key of Object.keys(zh)) {
+    const other = en[key];
+    if (other !== undefined && placeholders(zh[key] as string) !== placeholders(other)) {
+      problems.push(`"${key}" has different placeholders in zh and en`);
+    }
+  }
   return problems;
 }
 

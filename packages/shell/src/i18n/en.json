@@ -8,6 +8,5 @@
   "address.error.insecure": "Only local addresses may use http; use https for any other address",
   "address.error.unreachable": "Cannot reach this address",
   "address.error.not_capybara": "This address is not a Capybara platform",
-  "address.error.too_old": "This platform is too old",
-  "greeting.test": "Hello, {name}"
+  "address.error.too_old": "This platform is too old"
 }

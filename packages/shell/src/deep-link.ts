@@ -15,26 +15,22 @@ export function parseDeepLink(raw: string): DeepLink | null {
   }
   if (url.protocol !== "capybara:") return null;
   const q = url.searchParams;
+  const host = url.hostname.toLowerCase();
   const path = url.pathname.replace(/\/+$/, "");
-  if (url.hostname === "auth" && path === "/callback") {
+  if (host === "auth" && path === "/callback") {
     const state = q.get("state");
     const iss = q.get("iss");
     const code = q.get("code");
     const error = q.get("error");
     if (!state || !iss || (!code && !error)) return null;
-    return {
-      kind: "auth",
-      state,
-      iss,
-      ...(code ? { code } : {}),
-      ...(error ? { error } : {}),
-    };
+    // When both are present the error wins: never act on a code next to a denial.
+    return { kind: "auth", state, iss, ...(error ? { error } : { code: code as string }) };
   }
-  if (url.hostname === "connect" && path === "") {
+  if (host === "connect" && path === "") {
     const address = q.get("url");
     return address ? { kind: "connect", address } : null;
   }
-  if (url.hostname === "open" && path === "") {
+  if (host === "open" && path === "") {
     const target = q.get("url");
     return target ? { kind: "open", url: target } : null;
   }

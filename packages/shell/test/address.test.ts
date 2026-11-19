@@ -36,6 +36,18 @@ describe("normalizeAddress", () => {
     expect(normalizeAddress("http://10.0.0.5")).toEqual({ ok: false, reason: "insecure" });
     expect(normalizeAddress("http://example.com")).toEqual({ ok: false, reason: "insecure" });
   });
+  test("scheme-less localhost gets https; scheme and host case are normalised", () => {
+    expect(normalizeAddress("localhost:3000")).toEqual({
+      ok: true,
+      origin: "https://localhost:3000",
+      base: "https://localhost:3000",
+    });
+    expect(normalizeAddress("HTTP://LOCALHOST:3000")).toEqual({
+      ok: true,
+      origin: "http://localhost:3000",
+      base: "http://localhost:3000",
+    });
+  });
   test("rejects credentials, other schemes and garbage", () => {
     expect(normalizeAddress("https://user:pw@example.com")).toEqual({
       ok: false,

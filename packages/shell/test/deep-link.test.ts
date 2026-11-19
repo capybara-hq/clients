@@ -36,6 +36,22 @@ describe("parseDeepLink", () => {
     expect(parseDeepLink("capybara://connect")).toBeNull();
     expect(parseDeepLink("capybara://open?url=")).toBeNull();
   });
+  test("host matching is case-insensitive", () => {
+    expect(parseDeepLink("capybara://AUTH/callback?code=c&state=s&iss=i")).toMatchObject({
+      kind: "auth",
+    });
+    expect(parseDeepLink("CAPYBARA://Connect?url=x")).toEqual({ kind: "connect", address: "x" });
+  });
+  test("error wins when code and error are both present", () => {
+    expect(
+      parseDeepLink("capybara://auth/callback?code=c&error=access_denied&state=s&iss=i"),
+    ).toEqual({
+      kind: "auth",
+      error: "access_denied",
+      state: "s",
+      iss: "i",
+    });
+  });
   test("foreign scheme, unknown host and garbage are null", () => {
     expect(parseDeepLink("https://auth/callback?code=c&state=s&iss=i")).toBeNull();
     expect(parseDeepLink("capybara://other?url=x")).toBeNull();
