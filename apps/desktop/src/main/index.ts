@@ -77,6 +77,7 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createOnboarding, type OnboardingWindow, platformName } from "./onboarding.ts";
+import { createOpenProfile } from "./open-profile.ts";
 import { type OverlayView, showOverlay } from "./overlay.ts";
 import {
   type CookieJarLike,
@@ -84,7 +85,12 @@ import {
   installPreferenceActions,
   provisionalToFollow,
 } from "./preferences.ts";
-import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
+import {
+  createProfileStore,
+  type Profile,
+  partitionFor,
+  sweepOrphanPartitions,
+} from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
 import {
   hardenAnyContents,
@@ -192,6 +198,17 @@ function start(): void {
       sessionFor: (partition) => session.fromPartition(partition),
       newId: () => randomUUID(),
     });
+    // A provisional profile's partition outlives a quit in the middle of its sign-in: gone at start,
+    // before any partition is loaded. Not while a corrupt store waits to be recovered: its
+    // profiles read as none, and their partitions must stay.
+    if (!fs.existsSync(join(app.getPath("userData"), "profiles.json.corrupt")))
+      sweepOrphanPartitions({
+        partitionsDir: join(app.getPath("userData"), "Partitions"),
+        knownIds: profiles.list().map((p) => p.id),
+        fs,
+        join,
+        log: (message, err) => console.error(message, err ?? ""),
+      });
 
     // Theme and language (spec §6.10, §12): the profile's own cb-theme / NEXT_LOCALE cookies, the
     // app's choice before any profile, else the OS. Every page, window and menu reads them here.
@@ -306,7 +323,9 @@ function start(): void {
       SHELL_CAPABILITY_KEYS.notify,
       createNotifyCapability({
         Notification: Notification as unknown as NotificationClass,
-        showProfile: (profile, url) => windows.showProfile(profile, url),
+        // Through openProfile: a profile signed out since the notification gets its signed-out
+        // page, never a main window.
+        showProfile: (profile, url) => openProfile(profile, url),
       }),
     );
     bridge.registerCapability(
@@ -342,8 +361,8 @@ function start(): void {
       fetchFor: partitionFetch,
       getProfile: (id) => profiles.get(id),
       // Windows on the expired page go back to their page; otherwise every window reloads.
-      onSignedIn: (profile) => {
-        if (sessionWatch.signedIn(profile.id) > 0) windows.showProfile(profile);
+      onSignedIn: (profile, account) => {
+        if (sessionWatch.signedIn(profile.id, account)) windows.showProfile(profile);
         else windows.reloadProfile(profile);
       },
       // A session the app did not want: its cookies go from the partition's jar as well.
@@ -536,12 +555,13 @@ function start(): void {
      * A profile's window (spec §6.3): signed in, its main window; signed out, the small window's
      * signed-out page; never signed in (a managed profile), its found page.
      */
-    const openProfile = (profile: Profile, url?: string) => {
-      profiles.setLastUsed(profile.id);
-      if (profile.signedIn) windows.showProfile(profile, url);
-      else if (profile.account) onboarding.showSignedOut(profile);
-      else onboarding.showFound(profile);
-    };
+    const openProfile = createOpenProfile({
+      getProfile: (id) => profiles.get(id),
+      setLastUsed: (id) => profiles.setLastUsed(id),
+      showMain: (profile, url) => windows.showProfile(profile, url),
+      showSignedOut: (profile) => onboarding.showSignedOut(profile),
+      showFound: (profile) => onboarding.showFound(profile),
+    });
 
     const openDefault = () => {
       const visible = visibleProfiles();
@@ -562,7 +582,7 @@ function start(): void {
       profiles: visibleProfiles,
       impl: device.impl,
       gate: confirmGate,
-      openDevicePage: (profile, path) => windows.showProfile(profile, profile.base + path),
+      openDevicePage: (profile, path) => openProfile(profile, profile.base + path),
       onChange: () => {
         ui.stateChanged();
         // The signed-out page's device note follows the device, when it shows and changed.
@@ -675,6 +695,11 @@ function start(): void {
         const saved = profiles.update(id, { signedIn: true, account });
         ui.stateChanged();
         return saved;
+      },
+      // The small window first (closing the last window quits on Windows / Linux), then the window.
+      notSignedIn: (id, win) => {
+        if (profiles.get(id)) openProfile({ id });
+        if (!win.isDestroyed()) (win as unknown as BrowserWindow).close();
       },
       popupPlatformMenu: (win) =>
         Menu.buildFromTemplate(

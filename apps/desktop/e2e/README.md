@@ -73,6 +73,13 @@ What it covers:
 - A `/login` navigation without a logout is stopped and the main window shows the expired page
   (a `WebContentsView` with `app://local/main-error.html`); signing in again removes it and loads
   the `returnTo` page.
+- `restart.spec.ts` launches twice on the same userData directory: a signed-in profile opens its
+  main window (its persistent session cookie kept), a signed-out one its signed-out small window;
+  a provisional partition directory left on disk is removed at start, the profile's own stays.
+  The 「平台」 menu's sign-out, confirmed in the shell dialog, posts the logout and clears
+  `cap_at` / `cap_rt`. A run in the background never gets OS focus, so the spec makes the dialog
+  window report focus (as a click would) before the confirming button counts; its 500 ms lockout
+  stays real. A deployment page has no `window.capybaraLocal`.
 - A deployment document answered 503 shows the unreachable page; 重试 probes `/api/v1/meta`
   (still 503: the page stays); once it answers 2xx the overlay goes and the page loads again.
 

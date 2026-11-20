@@ -143,6 +143,12 @@ export interface SessionWatchDeps {
   openExternal(url: string): Promise<unknown> | unknown;
   /** `profiles.update(id, { signedIn: true, account })` (and the menus' refresh). */
   markSignedIn(id: string, account: SignedInAccount): Profile | undefined;
+  /**
+   * A window of a profile that is not signed in (or was removed) met the deployment's /login: show
+   * the profile's small-window page (signed out, or found) and close that window. A backstop: no
+   * entry opens a main window for a profile that is not signed in.
+   */
+  notSignedIn(profileId: string, window: SessionWindow): void;
   /** Pops the 「平台」 menu up over the window. */
   popupPlatformMenu(window: SessionWindow): void;
   /** `probeMeta` through the profile partition's fetch. */
@@ -317,8 +323,13 @@ export function createSessionWatch(deps: SessionWatchDeps) {
   function onLogin(w: Watched, nav: LoginNavigation): void {
     if (w.ended) return;
     nav.stop();
-    // Signed out already (the window is closing): nothing to decide.
-    if (!deps.getProfile(w.profileId)?.signedIn) return;
+    // Not signed in (signed out meanwhile, or a window opened by mistake): never a blank window.
+    if (!deps.getProfile(w.profileId)?.signedIn) {
+      w.ended = true;
+      stopProbe(w);
+      deps.notSignedIn(w.profileId, w.window);
+      return;
+    }
     if (deps.signOut.takeLoggedOut(w.profileId)) {
       w.ended = true;
       stopProbe(w);
@@ -354,15 +365,16 @@ export function createSessionWatch(deps: SessionWatchDeps) {
     if (!profile) return;
     // Another account: the page the last one was on may not be this one's, in any window.
     const sameAccount = !before?.account || before.account.login === outcome.account.login;
-    recover(profile, sameAccount);
+    recover(profile, sameAccount, false);
   }
 
   /**
    * The profile is signed in again: every expired window drops its overlay and loads its return
-   * URL (`/` for another account, whose other windows go to `/` as well). Returns how many expired
-   * windows were recovered.
+   * URL (`/` for another account, whose other windows go to `/` as well; with `reloadOthers`, the
+   * same account's other windows reload their page too). Returns how many expired windows were
+   * recovered.
    */
-  function recover(profile: Profile, sameAccount: boolean): number {
+  function recover(profile: Profile, sameAccount: boolean, reloadOthers: boolean): number {
     const home = `${profile.base}/`;
     let recovered = 0;
     for (const w of ofProfile(profile.id)) {
@@ -374,6 +386,8 @@ export function createSessionWatch(deps: SessionWatchDeps) {
       } else if (!sameAccount) {
         if (w.mode === "unreachable") w.failedUrl = home;
         load(w, home);
+      } else if (reloadOthers && w.mode === "none") {
+        load(w, w.lastUrl ?? home);
       }
     }
     return recovered;
@@ -422,7 +436,8 @@ export function createSessionWatch(deps: SessionWatchDeps) {
       void deps.signOut.signOutNow(id);
       return;
     }
-    void deps.signOut.confirmAndSignOut(id);
+    // The host may hang: the logout POST gives up after 2 s (sign-out.ts).
+    void deps.signOut.confirmAndSignOut(id, { unreachable: true });
   }
 
   /** The watched window whose overlay sent an action. */
@@ -521,14 +536,28 @@ export function createSessionWatch(deps: SessionWatchDeps) {
     },
 
     /**
-     * The profile was signed in another way (signIn@1, the small window): its expired windows drop
-     * the overlay and load their return URL. A signIn@1 call that replaced the overlay's own
-     * attempt first shows "cancelled" in the overlay (accepted: this clears it right after).
-     * Returns how many expired windows were recovered (0: the caller reloads as before).
+     * The profile was signed in another way (signIn@1, the small window), as `account` when known
+     * (the profile is updated with it). With a window on the expired page, or another account, the
+     * watch takes care of every window: expired ones load their return URL, the others reload
+     * their page (another account: everything goes to `/`); returns true. Otherwise returns false
+     * and the caller reloads as before. A signIn@1 call that replaced the overlay's own attempt
+     * first shows "cancelled" in the overlay (accepted: this clears it right after).
      */
-    signedIn(profileId: string): number {
-      const profile = deps.getProfile(profileId);
-      return profile ? recover(profile, true) : 0;
+    signedIn(profileId: string, account?: SignedInAccount): boolean {
+      const before = deps.getProfile(profileId);
+      if (!before) return false;
+      let profile: Profile = before;
+      if (account) {
+        try {
+          profile = deps.markSignedIn(profileId, account) ?? before;
+        } catch (err) {
+          log("could not mark the profile signed in", err);
+        }
+      }
+      const sameAccount = !account || !before.account || before.account.login === account.login;
+      if (sameAccount && ofProfile(profileId, "expired").length === 0) return false;
+      recover(profile, sameAccount, true);
+      return true;
     },
 
     /** A window of the profile shows the expired page (sign-out: it counts as on `/login`). */

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { createProfileStore, partitionFor } from "../src/main/profiles.ts";
+import { describe, expect, test, vi } from "vitest";
+import { createProfileStore, partitionFor, sweepOrphanPartitions } from "../src/main/profiles.ts";
 import { fakeSession, memoryFs } from "./fakes.ts";
 
 const FILE = "/user-data/profiles.json";
@@ -256,5 +256,57 @@ describe("profile fields", () => {
     expect(store.update(a.id, { account: undefined })?.account).toBeUndefined();
     expect(JSON.parse(fs.files.get(FILE) as string).profiles[0].account).toBeUndefined();
     expect(store.update("nope", { signedIn: false })).toBeUndefined();
+  });
+});
+
+describe("sweepOrphanPartitions", () => {
+  const known = "11111111-2222-4333-8444-555555555555";
+  const orphan = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  function fakeFs(names: string[]) {
+    const removed: string[] = [];
+    return {
+      removed,
+      readdirSync: (_p: string) => names,
+      rmSync: (p: string, _o: { recursive: true; force: true }) => {
+        removed.push(p);
+      },
+    };
+  }
+  const join = (...parts: string[]) => parts.join("/");
+
+  test("removes only unsaved profile partitions; never local or anything else", () => {
+    const fs = fakeFs([
+      `profile-${known}`,
+      `profile-${orphan}`,
+      `profile-${orphan.toUpperCase()}`,
+      "local",
+      "profile-not-a-uuid",
+      "something-else",
+      `xprofile-${orphan}`,
+    ]);
+    const removed = sweepOrphanPartitions({
+      partitionsDir: "/u/Partitions",
+      knownIds: [known],
+      fs,
+      join,
+    });
+    expect(removed).toEqual([`profile-${orphan}`, `profile-${orphan.toUpperCase()}`]);
+    expect(fs.removed).toEqual([
+      `/u/Partitions/profile-${orphan}`,
+      `/u/Partitions/profile-${orphan.toUpperCase()}`,
+    ]);
+  });
+
+  test("no Partitions directory: nothing", () => {
+    const fs = {
+      readdirSync: () => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+      rmSync: vi.fn(),
+    };
+    expect(
+      sweepOrphanPartitions({ partitionsDir: "/u/Partitions", knownIds: [], fs, join }),
+    ).toEqual([]);
+    expect(fs.rmSync).not.toHaveBeenCalled();
   });
 });

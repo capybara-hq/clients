@@ -3,6 +3,7 @@
 //   GET  /api/v1/meta                current shape (icons, appSignIn true), cache-control: no-store
 //   GET  /apps/authorize             records the query (the test reads state and challenge)
 //   POST /api/v1/app-auth/token      X-Capybara-Csrf: 1, PKCE S256, one use; sets a cookie
+//                                    (persistent, like the kernel's: it survives a restart)
 //   POST /api/v1/auth/login          counts the hit (the app must never let it reach here)
 //   POST /api/v1/auth/logout         X-Capybara-Csrf: 1; ends the session, clears the cookie (204);
 //                                    with `holdLogoutBody`, a 200 whose body waits for
@@ -228,7 +229,7 @@ export async function startFakeDeployment(
     fake.accepted += 1;
     send(res, 200, JSON.stringify({ account: FAKE_ACCOUNT }), {
       "content-type": "application/json",
-      "set-cookie": `${COOKIE_NAME}=${session}; Path=/; HttpOnly; SameSite=Lax`,
+      "set-cookie": `${COOKIE_NAME}=${session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`,
     });
   };
 

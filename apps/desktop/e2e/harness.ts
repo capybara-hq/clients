@@ -30,11 +30,14 @@ export interface Harness {
   deepLink(url: string): Promise<void>;
   /** The cookies of a profile's partition. */
   cookies(profileId: string, base: string, name?: string): Promise<Electron.Cookie[]>;
-  close(failed: boolean, tracePath: string): Promise<void>;
+  /** Quits the app; `keepUserData` keeps the directory for a later `launchApp({ userData })`. */
+  close(failed: boolean, tracePath: string, o?: { keepUserData?: boolean }): Promise<void>;
 }
 
-export async function launchApp(): Promise<Harness> {
-  const userData = mkdtempSync(join(tmpdir(), "capybara-e2e-"));
+/** Launches the app on a fresh temp directory, or on `userData` of an earlier launch (a restart). */
+export async function launchApp(o: { userData?: string } = {}): Promise<Harness> {
+  const fresh = o.userData === undefined;
+  const userData = o.userData ?? mkdtempSync(join(tmpdir(), "capybara-e2e-"));
   // The app under test never sees the developer's real device: its state directory and control
   // socket (`$XDG_CONFIG_HOME/capybara-device`) live in the temp dir.
   const configHome = join(userData, "config");
@@ -69,7 +72,7 @@ export async function launchApp(): Promise<Harness> {
     });
   } catch (err) {
     await app?.close().catch(() => undefined);
-    rmSync(userData, { recursive: true, force: true });
+    if (fresh) rmSync(userData, { recursive: true, force: true });
     throw err;
   }
   const launched = app;
@@ -123,14 +126,14 @@ export async function launchApp(): Promise<Harness> {
             .cookies.get({ url: args.base, ...(args.name ? { name: args.name } : {}) }),
         { profileId, base, name },
       ),
-    async close(failed, tracePath) {
+    async close(failed, tracePath, closeOptions) {
       try {
         await launched.context().tracing.stop(failed ? { path: tracePath } : {});
       } finally {
         try {
           await launched.close();
         } finally {
-          rmSync(userData, { recursive: true, force: true });
+          if (!closeOptions?.keepUserData) rmSync(userData, { recursive: true, force: true });
         }
       }
     },

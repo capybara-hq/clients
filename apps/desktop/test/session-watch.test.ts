@@ -133,6 +133,7 @@ function setup(over: Partial<SessionWatchDeps> = {}) {
       profile = { ...profile, signedIn: true, account };
       return profile;
     }),
+    notSignedIn: vi.fn(),
     popupPlatformMenu: vi.fn(),
     probe: vi.fn(() => new Promise<boolean>((resolve) => probes.push(resolve))),
     schedule: (run, ms) => {
@@ -284,12 +285,18 @@ describe("the /login decision", () => {
     expect(h.overlays).toHaveLength(0);
   });
 
-  test("a profile signed out already decides nothing", () => {
+  test("a profile that is not signed in: its small-window page, the window closed (no blank)", () => {
     const h = setup();
     h.signOutProfile();
-    h.win.webContents.emit("will-navigate", navEvent(), LOGIN);
+    const e = navEvent();
+    h.win.webContents.emit("will-navigate", e, LOGIN);
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
     expect(h.signOut.takeLoggedOut).not.toHaveBeenCalled();
     expect(h.overlays).toHaveLength(0);
+    expect(h.deps.notSignedIn).toHaveBeenCalledExactlyOnceWith("p1", h.win);
+    // Reported again: once only.
+    h.win.webContents.emit("did-navigate", {}, LOGIN, 200);
+    expect(h.deps.notSignedIn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -405,10 +412,39 @@ describe("re-sign-in from the expired page", () => {
     const h = setup();
     h.win.webContents.emit("will-navigate", navEvent(), `${LOGIN}?returnTo=%2Fteam%2Fx`);
     const overlay = h.shown() as FakeOverlay;
-    expect(h.watch.signedIn("p1")).toBe(1);
+    expect(h.watch.signedIn("p1")).toBe(true);
     expect(overlay.isRemoved()).toBe(true);
     expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/x`);
-    expect(h.watch.signedIn("p1")).toBe(0);
+    // Nothing expired any more: the caller reloads as before.
+    expect(h.watch.signedIn("p1")).toBe(false);
+  });
+
+  test("signIn@1 with the account: stored; the profile's other windows reload their page", () => {
+    const h = setup();
+    const other = h.another();
+    other.webContents.emit("did-navigate", {}, `${BASE}/agents`, 200);
+    h.win.webContents.emit("will-navigate", navEvent(), LOGIN);
+    const account = { name: "Ann", login: "ann@example.com" };
+    expect(h.watch.signedIn("p1", account)).toBe(true);
+    expect(h.deps.markSignedIn).toHaveBeenCalledWith("p1", account);
+    expect(other.loadURL).toHaveBeenCalledWith(`${BASE}/agents`);
+  });
+
+  test("signIn@1 as another account: every window goes home, even with nothing expired", () => {
+    const h = setup();
+    const other = h.another();
+    expect(h.watch.signedIn("p1", { name: "Bob", login: "bob@example.com" })).toBe(true);
+    expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/`);
+    expect(other.loadURL).toHaveBeenCalledWith(`${BASE}/`);
+  });
+
+  test("signIn@1 with the same account and nothing expired: left to the caller", () => {
+    const h = setup();
+    const other = h.another();
+    expect(h.watch.signedIn("p1", { name: "Ann", login: "ann@example.com" })).toBe(false);
+    expect(h.deps.markSignedIn).toHaveBeenCalled();
+    expect(other.loadURL).not.toHaveBeenCalled();
+    expect(h.win.loadURL).not.toHaveBeenCalled();
   });
 
   test("the pending attempt is cancelled when the profile's last window closes", async () => {
@@ -574,7 +610,8 @@ describe("the unreachable page", () => {
     const h = setup();
     h.win.webContents.emit("did-fail-load", {}, -105, "x", `${BASE}/`, true);
     await h.act(h.shown() as FakeOverlay, "mainError.signOut");
-    expect(h.signOut.confirmAndSignOut).toHaveBeenCalledWith("p1");
+    // With the short logout timeout: the host may hang.
+    expect(h.signOut.confirmAndSignOut).toHaveBeenCalledWith("p1", { unreachable: true });
     expect(h.signOut.complete).not.toHaveBeenCalled();
   });
 

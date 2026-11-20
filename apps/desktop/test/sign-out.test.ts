@@ -10,6 +10,7 @@ import {
   LOGIN_PAIR_MS,
   type SignOutDeps,
   SUPPRESS_GRACE_MS,
+  UNREACHABLE_LOGOUT_TIMEOUT_MS,
   watchLoginNavigations,
   watchLogout,
 } from "../src/main/sign-out.ts";
@@ -329,6 +330,29 @@ describe("signOutNow (the expired page's 退出登录)", () => {
     // Its own completion leaves no note for a later /login.
     h.signOut.noteLoggedOut("p1");
     expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+  });
+
+  test("a profile no longer signed in: no POST, its windows closed through complete", async () => {
+    const h = setup({ hasProfileWindows: () => true });
+    h.deps.markSignedOut("p1");
+    h.order.length = 0;
+    await h.signOut.signOutNow("p1");
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.deps.closeProfileWindows).toHaveBeenCalledWith("p1");
+    expect(h.deps.showSignedOut).toHaveBeenCalled();
+  });
+
+  test("from the unreachable page the POST gives up after 2 s", async () => {
+    const spy = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const h = setup();
+      await h.signOut.confirmAndSignOut("p1", { unreachable: true });
+      expect(spy).toHaveBeenCalledWith(UNREACHABLE_LOGOUT_TIMEOUT_MS);
+      expect(UNREACHABLE_LOGOUT_TIMEOUT_MS).toBe(2_000);
+      expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a dead session still signs out", async () => {

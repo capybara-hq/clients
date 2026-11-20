@@ -101,6 +101,49 @@ export function partitionFor(id: string): string {
   return `persist:profile-${id}`;
 }
 
+/** The on-disk directory of a profile partition: `Partitions/profile-<uuid>` (ids are UUIDs). */
+const PROFILE_PARTITION_DIR =
+  /^profile-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+export interface SweepFs {
+  readdirSync(path: string): string[];
+  rmSync(path: string, o: { recursive: true; force: true }): void;
+}
+
+/**
+ * At start, before any partition is loaded: deletes the partition directories of profile ids
+ * that are not saved (a provisional profile whose sign-in never completed before the app quit,
+ * with the cookies seeded into it). Only directories named like the shell's own profile
+ * partitions are touched: never `local`, never anything else. Returns the removed names.
+ */
+export function sweepOrphanPartitions(o: {
+  partitionsDir: string;
+  knownIds: Iterable<string>;
+  fs: SweepFs;
+  join(...parts: string[]): string;
+  log?: (message: string, err?: unknown) => void;
+}): string[] {
+  const known = new Set([...o.knownIds].map((id) => id.toLowerCase()));
+  let names: string[];
+  try {
+    names = o.fs.readdirSync(o.partitionsDir);
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    const id = PROFILE_PARTITION_DIR.exec(name)?.[1];
+    if (!id || known.has(id.toLowerCase())) continue;
+    try {
+      o.fs.rmSync(o.join(o.partitionsDir, name), { recursive: true, force: true });
+      removed.push(name);
+    } catch (err) {
+      o.log?.("could not remove an abandoned partition", err);
+    }
+  }
+  return removed;
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

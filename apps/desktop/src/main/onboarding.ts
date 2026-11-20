@@ -543,6 +543,15 @@ export function createOnboarding(deps: OnboardingDeps) {
   }
 
   function showSaved(profile: Profile, view: "signedOut" | "found"): void {
+    // A sign-in to another platform waiting for the browser is not thrown away (a web sign-out in
+    // another profile, a menu click): the window only comes forward. The other profile is stored
+    // signed out; the 「平台」 menu shows its page later.
+    if (page === "waiting" && attempt && attempt.target.profile.id !== profile.id) {
+      if (win && !win.isDestroyed()) {
+        show();
+        return;
+      }
+    }
     stopDiscovery();
     if (target?.profile.id !== profile.id || target.provisional) void dropTarget();
     else endAttempt();
