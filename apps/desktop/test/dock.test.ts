@@ -1,5 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
-import { createDockIcon, createDockIconCache, DOCK_ICON_MAX_BYTES } from "../src/main/dock.ts";
+import {
+  createDockIcon,
+  createDockIconCache,
+  DOCK_ICON_MAX_BYTES,
+  fetchPlatformIcon,
+  platformIconUrl,
+  pngDataUrl,
+} from "../src/main/dock.ts";
 import type { Profile } from "../src/main/profiles.ts";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
@@ -7,6 +14,7 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
 const profile = (n: number, over: Partial<Profile> = {}): Profile => ({
   id: `p${n}`,
+  signedIn: true,
   base: `https://p${n}.example.com`,
   origin: `https://p${n}.example.com`,
   name: `P${n}`,
@@ -241,5 +249,47 @@ describe("the icon cache", () => {
     const cache = createDockIconCache("/u/dock", memory());
     expect(cache.readCache("../../etc/passwd")).toBeNull();
     expect(() => cache.writeCache("../x", PNG)).toThrow();
+  });
+});
+
+describe("the platform icon for the local pages", () => {
+  const deployment = { base: "https://p1.example.com/team", origin: "https://p1.example.com" };
+  const iconUrl = "https://p1.example.com/api/v1/platform/icon/app?v=h1";
+
+  test("resolved against the base, on the deployment's own origin only", () => {
+    expect(platformIconUrl(deployment, "/api/v1/platform/icon/app?v=h1")?.url.href).toBe(iconUrl);
+    expect(platformIconUrl(deployment, "/api/v1/platform/icon/app?v=h1")?.hash).toBe("h1");
+    expect(platformIconUrl(deployment, "/x.png?v=../a")?.hash).toBeNull();
+    expect(platformIconUrl(deployment, "https://evil.example.com/x.png")).toBeNull();
+    expect(platformIconUrl(deployment, null)).toBeNull();
+  });
+
+  test("fetched as a PNG of at most 1 MB, cached by its hash, read from the cache first", async () => {
+    const stored = new Map<string, Uint8Array>();
+    const fetchFn = vi.fn(async () => new Response(PNG)) as unknown as typeof fetch;
+    const deps = {
+      fetch: fetchFn,
+      readCache: (h: string) => stored.get(h) ?? null,
+      writeCache: (h: string, png: Uint8Array) => {
+        stored.set(h, png);
+      },
+    };
+    const first = await fetchPlatformIcon(deployment, "/api/v1/platform/icon/app?v=h1", deps);
+    expect(first).toEqual({ png: PNG, hash: "h1" });
+    expect(stored.get("h1")).toEqual(PNG);
+    await fetchPlatformIcon(deployment, "/api/v1/platform/icon/app?v=h1", deps);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(pngDataUrl(PNG)).toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/);
+  });
+
+  test("a JPEG or a foreign icon is no icon", async () => {
+    const deps = {
+      fetch: vi.fn(async () => new Response(JPEG)) as unknown as typeof fetch,
+      readCache: () => null,
+      writeCache: vi.fn(),
+    };
+    expect(await fetchPlatformIcon(deployment, "/icon?v=j", deps)).toBeNull();
+    expect(await fetchPlatformIcon(deployment, "https://evil.example.com/i.png", deps)).toBeNull();
+    expect(deps.writeCache).not.toHaveBeenCalled();
   });
 });

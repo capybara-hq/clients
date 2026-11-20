@@ -8,11 +8,11 @@ import { readFile } from "node:fs/promises";
 import { homedir, hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
-import { fetchMeta } from "@capybara-hq/shell";
+import { discover, fetchMeta } from "@capybara-hq/shell";
 import {
   app,
   BrowserWindow,
-  dialog,
+  clipboard,
   ipcMain,
   Menu,
   Notification,
@@ -20,6 +20,7 @@ import {
   nativeTheme,
   net,
   protocol,
+  screen,
   session,
   shell,
   Tray,
@@ -28,9 +29,9 @@ import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
-import { createAddressHost, discoverDeployment, localeFrom } from "./address.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
+import { BUILTIN_TOKENS, backgroundOf, resolveAppearance } from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -47,35 +48,48 @@ import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
 import { controlClient, deviceStateDir } from "./device/control.ts";
-import { createDeviceDialogs, type MessageBoxOptions } from "./device/dialogs.ts";
+import { createDeviceDialogs } from "./device/dialogs.ts";
 import { readKeepAwake, readMachine } from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
 import { createTrayDevice } from "./device/tray-device.ts";
-import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
+import {
+  createDockIcon,
+  createDockIconCache,
+  type DockCacheFs,
+  fetchPlatformIcon,
+  isPng,
+  platformIconUrl,
+  pngDataUrl,
+} from "./dock.ts";
 import { createConfirmGate, createShellBridge, type IpcMainLike } from "./ipc.ts";
+import { createLocalPages } from "./local-pages.ts";
+import { localeFrom } from "./locale.ts";
 import {
   createPlistReader,
   ensureManagedProfiles,
   isAddressAllowed,
   readManagedConfig,
 } from "./managed.ts";
+import { createOnboarding, type OnboardingWindow, platformName } from "./onboarding.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
-import { ADDRESS_PARTITION, hardenAnyContents } from "./security.ts";
-import { createSignIn, type FetchLike } from "./sign-in.ts";
+import { hardenAnyContents, installDenyAllPermissions, LOCAL_PARTITION } from "./security.ts";
+import { createShellDialogs, type DialogWindow } from "./shell-dialog.ts";
+import { createSignIn, type FetchLike, REDIRECT_URI } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
 import { setupUpdates, updateNotice } from "./updates.ts";
-import { desktopUserAgent } from "./user-agent.ts";
+import { desktopUserAgent, machineNameFrom } from "./user-agent.ts";
 import {
   createWindowManager,
   type ProfileSession,
   type ProfileTarget,
+  smallWindowControls,
   type WindowLike,
 } from "./windows.ts";
 
-// Before `ready`: app:// is a standard, secure scheme so the address page has a real origin.
+// Before `ready`: app:// is a standard, secure scheme so the local pages have a real origin.
 protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true } },
 ]);
@@ -94,7 +108,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
-  // The bundle is dist/main/index.cjs; the preloads and the address page sit next to it.
+  // The bundle is dist/main/index.cjs; the preloads and the local pages sit next to it.
   const dist = join(__dirname, "..");
   const platform = platformFrom(process.platform);
   const shellVersion = app.getVersion();
@@ -127,12 +141,14 @@ function start(): void {
       readPlist: createPlistReader({ existsSync: fs.existsSync, execFileSync }),
     });
 
-    session
-      .fromPartition(ADDRESS_PARTITION)
-      .protocol.handle(
-        APP_SCHEME,
-        createAppProtocolHandler({ dir: join(dist, "address-page"), readFile }),
-      );
+    // Only the local partition serves app://local; no other partition has the scheme.
+    const localSession = session.fromPartition(LOCAL_PARTITION);
+    localSession.protocol.handle(
+      APP_SCHEME,
+      createAppProtocolHandler({ localDir: join(dist, "local"), readFile }),
+    );
+    // The local pages ask for no permission, ever.
+    installDenyAllPermissions(localSession);
 
     // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
     // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
@@ -157,7 +173,7 @@ function start(): void {
       newId: () => randomUUID(),
     });
 
-    // One native dialog at a time per profile, for a page's call and the tray's click alike.
+    // One dialog at a time per profile, for a page's call and the tray's click alike.
     const confirmGate = createConfirmGate();
     const control = controlClient(deviceStateDir(process.env, homedir()));
     const bridge = createShellBridge<ProfileTarget>({
@@ -191,8 +207,9 @@ function start(): void {
         ) as unknown as WindowLike,
       sessionFor: (partition) => session.fromPartition(partition) as unknown as ProfileSession,
       preloadPath: join(dist, "preload", "index.cjs"),
-      addressPreloadPath: join(dist, "preload", "address.cjs"),
+      localPreloadPath: join(dist, "preload", "local.cjs"),
       platform,
+      appName: brand.productName,
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       describeEvents: (profile) => bridge.describeEvents(profile),
@@ -203,10 +220,19 @@ function start(): void {
         profiles.setLastUsed(profile.id);
         ui.stateChanged();
       },
-      onAddressClosed: (id) => addressHost.forget(id),
       // Only to each profile's own origin; the token exchange sets the same value itself.
       userAgent: desktopUserAgent(shellVersion, hostname()),
       backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
+      // Spec §6.7: the main window opens where it was, else 1280×800 centered.
+      displays: () => {
+        const primary = screen.getPrimaryDisplay().id;
+        return screen
+          .getAllDisplays()
+          .map((d) => ({ workArea: d.workArea, primary: d.id === primary }));
+      },
+      saveBounds: (id, bounds) => {
+        profiles.update(id, { bounds });
+      },
       log: (message, err) => console.error(message, err),
     });
 
@@ -232,6 +258,12 @@ function start(): void {
       },
       getProfile: (id) => profiles.get(id),
       onSignedIn: (profile) => windows.reloadProfile(profile),
+      // A session the app did not want: its cookies go from the partition's jar as well.
+      clearSessionCookies: async (profile) => {
+        const jar = session.fromPartition(partitionFor(profile.id)).cookies;
+        await jar.remove(`${profile.base}/`, "cap_at");
+        await jar.remove(`${profile.base}/`, "cap_rt");
+      },
       machineName: hostname(),
       appVersion: shellVersion,
       log: (message, err) => console.error(message, err ?? ""),
@@ -239,18 +271,56 @@ function start(): void {
     bridge.registerCapability(SHELL_CAPABILITY_KEYS.signIn, signIn.capability, {
       activation: ["start"],
     });
-    // Electron's message box, attached to `parent` while that window lives (else app-modal).
-    const showMessageBox = (parent: unknown, options: MessageBoxOptions) =>
-      parent instanceof BrowserWindow && !parent.isDestroyed()
-        ? dialog.showMessageBox(parent, options)
-        : dialog.showMessageBox(options);
+    // The local pages (small window, error overlay, shell dialogs) register here with their kind;
+    // the features that own their actions install the handlers.
+    const localPages = createLocalPages({
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    localPages.install(ipcMain as unknown as IpcMainLike);
+    // The cached platform icons (by the hash in the icon URL); the dialogs show them as data: URLs.
+    const iconCache = createDockIconCache(
+      join(app.getPath("userData"), "dock-icons"),
+      fs as DockCacheFs,
+    );
+    const iconFor = (profile: Profile): string | undefined => {
+      const png = profile.iconHash ? iconCache.readCache(profile.iconHash) : null;
+      return isPng(png)
+        ? `data:image/png;base64,${Buffer.from(png).toString("base64")}`
+        : undefined;
+    };
+    // The shell dialogs (spec §7.4): no OS message box anywhere. A sheet of `parent` while that
+    // window lives, else a standalone window on the active display, above the others.
+    const shellDialogs = createShellDialogs({
+      createWindow: (options) =>
+        new BrowserWindow(
+          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+        ) as unknown as DialogWindow,
+      localPages,
+      preloadPath: join(dist, "preload", "local.cjs"),
+      liveParent: (parent) =>
+        parent instanceof BrowserWindow && !parent.isDestroyed() ? parent : undefined,
+      pageBase: () => ({
+        locale: localeFrom(app.getLocale()),
+        appearance: resolveAppearance(nativeTheme.shouldUseDarkColors),
+        controls: null,
+        os: platform,
+        appName: brand.productName,
+        version: shellVersion,
+      }),
+      workArea: () => screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
+      backgroundColor: () =>
+        BUILTIN_TOKENS[nativeTheme.shouldUseDarkColors ? "dark" : "light"].panel,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    const showDialog = shellDialogs.show;
     // device@1 (spec §8, §9): native confirmations attached to the calling window.
     const device = createDeviceCapability({
       cli: deviceCli,
       service: deviceService,
       control,
       dialogs: createDeviceDialogs({
-        showMessageBox,
+        showDialog,
+        iconFor,
         locale: localeFrom(app.getLocale()),
         platform: process.platform,
       }),
@@ -270,25 +340,79 @@ function start(): void {
     });
 
     bridge.install(ipcMain as unknown as IpcMainLike);
-    const addressHost = createAddressHost({
-      discover: (input) => discoverDeployment(input, { fetch: net.fetch as typeof fetch }),
-      isAddressSender: (sender) => windows.isAddressSender(sender),
-      locale: localeFrom(app.getLocale()),
-      prefillFor: (sender) => windows.prefillFor(sender),
+    // The small window (spec §6.1): connect, found, waiting and signed-out, and the sign-in from
+    // there. A profile is saved only when its first sign-in completes (spec §6.3).
+    const pageAppearance = (profile?: Profile) =>
+      resolveAppearance(nativeTheme.shouldUseDarkColors, profile?.appearance);
+    const onboarding = createOnboarding({
+      localPages,
+      openWindow: (colors) => windows.openSmallWindow(colors).window as unknown as OnboardingWindow,
+      pageBase: (profile) => ({
+        locale: localeFrom(app.getLocale()),
+        appearance: pageAppearance(profile),
+        os: platform,
+        appName: brand.productName,
+        version: shellVersion,
+      }),
+      controls: smallWindowControls(platform),
+      colors: (appearance) => ({
+        background: backgroundOf(appearance),
+        symbol: appearance.tokens?.muted ?? BUILTIN_TOKENS[appearance.scheme].muted,
+      }),
+      discover: (base, signal) => discover(base, net.fetch as typeof fetch, signal),
+      platformIcon: async (deployment, icon) => {
+        const found = await fetchPlatformIcon(deployment, icon, {
+          fetch: net.fetch as typeof fetch,
+          ...iconCache,
+          log: (message, err) => console.error(message, err ?? ""),
+        });
+        if (!found) return {};
+        return { iconUrl: pngDataUrl(found.png), ...(found.hash ? { iconHash: found.hash } : {}) };
+      },
+      storedIcon: iconFor,
       isAllowed: (address) => isAddressAllowed(managed, address),
-      addProfile: (candidate) => {
-        const profile = profiles.add(candidate);
+      findProfile: (base) => profiles.list().find((p) => p.base === base),
+      newId: () => randomUUID(),
+      signIn,
+      redirectUri: REDIRECT_URI,
+      openExternal: (url) => shell.openExternal(url),
+      writeClipboard: (text) => clipboard.writeText(text),
+      saveProfile: (provisional, account) => {
+        // Saved meanwhile under another id (a managed profile): returned as is, not signed in.
+        const other = profiles.list().find((p) => p.base === provisional.base);
+        if (other && other.id !== provisional.id) return other;
+        const added = profiles.add({
+          id: provisional.id,
+          base: provisional.base,
+          origin: provisional.origin,
+          name: provisional.name,
+          ...(provisional.iconHash ? { iconHash: provisional.iconHash } : {}),
+        });
+        const saved = profiles.update(added.id, { signedIn: true, account }) ?? added;
         ui.profilesChanged();
         trayDevice.refresh();
-        return profile;
+        return saved;
       },
-      openProfile: (profile) => {
+      markSignedIn: (id, account) => {
+        const saved = profiles.update(id, { signedIn: true, account });
+        ui.stateChanged();
+        return saved;
+      },
+      openMain: (profile, home) => {
         profiles.setLastUsed(profile.id);
-        windows.showProfile(profile);
+        windows.showProfile(profile, home ? `${profile.base}/` : undefined);
+        ui.stateChanged();
       },
-      closeSender: (sender) => windows.closeSender(sender),
+      clearPartition: async (id) => {
+        const ses = session.fromPartition(partitionFor(id));
+        await ses.clearStorageData();
+        await ses.clearCache();
+      },
+      removeProfile: (id) => void removal.remove(id),
+      canRemove: () => managed.lockDeployments !== true,
+      machineName: machineNameFrom(hostname()),
+      log: (message, err) => console.error(message, err ?? ""),
     });
-    addressHost.install(ipcMain as unknown as IpcMainLike);
 
     // Under `lockDeployments` the app offers only the managed profiles (an older saved one stays
     // on disk but is not offered).
@@ -296,13 +420,24 @@ function start(): void {
       managed.lockDeployments !== true || isAddressAllowed(managed, p.base);
     const visibleProfiles = (): Profile[] => profiles.list().filter(isVisible);
 
+    /**
+     * A profile's window (spec §6.3): signed in, its main window; signed out, the small window's
+     * signed-out page; never signed in (a managed profile), its found page.
+     */
+    const openProfile = (profile: Profile, url?: string) => {
+      profiles.setLastUsed(profile.id);
+      if (profile.signedIn) windows.showProfile(profile, url);
+      else if (profile.account) onboarding.showSignedOut(profile);
+      else onboarding.showFound(profile);
+    };
+
     const openDefault = () => {
       const visible = visibleProfiles();
       const last = profiles.lastUsed();
       const target = last && visible.some((p) => p.id === last.id) ? last : visible[0];
-      if (target) windows.showProfile(target);
-      // First launch of a managed install: the address page, with the first managed address ready.
-      else windows.openAddressWindow(managed.profiles?.[0]);
+      if (target) openProfile(target);
+      // First launch (of a managed install: with the first managed address ready).
+      else onboarding.openConnect(managed.profiles?.[0]);
     };
 
     // This machine's device in the tray (spec §9.6). Its actions are device@1's own functions.
@@ -332,10 +467,14 @@ function start(): void {
       isRemovable: () => managed.lockDeployments !== true,
       gate: confirmGate,
       dialogParent: (id) => windows.dialogParent(id),
-      showMessageBox,
+      showDialog,
+      iconFor,
       locale,
       beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
-      closeProfileWindows: (id) => windows.closeProfileWindows(id),
+      closeProfileWindows: (id) => {
+        windows.closeProfileWindows(id);
+        onboarding.profileRemoved(id);
+      },
       removeProfile: (id) => profiles.remove(id),
       forgetAvailability: (id) => deviceAvailability.forget(id),
       onRemoved: () => {
@@ -348,12 +487,11 @@ function start(): void {
       showProfile: (id: string) => {
         const profile = visibleProfiles().find((p) => p.id === id);
         if (!profile) return;
-        profiles.setLastUsed(id);
-        windows.showProfile(profile);
+        openProfile(profile);
         ui.stateChanged();
       },
       addPlatform: () => {
-        windows.openAddressWindow();
+        onboarding.openConnect();
       },
       removeProfile: (id: string) => void removal.remove(id),
       openWindow: () => {
@@ -395,7 +533,7 @@ function start(): void {
         const file = iconFile("icon.png");
         if (fs.existsSync(file)) app.dock?.setIcon(nativeImage.createFromPath(file));
       },
-      ...createDockIconCache(join(app.getPath("userData"), "dock-icons"), fs as DockCacheFs),
+      ...iconCache,
       log: (message, err) => console.error(message, err ?? ""),
     });
     function render(): void {
@@ -427,17 +565,12 @@ function start(): void {
       log: (message, err) => console.error(message, err ?? ""),
     });
 
-    // `connect` only prefills the address page; `open` only focuses an existing profile.
+    // `connect` only prefills the connect page; `open` only focuses an existing profile.
     const deepLinkHandlers = createDeepLinkHandlers({
       profiles: visibleProfiles,
       isAllowedAddress: (address) => isAddressAllowed(managed, address),
-      openAddress: (prefill) => {
-        windows.openAddressWindow(prefill);
-      },
-      showProfile: (profile, url) => {
-        profiles.setLastUsed(profile.id);
-        windows.showProfile(profile, url);
-      },
+      openConnect: (prefill) => onboarding.openConnect(prefill),
+      showProfile: (profile, url) => openProfile(profile, url),
     });
 
     const router = createDeepLinkRouter({
@@ -468,11 +601,25 @@ function start(): void {
     openDefault();
 
     // Managed profiles (spec §6.4) are ensured lazily and never block the start: each one that is
-    // not saved yet is discovered like an address typed on the address page and saved when it
-    // answers; one that does not answer is tried again at the next launch.
+    // not saved yet is discovered like an address typed on the connect page and saved (not signed
+    // in) when it answers; one that does not answer is tried again at the next launch.
     void ensureManagedProfiles(managed.profiles ?? [], {
       has: (base) => profiles.list().some((p) => p.base === base),
-      discover: (base) => discoverDeployment(base, { fetch: net.fetch as typeof fetch }),
+      discover: async (base) => {
+        const found = await discover(base, net.fetch as typeof fetch);
+        if (!found.ok) return { ok: false };
+        const origin = new URL(found.base).origin;
+        const icon = platformIconUrl({ base: found.base, origin }, found.meta.icon);
+        return {
+          ok: true,
+          candidate: {
+            base: found.base,
+            origin,
+            name: platformName(found.meta, new URL(origin).host),
+            ...(icon?.hash ? { iconHash: icon.hash } : {}),
+          },
+        };
+      },
       add: (candidate) => profiles.add(candidate),
     }).then((added) => {
       if (added > 0) {

@@ -1,6 +1,6 @@
 // The security baseline of the shell windows (spec §7.2): webPreferences, permissions, navigation
 // and window.open rules. Electron objects come in as parameters.
-import { ADDRESS_HOST, APP_SCHEME } from "../shared/protocol.ts";
+import { APP_SCHEME, LOCAL_HOST } from "../shared/protocol.ts";
 
 const BASE_PREFERENCES = {
   contextIsolation: true,
@@ -30,11 +30,14 @@ export function childWebPreferences(o: { partition: string }) {
   return { ...BASE_PREFERENCES, partition: o.partition };
 }
 
-/** The address page: an in-memory partition of its own, never a profile's. */
-export const ADDRESS_PARTITION = "address";
+/**
+ * The local pages (small window, error overlay, shell dialogs): the app's own partition, never a
+ * profile's, so no deployment cookie or storage is ever in reach of a local page.
+ */
+export const LOCAL_PARTITION = "local";
 
-export function addressWebPreferences(o: { preload: string }) {
-  return { ...BASE_PREFERENCES, partition: ADDRESS_PARTITION, preload: o.preload };
+export function localWebPreferences(o: { preload: string }) {
+  return { ...BASE_PREFERENCES, partition: LOCAL_PARTITION, preload: o.preload, spellcheck: false };
 }
 
 /**
@@ -111,7 +114,7 @@ export function installPermissionHandlers(session: PermissionSession, profileOri
   session.setDevicePermissionHandler(() => false);
 }
 
-/** The address page needs no permission: every request and check is denied. */
+/** The local pages need no permission: every request and check is denied. */
 export function installDenyAllPermissions(session: PermissionSession): void {
   session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   session.setPermissionCheckHandler(() => false);
@@ -192,13 +195,12 @@ export function hardenProfileContents(
   });
 }
 
-/** The address page never navigates away from app://address and opens no windows. */
-export function hardenAddressContents(wc: ContentsLike): void {
+/** A local page never navigates away from app://local and opens no windows. */
+export function hardenLocalContents(wc: ContentsLike): void {
   hardenAnyContents(wc);
   const stay = (e: Prevented, url: unknown) => {
-    // Node's URL gives a non-special scheme the origin "null": compare scheme and host instead.
     const u = parse(navigationUrl(e, url));
-    if (!u || u.protocol !== `${APP_SCHEME}:` || u.host !== ADDRESS_HOST) e.preventDefault();
+    if (!u || u.protocol !== `${APP_SCHEME}:` || u.host !== LOCAL_HOST) e.preventDefault();
   };
   wc.on("will-navigate", stay);
   wc.on("will-redirect", stay);

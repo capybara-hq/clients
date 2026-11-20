@@ -28,8 +28,9 @@ so the app's own router handles it. No launchd, Keychain or login item is touche
 
 What it covers:
 
-- The address page's frame origin is `app://address` (read in main), and the address IPC accepts
-  the page's frame (`senderFrame.origin`), so address -> meta discovery -> icon -> Open works.
+- The small window's frame origin is `app://local` (read in main), and the local page registry
+  accepts its actions, so connect -> meta discovery -> icon -> 在浏览器中登录 -> callback -> the main
+  window on `/` works, and the small window closes.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{28,0,0,0}`, controls `{0,0,80,28}`) with `signIn@1`, `notify@1`, `openExternal@1`,
   `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
@@ -54,8 +55,8 @@ and a version that offers local devices.
 
 ### Sign-in and shell
 
-- [ ] First launch opens the address page; enter the dev kernel's address; Continue shows its name
-      and icon; Open loads the web.
+- [ ] First launch opens the small window's connect page; enter the dev kernel's address; Continue
+      shows its name and icon.
 - [ ] 「在浏览器中登录」 opens the system browser; after approving, the callback returns to the app
       (the first `capybara://` link while the app is not running launches it; `open-url` before
       `ready` is not lost) and the window reloads signed in. Deny returns without signing in.

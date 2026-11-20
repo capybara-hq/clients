@@ -1,19 +1,24 @@
 import { describe, expect, test, vi } from "vitest";
-import type { MessageBoxOptions } from "../src/main/device/dialogs.ts";
 import { createConfirmGate } from "../src/main/ipc.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import { createProfileRemoval, type ProfileRemovalDeps } from "../src/main/remove-profile.ts";
+import type { ShellDialogOptions } from "../src/main/shell-dialog.ts";
 
 const p1: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://a.example.com/team",
   origin: "https://a.example.com",
   name: "Example",
 };
 
-function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [0]) {
+// Answers by meaning, mapped through the options the dialog was given, so a drift between the
+// index the code passes and the one it compares to fails here.
+type Answer = "confirm" | "cancel";
+
+function setup(over: Partial<ProfileRemovalDeps> = {}, answers: Answer[] = ["confirm"]) {
   const order: string[] = [];
-  const boxes: { parent: unknown; options: MessageBoxOptions }[] = [];
+  const boxes: { parent: unknown; options: ShellDialogOptions }[] = [];
   const parent = { id: "window" };
   const gate = createConfirmGate();
   const deps: ProfileRemovalDeps = {
@@ -21,10 +26,11 @@ function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [0]) 
     isRemovable: () => true,
     gate,
     dialogParent: () => parent,
-    showMessageBox: async (box, options) => {
+    showDialog: async (box, options) => {
       boxes.push({ parent: box, options });
       order.push("confirm");
-      return { response: answers.shift() ?? 1 };
+      const a = answers.shift() ?? "cancel";
+      return { response: a === "confirm" ? (options.confirmId ?? -1) : options.cancelId };
     },
     locale: "zh",
     beforeRemoveDevice: vi.fn(async () => {
@@ -64,13 +70,14 @@ describe("removing a platform (spec 6.3)", () => {
     await removal.remove("p1");
     expect(boxes[0]?.parent).toBe(parent);
     expect(boxes[0]?.options).toEqual({
-      type: "warning",
-      message: "要移除 Example（a.example.com）吗？",
+      title: "要移除 Example（a.example.com）吗？",
       detail: expect.stringContaining("本地数据"),
-      buttons: ["移除", "取消"],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
+      buttons: ["取消", "移除"],
+      defaultId: 0,
+      cancelId: 0,
+      confirmId: 1,
+      tone: "danger",
+      platform: { name: "Example", host: "a.example.com" },
     });
   });
 
@@ -78,12 +85,12 @@ describe("removing a platform (spec 6.3)", () => {
     const unnamed = { ...p1, name: "a.example.com" };
     const { removal, boxes } = setup({ getProfile: () => unnamed, locale: "en" });
     await removal.remove("p1");
-    expect(boxes[0]?.options.message).toBe("Remove a.example.com?");
-    expect(boxes[0]?.options.buttons).toEqual(["Remove", "Cancel"]);
+    expect(boxes[0]?.options.title).toBe("Remove a.example.com?");
+    expect(boxes[0]?.options.buttons).toEqual(["Cancel", "Remove"]);
   });
 
   test("cancel (the default button) does nothing", async () => {
-    const { removal, deps, order } = setup({}, [1]);
+    const { removal, deps, order } = setup({}, ["cancel"]);
     await removal.remove("p1");
     expect(order).toEqual(["confirm"]);
     expect(deps.beforeRemoveDevice).not.toHaveBeenCalled();
@@ -119,18 +126,18 @@ describe("removing a platform (spec 6.3)", () => {
   });
 
   test("one dialog at a time per platform: a second removal while one asks is dropped", async () => {
-    let answer: (r: { response: number }) => void = () => {};
+    let confirm: () => void = () => {};
     const { removal, deps, gate } = setup({
-      showMessageBox: () =>
+      showDialog: (_parent, options) =>
         new Promise((resolve) => {
-          answer = resolve;
+          confirm = () => resolve({ response: options.confirmId ?? -1 });
         }),
     });
     const first = removal.remove("p1");
     await removal.remove("p1");
     // A device dialog from the tray for the same platform is refused while this one is open.
     expect(gate.isConfirmingCallAllowed("p1", true)).toBe("busy");
-    answer({ response: 0 });
+    confirm();
     await first;
     expect(deps.removeProfile).toHaveBeenCalledTimes(1);
     // The slot is released afterwards.

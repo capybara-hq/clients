@@ -6,7 +6,7 @@ import zh from "../src/i18n/zh.json" with { type: "json" };
 
 describe("t", () => {
   test("looks up per locale and fills placeholders", () => {
-    expect(t("zh", "address.error.too_old")).toBe("该平台版本过旧");
+    expect(t("zh", "onboarding.waiting.cancel")).toBe("取消");
     expect(t("zh", "platform.add")).toBe("添加平台");
     expect(t("en", "platform.add")).toBe("Add a platform");
   });

@@ -13,6 +13,7 @@ export const SECRET = "cap_dev_SECRET_credential_value";
 
 export const profileA: Profile = {
   id: "pa",
+  signedIn: true,
   base: "https://a.example.com/team",
   origin: "https://a.example.com",
   name: "Acme 平台",

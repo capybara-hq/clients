@@ -412,6 +412,7 @@ describe("the main side announces fullscreen", () => {
       isMinimized: () => false,
       restore: vi.fn(),
       setBackgroundColor: vi.fn(),
+      getBounds: () => ({ x: 0, y: 0, width: 1280, height: 800 }),
       loadURL: vi.fn(async () => undefined),
     };
   }
@@ -422,14 +423,20 @@ describe("the main side announces fullscreen", () => {
       createWindow: () => win,
       sessionFor: () => fakeSession(),
       preloadPath: "/p.cjs",
-      addressPreloadPath: "/a.cjs",
+      localPreloadPath: "/l.cjs",
       platform: "macos",
       openExternal: vi.fn(),
       describe: () => ({ "notify@1": ["notify"] }),
       onFocusProfile: vi.fn(),
       userAgent: "Capybara Desktop/0.1.0 (Box)",
     });
-    windows.openProfileWindow({ id: "p1", base: ORIGIN, origin: ORIGIN, name: "E" });
+    windows.openProfileWindow({
+      id: "p1",
+      base: ORIGIN,
+      origin: ORIGIN,
+      name: "E",
+      signedIn: true,
+    });
     win.setFullScreenState(true);
     expect(win.webContents.send).toHaveBeenLastCalledWith(SHELL_CHANNELS.change, {
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -451,14 +458,20 @@ describe("the main side announces fullscreen", () => {
       createWindow: () => win,
       sessionFor: () => fakeSession(),
       preloadPath: "/p.cjs",
-      addressPreloadPath: "/a.cjs",
+      localPreloadPath: "/l.cjs",
       platform: "macos",
       openExternal: vi.fn(),
       describe: () => ({}),
       onFocusProfile: vi.fn(),
       userAgent: "Capybara Desktop/0.1.0 (Box)",
     });
-    windows.openProfileWindow({ id: "p1", base: ORIGIN, origin: ORIGIN, name: "E" });
+    windows.openProfileWindow({
+      id: "p1",
+      base: ORIGIN,
+      origin: ORIGIN,
+      name: "E",
+      signedIn: true,
+    });
     win.setFullScreenState(true);
     expect(win.webContents.send).not.toHaveBeenCalled();
   });

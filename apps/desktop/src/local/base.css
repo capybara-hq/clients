@@ -1,0 +1,667 @@
+/*
+ * The local pages' stylesheet (desktop spec §6.1; mockups in apps/desktop/design/onboarding).
+ * The E 终端 values per scheme as --cb-* custom properties; the runtime overrides the seven main
+ * tokens with inline properties when the platform reported its own colors (§6.10) and then sets
+ * data-tokens, under which the extra shades are derived from ink and bg.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --cb-bg: #0a0a0a;
+  --cb-panel: #111110;
+  --cb-ink: #e6e6e3;
+  --cb-muted: #8e8e89;
+  --cb-line: #2a2a28;
+  --cb-accent: #ff6a13;
+  --cb-on-accent: #0a0a0a;
+  --cb-faint: #5a5a56;
+  --cb-line-strong: #3a3a37;
+  --cb-raised: #1a1a18;
+  --cb-danger: #e5484d;
+  --cb-danger-ink: #ff8a8e;
+  --cb-alert-ink: #ffb4b6;
+  --cb-ok: #3fd483;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --cb-bg: #faf9f6;
+  --cb-panel: #ffffff;
+  --cb-ink: #1a1a18;
+  --cb-muted: #5e5e5a;
+  --cb-line: #d9d8d2;
+  --cb-accent: #cc4609;
+  --cb-on-accent: #ffffff;
+  --cb-faint: #9a9a94;
+  --cb-line-strong: #b5b5ae;
+  --cb-raised: #efeee9;
+  --cb-danger: #e5484d;
+  --cb-danger-ink: #c62a2f;
+  --cb-alert-ink: #a3181d;
+  --cb-ok: #16803f;
+}
+
+/* Reported colors: the shades the platform did not report follow from its ink and ground. */
+:root[data-tokens] {
+  --cb-faint: color-mix(in srgb, var(--cb-ink) 38%, var(--cb-bg));
+  --cb-line-strong: color-mix(in srgb, var(--cb-ink) 22%, var(--cb-bg));
+  --cb-raised: color-mix(in srgb, var(--cb-ink) 8%, var(--cb-bg));
+  --cb-danger-ink: color-mix(in srgb, var(--cb-danger) 70%, var(--cb-ink));
+  --cb-alert-ink: color-mix(in srgb, var(--cb-danger) 45%, var(--cb-ink));
+}
+
+:root {
+  --lp-mono: "Sarasa Mono SC", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --lp-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  /* The drag band; the main window's error pages use the web's 52 px top bar height. */
+  --lp-band: 44px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: 14px / 1.6 var(--lp-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+
+.lp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The page: 480×600 small window, content centered, 56 px side padding. */
+.lp-page {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 56px;
+  overflow: hidden;
+}
+
+.lp-page--center {
+  align-items: center;
+  text-align: center;
+}
+
+/* The main window's error pages (board MainErrors): a 52 px band, a 380 px column. */
+.lp-page--wide {
+  --lp-band: 52px;
+  align-items: center;
+  text-align: center;
+}
+
+/* The whole top band drags the window; anything interactive in it opts out. */
+.lp-drag {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--lp-band);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* The window controls (the --lp-controls-* rectangle, set from the main process) stay clear of
+   the drag band; with no rectangle the box is empty. */
+.lp-drag::after {
+  content: "";
+  position: absolute;
+  left: var(--lp-controls-x, 0);
+  top: var(--lp-controls-y, 0);
+  width: var(--lp-controls-w, 0);
+  height: var(--lp-controls-h, 0);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+button,
+input,
+select,
+a,
+.lp-prefs,
+.lp-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.lp-content {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+  margin-top: -16px;
+}
+
+.lp-page--wide .lp-content {
+  width: 380px;
+  max-width: 100%;
+  margin-top: -24px;
+}
+
+.lp-page--center .lp-content,
+.lp-page--wide .lp-content {
+  align-items: center;
+  gap: 22px;
+}
+
+.lp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.lp-page--center .lp-stack {
+  align-items: center;
+}
+
+.lp-stack--loose {
+  gap: 10px;
+}
+
+.lp-h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.35;
+  user-select: text;
+}
+
+.lp-h1--large {
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.lp-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cb-muted);
+  user-select: text;
+}
+
+.lp-lead--large {
+  font-size: 14px;
+}
+
+.lp-mono {
+  font-family: var(--lp-mono);
+}
+
+/* Platform icon: 72 px, rounded; the default when the platform set none. */
+.lp-icon {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: 16px;
+  object-fit: cover;
+  display: block;
+}
+
+.lp-icon--small {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.lp-icon--dim {
+  opacity: 0.85;
+}
+
+.lp-icon--default {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line);
+  color: var(--cb-muted);
+}
+
+.lp-icon--default svg {
+  width: 44%;
+  height: 44%;
+}
+
+/* Host line: mono, muted, an optional status dot and trailing link. */
+.lp-host {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--lp-mono);
+  font-size: 12px;
+  color: var(--cb-muted);
+  user-select: text;
+}
+
+.lp-host--faint {
+  color: var(--cb-faint);
+}
+
+.lp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cb-ok);
+  flex: none;
+}
+
+.lp-host .lp-sep-dot {
+  color: var(--cb-faint);
+}
+
+/* Buttons. */
+.lp-btn {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--cb-accent);
+  color: var(--cb-on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lp-btn:hover {
+  background: color-mix(in srgb, var(--cb-accent) 88%, var(--cb-ink));
+}
+
+.lp-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.lp-btn--secondary {
+  height: 36px;
+  border: 1px solid var(--cb-line-strong);
+  background: transparent;
+  color: var(--cb-ink);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.lp-btn--secondary:hover {
+  background: var(--cb-raised);
+}
+
+.lp-btn--danger {
+  background: var(--cb-danger);
+  color: #ffffff;
+}
+
+.lp-btn--danger:hover {
+  background: color-mix(in srgb, var(--cb-danger) 88%, var(--cb-ink));
+}
+
+/* Compact buttons (dialogs): content width. */
+.lp-btn--sm {
+  width: auto;
+  height: 36px;
+  font-size: 13px;
+}
+
+.lp-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.lp-kbd {
+  font-family: var(--lp-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+}
+
+.lp-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--cb-muted);
+  text-decoration: none;
+  cursor: pointer;
+  font-family: var(--lp-sans);
+}
+
+.lp-link:hover {
+  color: var(--cb-ink);
+}
+
+.lp-link--underline {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--cb-line);
+}
+
+.lp-link--block {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lp-links {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.lp-links .lp-sep {
+  color: var(--cb-line);
+}
+
+.lp-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.lp-row > * {
+  flex: 1;
+}
+
+/* Field: label, a 44 px box with an optional mono prefix, an inline error under it. */
+.lp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+
+.lp-label {
+  font-size: 13px;
+  color: var(--cb-muted);
+}
+
+.lp-input-box {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--cb-line-strong);
+  border-radius: 8px;
+  background: var(--cb-panel);
+}
+
+.lp-input-box:focus-within {
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cb-accent) 14%, transparent);
+}
+
+.lp-input-box[data-invalid] {
+  border-color: var(--cb-danger);
+  box-shadow: none;
+}
+
+.lp-prefix {
+  font-family: var(--lp-mono);
+  font-size: 14px;
+  color: var(--cb-faint);
+}
+
+.lp-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: var(--lp-mono);
+  font-size: 14px;
+  color: var(--cb-ink);
+  user-select: text;
+}
+
+.lp-input:focus-visible {
+  outline: none;
+}
+
+.lp-input::placeholder {
+  color: var(--cb-faint);
+}
+
+/* Alerts: inline under a field (connect stage) or a box (sign-in stage). */
+.lp-alert {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cb-danger-ink);
+  text-align: left;
+  user-select: text;
+}
+
+.lp-alert svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 4px;
+}
+
+.lp-alert--box {
+  width: 100%;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--cb-danger) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cb-danger) 8%, transparent);
+  color: var(--cb-alert-ink);
+}
+
+/* The waiting page's step list, with the blinking block cursor on the active step. */
+.lp-steps {
+  margin: 0;
+  padding: 14px 16px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--cb-line);
+  border-radius: 10px;
+  background: var(--cb-panel);
+  text-align: left;
+  font-family: var(--lp-mono);
+  font-size: 12px;
+}
+
+.lp-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--cb-faint);
+}
+
+.lp-step[data-state="done"] {
+  color: var(--cb-muted);
+}
+
+.lp-step[data-state="active"] {
+  color: var(--cb-ink);
+}
+
+.lp-step-mark {
+  width: 14px;
+  display: inline-flex;
+  flex: none;
+}
+
+.lp-step[data-state="done"] .lp-step-mark {
+  color: var(--cb-ok);
+}
+
+.lp-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  background: var(--cb-accent);
+  animation: lp-blink 1s steps(1) infinite;
+}
+
+@keyframes lp-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Preference bar: bottom right, the language menu and the light / dark toggle. */
+.lp-prefs {
+  position: absolute;
+  right: 14px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lp-lang {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border: 1px solid var(--cb-line);
+  border-radius: 6px;
+  color: var(--cb-muted);
+}
+
+.lp-lang select {
+  appearance: none;
+  height: 100%;
+  padding: 0 22px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lp-lang select option {
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+}
+
+.lp-lang svg {
+  position: absolute;
+  right: 7px;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.lp-theme {
+  display: inline-flex;
+  height: 26px;
+  border: 1px solid var(--cb-line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.lp-theme button {
+  width: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.lp-theme button[aria-pressed="true"] {
+  background: var(--cb-raised);
+  color: var(--cb-ink);
+}
+
+.lp-theme svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Footer: bottom centered. */
+.lp-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--lp-mono);
+  font-size: 11px;
+  color: var(--cb-faint);
+  pointer-events: none;
+}
+
+.lp-footer svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-cursor {
+    animation: none;
+  }
+}
+
+/* Last, so it beats every component's display. */
+[hidden] {
+  display: none;
+}

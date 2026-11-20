@@ -1,23 +1,26 @@
-// Removing a platform (spec §6.3), from the app menu or the tray: a native confirmation (cancel is
-// the default), the device question when this machine is connected to that deployment, then the
+// Removing a platform (spec §6.3), from the app menu or the tray: a shell dialog (§7.4; cancel is
+// the default, the remove button is the danger one), the device question when this machine is connected to that deployment, then the
 // profile's windows close before its partition is cleared, so no window of a profile being removed
 // passes the IPC checks while its data goes. Not offered for managed profiles under
 // `lockDeployments`. Electron objects come in as parameters.
 import { type Locale, t } from "@capybara-hq/shell";
-import { type MessageBoxOptions, platformLabel, type ShowMessageBox } from "./device/dialogs.ts";
+import { dialogPlatformOf, platformLabel } from "./device/dialogs.ts";
 import type { ConfirmGate } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
+import type { ShellDialogOptions, ShowShellDialog } from "./shell-dialog.ts";
 
 export interface ProfileRemovalDeps {
   getProfile(id: string): Profile | undefined;
   /** False for a managed profile under `lockDeployments`. */
   isRemovable(profile: Profile): boolean;
-  /** The bridge's gate: one native dialog at a time per profile. */
+  /** The bridge's gate: one dialog at a time per profile. */
   gate: ConfirmGate;
   /** A live window to attach the dialogs to (`windows.dialogParent`), or undefined. */
   dialogParent(profileId: string): unknown;
-  showMessageBox: ShowMessageBox;
+  showDialog: ShowShellDialog;
   locale: Locale;
+  /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
+  iconFor?: (profile: Profile) => string | undefined;
   /** device@1's `beforeRemoveProfile`: asks whether to disconnect and log the device out. */
   beforeRemoveDevice(profile: Profile, parent: unknown): Promise<void>;
   closeProfileWindows(profileId: string): void;
@@ -35,20 +38,21 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
 
   async function confirm(parent: unknown, profile: Profile): Promise<boolean> {
     const { name, host } = platformLabel(profile);
-    const options: MessageBoxOptions = {
-      type: "warning",
-      message:
+    const options: ShellDialogOptions = {
+      title:
         name === null
           ? tr("platform.remove.message_host", { host })
           : tr("platform.remove.message", { name, host }),
       detail: tr("platform.remove.detail"),
-      buttons: [tr("platform.remove.confirm"), tr("platform.remove.cancel")],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
+      buttons: [tr("platform.remove.cancel"), tr("platform.remove.confirm")],
+      defaultId: 0,
+      cancelId: 0,
+      confirmId: 1,
+      tone: "danger",
+      platform: dialogPlatformOf(profile, deps.iconFor?.(profile)),
     };
-    const { response } = await deps.showMessageBox(parent, options);
-    return response === 0;
+    const { response } = await deps.showDialog(parent, options);
+    return response === options.confirmId;
   }
 
   return {

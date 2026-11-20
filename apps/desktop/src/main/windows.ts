@@ -1,10 +1,13 @@
-// Windows: one or more per profile (the deployment's web in the profile's partition) and the
-// address page. Knows which webContents belongs to which profile, which is what the IPC checks
-// resolve against. Electron objects come in as parameters.
+// Windows: one or more per profile (the deployment's web in the profile's partition, the main
+// window) and the small window of the local onboarding pages (spec §6.1). Knows which webContents
+// belongs to which profile, which is what the IPC checks resolve against. Electron objects come in
+// as parameters.
 import {
-  ADDRESS_URL,
   type CapabilityDescriptors,
+  type Controls,
   chromeState,
+  DESKTOP_CONTROLS,
+  localPageUrl,
   SHELL_CHANNELS,
   type ShellEventMessage,
   type ShellPlatform,
@@ -14,18 +17,24 @@ import {
 import { type Profile, partitionFor } from "./profiles.ts";
 import { blockInWindowSignIn, type WebRequestSession } from "./request-guard.ts";
 import {
-  ADDRESS_PARTITION,
-  addressWebPreferences,
   type ContentsLike,
   childWebPreferences,
-  hardenAddressContents,
+  hardenLocalContents,
   hardenProfileContents,
-  installDenyAllPermissions,
   installPermissionHandlers,
+  localWebPreferences,
   type PermissionSession,
   profileWebPreferences,
 } from "./security.ts";
 import { type HeaderSession, installDesktopUserAgent } from "./user-agent.ts";
+import {
+  type BoundsScheduler,
+  DEFAULT_SIZE,
+  type DisplayInfo,
+  initialBounds,
+  type Rect,
+  trackBounds,
+} from "./window-bounds.ts";
 
 export interface WebContentsLike extends ContentsLike {
   id: number;
@@ -45,27 +54,104 @@ export interface WindowLike {
   isMinimized(): boolean;
   restore(): void;
   isFullScreen(): boolean;
+  isMaximized?(): boolean;
+  getBounds(): Rect;
+  /** The rectangle a maximized or full-screen window restores to. */
+  getNormalBounds?(): Rect;
   setBackgroundColor(color: string): void;
+  /** Windows / Linux with a title bar overlay: its colors (K8 calls it on a theme change). */
+  setTitleBarOverlay?(o: TitleBarOverlay): void;
   loadURL(url: string): Promise<void>;
 }
 
+export interface TitleBarOverlay {
+  color: string;
+  symbolColor: string;
+  height?: number;
+}
+
 export interface WindowOptions {
+  x?: number;
+  y?: number;
   width: number;
   height: number;
+  useContentSize?: boolean;
   minWidth?: number;
   minHeight?: number;
   show: boolean;
   title: string;
-  titleBarStyle?: "hiddenInset";
+  titleBarStyle?: "hiddenInset" | "hidden";
   trafficLightPosition?: { x: number; y: number };
+  titleBarOverlay?: TitleBarOverlay;
   backgroundColor?: string;
   resizable?: boolean;
+  maximizable?: boolean;
+  fullscreenable?: boolean;
   /** A child window (the device verification page) stays above its parent and closes with it. */
   parent?: unknown;
   webPreferences:
     | ReturnType<typeof profileWebPreferences>
-    | ReturnType<typeof addressWebPreferences>
+    | ReturnType<typeof localWebPreferences>
     | ReturnType<typeof childWebPreferences>;
+}
+
+/** The small window (spec §6.1): fixed 480×600, its content a local page. */
+export const SMALL_WINDOW_SIZE = { width: 480, height: 600 } as const;
+/** Windows / Linux: the caption buttons' overlay height and the width of the three buttons. */
+export const CAPTION_OVERLAY_HEIGHT = 32;
+export const CAPTION_BUTTONS_WIDTH = 138;
+/** A further window of a profile opens this far right and down of its first window. */
+export const CASCADE_OFFSET = 24;
+/** The main window's smallest size (spec §6.7). */
+export const MAIN_MIN_SIZE = { width: 480, height: 400 } as const;
+
+/**
+ * The window controls' rectangle in the small window, for the page to keep clear of: the traffic
+ * lights top left on macOS, the caption buttons top right elsewhere.
+ */
+export function smallWindowControls(platform: ShellPlatform): Controls {
+  if (platform === "macos") return { ...DESKTOP_CONTROLS };
+  return {
+    x: SMALL_WINDOW_SIZE.width - CAPTION_BUTTONS_WIDTH,
+    y: 0,
+    width: CAPTION_BUTTONS_WIDTH,
+    height: CAPTION_OVERLAY_HEIGHT,
+  };
+}
+
+/** The small window's colors: its ground, and the caption symbols on Windows / Linux. */
+export interface SmallWindowColors {
+  background: string;
+  symbol: string;
+}
+
+/** The small window's options: not resizable, no maximize, no full screen, the local preload. */
+export function smallWindowOptions(
+  platform: ShellPlatform,
+  colors: SmallWindowColors,
+  o: { title: string; preload: string },
+): WindowOptions {
+  return {
+    ...SMALL_WINDOW_SIZE,
+    useContentSize: true,
+    show: false,
+    title: o.title,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    backgroundColor: colors.background,
+    ...(platform === "macos"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION } }
+      : {
+          titleBarStyle: "hidden",
+          titleBarOverlay: {
+            color: colors.background,
+            symbolColor: colors.symbol,
+            height: CAPTION_OVERLAY_HEIGHT,
+          },
+        }),
+    webPreferences: localWebPreferences({ preload: o.preload }),
+  };
 }
 
 /** A partition as the window manager configures it. */
@@ -78,7 +164,8 @@ export interface WindowManagerDeps {
   createWindow(options: WindowOptions): WindowLike;
   sessionFor(partition: string): ProfileSession;
   preloadPath: string;
-  addressPreloadPath: string;
+  /** The local pages' preload (`window.capybaraLocal`), for the small window. */
+  localPreloadPath: string;
   platform: ShellPlatform;
   openExternal(url: string): unknown;
   /** The capability descriptors offered to a profile now. */
@@ -91,11 +178,16 @@ export interface WindowManagerDeps {
   onProfileClosed?: (webContentsId: number) => void;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
-  /** An address window closed: what was pending for its webContents id can go. */
-  onAddressClosed?: (webContentsId: number) => void;
   /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
   userAgent: string;
   backgroundColor?: () => string;
+  /** The displays' work areas, for the main window's first rectangle (`screen.getAllDisplays`). */
+  displays?: () => DisplayInfo[];
+  /** Remembers a main window's rectangle for its profile (spec §6.7). */
+  saveBounds?: (profileId: string, bounds: Rect) => void;
+  boundsScheduler?: BoundsScheduler;
+  /** The app's name, the small window's title. */
+  appName?: string;
   /** Errors that have nowhere else to go (a failed load). */
   log?: (message: string, err: unknown) => void;
 }
@@ -108,7 +200,7 @@ export interface ProfileTarget {
 
 type Entry =
   | { kind: "profile"; profile: Profile; window: WindowLike }
-  | { kind: "address"; window: WindowLike; prefill: string | null };
+  | { kind: "small"; window: WindowLike };
 
 /** The id of a webContents-like sender, or undefined for anything else. */
 export function webContentsId(sender: unknown): number | undefined {
@@ -145,8 +237,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     const entry = byContents.get(id);
     if (!entry) return;
     byContents.delete(id);
-    if (entry.kind === "address") deps.onAddressClosed?.(id);
-    else deps.onProfileClosed?.(id);
+    if (entry.kind === "profile") deps.onProfileClosed?.(id);
     if (lastFocused === entry) lastFocused = undefined;
   }
 
@@ -213,11 +304,24 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
   function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
     const partition = preparePartition(profile);
+    // The profile's first window opens at the remembered rectangle and keeps it up to date; a
+    // further window cascades from the first one and is not remembered.
+    const first = profileEntries(profile.id)[0];
+    let rect: Rect | undefined;
+    if (first) {
+      try {
+        const b = first.window.getBounds();
+        rect = { ...b, x: b.x + CASCADE_OFFSET, y: b.y + CASCADE_OFFSET };
+      } catch {
+        rect = undefined;
+      }
+    } else if (deps.displays) {
+      rect = initialBounds(profile.bounds, deps.displays());
+    }
     const win = deps.createWindow({
-      width: 1280,
-      height: 820,
-      minWidth: 480,
-      minHeight: 400,
+      ...(rect ?? DEFAULT_SIZE),
+      minWidth: MAIN_MIN_SIZE.width,
+      minHeight: MAIN_MIN_SIZE.height,
       show: false,
       title: profile.name,
       titleBarStyle: "hiddenInset",
@@ -235,9 +339,14 @@ export function createWindowManager(deps: WindowManagerDeps) {
     win.webContents.on("did-navigate", () => deps.onProfileLoad?.(profile));
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
+    const save = deps.saveBounds;
+    if (save && !first) trackBounds(win, (b) => save(profile.id, b), deps.boundsScheduler);
     load(win, url);
     return win;
   }
+
+  const smallEntry = () =>
+    entries().find((e): e is Extract<Entry, { kind: "small" }> => e.kind === "small");
 
   return {
     openProfileWindow,
@@ -285,35 +394,37 @@ export function createWindowManager(deps: WindowManagerDeps) {
       if (front) bringToFront(front.window);
     },
 
-    openAddressWindow(prefill?: string): WindowLike {
-      const existing = entries().find((e) => e.kind === "address");
-      if (existing && existing.kind === "address") {
-        if (prefill !== undefined) {
-          existing.prefill = prefill;
-          load(existing.window, ADDRESS_URL);
-        }
+    /**
+     * The small window (one at a time): brings the open one forward, else opens it on the local
+     * onboarding page. The caller registers its webContents as a local page before the page asks
+     * for its state (the load is asynchronous) and listens for `closed`.
+     */
+    openSmallWindow(colors: SmallWindowColors): { window: WindowLike; created: boolean } {
+      const existing = smallEntry();
+      if (existing) {
         bringToFront(existing.window);
-        return existing.window;
+        return { window: existing.window, created: false };
       }
-      if (!permissionsInstalled.has(ADDRESS_PARTITION)) {
-        installDenyAllPermissions(deps.sessionFor(ADDRESS_PARTITION));
-        permissionsInstalled.add(ADDRESS_PARTITION);
-      }
-      const win = deps.createWindow({
-        width: 560,
-        height: 620,
-        show: false,
-        resizable: false,
-        title: "Capybara",
-        titleBarStyle: "hiddenInset",
-        trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
-        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
-        webPreferences: addressWebPreferences({ preload: deps.addressPreloadPath }),
-      });
-      track({ kind: "address", window: win, prefill: prefill ?? null });
-      hardenAddressContents(win.webContents);
-      load(win, ADDRESS_URL);
-      return win;
+      const win = deps.createWindow(
+        smallWindowOptions(deps.platform, colors, {
+          title: deps.appName ?? "Capybara",
+          preload: deps.localPreloadPath,
+        }),
+      );
+      track({ kind: "small", window: win });
+      hardenLocalContents(win.webContents);
+      load(win, localPageUrl("onboarding"));
+      return { window: win, created: true };
+    },
+
+    /** The open small window, if any. */
+    smallWindow(): WindowLike | undefined {
+      return smallEntry()?.window;
+    },
+
+    closeSmallWindow(): void {
+      const e = smallEntry();
+      if (e && !e.window.isDestroyed()) e.window.close();
     },
 
     /** One event of a subscription, sent only while the window is on the profile origin. */
@@ -376,19 +487,6 @@ export function createWindowManager(deps: WindowManagerDeps) {
       return e?.kind === "profile" ? { profile: e.profile, window: e.window } : undefined;
     },
 
-    isAddressSender(sender: unknown): boolean {
-      return get(sender)?.kind === "address";
-    },
-
-    prefillFor(sender: unknown): string | null {
-      const e = get(sender);
-      return e?.kind === "address" ? e.prefill : null;
-    },
-
-    closeSender(sender: unknown): void {
-      get(sender)?.window.close();
-    },
-
     /** Tells every window of a profile (or all) that its capabilities may have changed. */
     broadcastChange(profileId?: string): void {
       for (const e of entries()) {
@@ -400,10 +498,10 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
     /**
      * Focuses the most recently focused window; false when none is open. With `accept`, profile
-     * windows of a profile it refuses (a managed lock) are skipped; the address window is not.
+     * windows of a profile it refuses (a managed lock) are skipped; the small window is not.
      */
     focusLast(accept?: (profile: Profile) => boolean): boolean {
-      const all = entries().filter((e) => e.kind === "address" || !accept || accept(e.profile));
+      const all = entries().filter((e) => e.kind === "small" || !accept || accept(e.profile));
       const target = lastFocused && all.includes(lastFocused) ? lastFocused : all[all.length - 1];
       if (!target) return false;
       bringToFront(target.window);
@@ -424,16 +522,19 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
     /**
      * The window a dialog about a profile attaches to: that profile's last focused (or newest)
-     * window, else the most recently focused window, else the newest one; undefined when none.
+     * window, else the small window when it is in front (it shows that profile's pages); else
+     * undefined, and the dialog stands alone. Never another profile's window: a dialog about one
+     * platform must not sit on another's, nor be refused because that window is busy.
      */
     dialogParent(profileId: string): WindowLike | undefined {
-      const own = profileEntries(profileId);
       if (lastFocused?.kind === "profile" && lastFocused.profile.id === profileId) {
         return lastFocused.window;
       }
-      const all = entries();
-      return (own.at(-1) ?? (lastFocused && all.includes(lastFocused) ? lastFocused : all.at(-1)))
-        ?.window;
+      const own = profileEntries(profileId).at(-1);
+      if (own) return own.window;
+      return lastFocused?.kind === "small" && entries().includes(lastFocused)
+        ? lastFocused.window
+        : undefined;
     },
 
     hasWindows(): boolean {

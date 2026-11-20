@@ -11,7 +11,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-export const FAKE_ACCOUNT = { id: "acc_1", name: "Fake Person" };
+// The kernel's `Account` shape, as the token exchange answers it.
+export const FAKE_ACCOUNT = { id: "acc_1", displayName: "Fake Person", email: "fake@example.com" };
 const COOKIE_NAME = "cap_at";
 // 1x1 transparent PNG.
 const PNG = Buffer.from(
@@ -100,7 +101,7 @@ document.getElementById("hop").addEventListener("click", () => {
 
 function rootPage(signedIn: boolean, peer: string): string {
   return html(
-    `<h1 id="auth">${signedIn ? `signed-in:${FAKE_ACCOUNT.name}` : "signed-out"}</h1>
+    `<h1 id="auth">${signedIn ? `signed-in:${FAKE_ACCOUNT.displayName}` : "signed-out"}</h1>
 <pre id="shell"></pre>
 <button id="signin">sign in</button><span id="signin-result"></span>
 <button id="login">login</button><span id="login-result"></span>
@@ -117,7 +118,18 @@ const FRAME_PAGE = html(
 );
 
 export async function startFakeDeployment(
-  options: { peer?: string; port?: number } = {},
+  options: {
+    peer?: string;
+    port?: number;
+    /** Switches for discovery cases: merged over the meta body; `null` removes a key. */
+    meta?: Record<string, unknown>;
+    /** Meta features overrides; `null` removes a key. */
+    features?: Record<string, unknown>;
+    /** Meta status code (default 200). */
+    metaStatus?: number;
+    /** Meta raw body (not JSON), e.g. html. */
+    metaRaw?: string;
+  } = {},
 ): Promise<FakeDeployment> {
   const peer = options.peer ?? "";
   const codes = new Map<string, { challenge: string; used: boolean }>();
@@ -194,18 +206,25 @@ export async function startFakeDeployment(
     const signedIn = [...sessions].some((s) => cookie.includes(`${COOKIE_NAME}=${s}`));
 
     if (url.pathname === "/api/v1/meta") {
-      return send(
-        res,
-        200,
-        JSON.stringify({
+      const merge = (base: Record<string, unknown>, over?: Record<string, unknown>) => {
+        const out = { ...base, ...over };
+        for (const k of Object.keys(out)) if (out[k] === null && over && k in over) delete out[k];
+        return out;
+      };
+      const body = merge(
+        {
           name: "Fake Deployment",
           icon: "/icon.png?v=abc123",
           icons: { app: "/icon.png?v=abc123", maskable: null, favicon: null },
           protocols: { device: { min: 4, max: 4 } },
-          features: { localDevices: true, appSignIn: true },
-        }),
-        { "content-type": "application/json", "cache-control": "no-store" },
+          features: merge({ localDevices: true, appSignIn: true }, options.features),
+        },
+        options.meta,
       );
+      return send(res, options.metaStatus ?? 200, options.metaRaw ?? JSON.stringify(body), {
+        "content-type": options.metaRaw === undefined ? "application/json" : "text/html",
+        "cache-control": "no-store",
+      });
     }
     if (url.pathname === "/icon.png") return send(res, 200, PNG, { "content-type": "image/png" });
     if (url.pathname === "/apps/authorize") {
