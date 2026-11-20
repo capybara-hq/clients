@@ -96,7 +96,12 @@ export async function discoverDeployment(
   const address = normalizeAddress(input);
   if (!address.ok) return { result: { ok: false, error: address.reason } };
   const meta = await fetchMeta(address.base, deps.fetch);
-  if ("error" in meta) return { result: { ok: false, error: meta.error } };
+  if ("error" in meta) {
+    // The old address page has no certificate verdict; the onboarding host (K5) replaces it.
+    return {
+      result: { ok: false, error: meta.error === "cert_invalid" ? "unreachable" : meta.error },
+    };
+  }
 
   const host = new URL(address.origin).host;
   const named = meta.name?.trim().slice(0, MAX_NAME_LENGTH);
