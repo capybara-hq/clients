@@ -95,7 +95,7 @@ jobs:
           if-no-files-found: ignore
 
   # The mobile app's native suites (apps/mobile): XCTest and XCUITest on an iPhone simulator.
-  # scripts/ios-test.sh picks the newest Xcode and iOS runtime the runner has.
+  # scripts/ios-test.sh keeps the runner's Xcode unless it has no usable iPhone simulator.
   mobile-ios:
     runs-on: macos-latest
     permissions:
@@ -109,8 +109,13 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @capybara-hq/mobile test:ios
-      - run: pnpm --filter @capybara-hq/mobile test:ios:ui
+      # Swift package checkouts (Capacitor) under the script's derived data path.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: apps/mobile/ios/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/mobile/ios/**/Package.resolved') }}
+      # One build-for-testing, then test-without-building for AppTests and AppUITests.
+      - run: pnpm --filter @capybara-hq/mobile test:ios:all
 
   # JVM unit tests, then the instrumented tests on an emulator (KVM on the Linux runner).
   mobile-android:

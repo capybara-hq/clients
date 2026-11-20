@@ -54,7 +54,8 @@ pnpm --filter @capybara-hq/desktop dist --mac --publish never   # an unsigned lo
 pnpm --filter @capybara-hq/mobile sync              # build the local pages, then cap sync
 pnpm --filter @capybara-hq/mobile test:ios          # XCTest (AppTests) on an iPhone simulator
 pnpm --filter @capybara-hq/mobile test:ios:ui       # XCUITest (AppUITests)
-pnpm --filter @capybara-hq/mobile test:android      # JVM unit tests
+pnpm --filter @capybara-hq/mobile test:ios:all      # both, from one build-for-testing
+pnpm --filter @capybara-hq/mobile test:android      # JVM unit tests (after build + cap sync)
 pnpm --filter @capybara-hq/mobile test:android:device   # instrumented tests on a running emulator
 ```
 
