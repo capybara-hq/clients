@@ -6,7 +6,6 @@ import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
-import androidx.webkit.WebViewFeature
 import com.getcapacitor.BridgeActivity
 
 class MainActivity : BridgeActivity() {
@@ -39,7 +38,7 @@ class MainActivity : BridgeActivity() {
      * never starts the bridge, so no local page runs and no remote origin loads.
      */
     override fun load() {
-        val missing = ProfileWebViewSupport.missingGate(WebViewFeature::isFeatureSupported)
+        val missing = ProfileWebViewSupport.missingGate(WebViewSupport::isSupported)
         if (missing.isEmpty()) {
             super.load()
             return

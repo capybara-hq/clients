@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>seed</title>
+<script>
+  // Writes every kind of state a deployment leaves in the WebView's store, then reports.
+  async function seed() {
+    // biome-ignore lint/suspicious/noDocumentCookie: the page under test sets plain cookies
+    document.cookie = "seed_session=1; path=/";
+    // biome-ignore lint/suspicious/noDocumentCookie: the page under test sets plain cookies
+    document.cookie = "seed_persistent=1; path=/; max-age=3600";
+    localStorage.setItem("seed", "1");
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open("seed-db", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("s");
+      open.onsuccess = () => {
+        open.result.close();
+        resolve();
+      };
+      open.onerror = () => reject(open.error);
+    });
+    const cache = await caches.open("seed-cache");
+    await cache.put("/seeded", new Response("x"));
+    await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+    await (await fetch("/cacheable-data.json")).text();
+  }
+  seed().then(
+    () => report({ doc: "seeded", ok: true }),
+    (e) => report({ doc: "seeded", ok: false, error: String(e) }),
+  );
+  function report(body) {
+    return fetch("/report", { method: "POST", body: JSON.stringify(body) });
+  }
+</script>

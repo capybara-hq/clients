@@ -18,7 +18,8 @@
 // process (R11: the host recreates the WebView and shows the error state).
 //
 // R9: without DOCUMENT_START_SCRIPT and WEB_MESSAGE_LISTENER (and MULTI_PROFILE for a named
-// profile) no profile WebView is made and no remote origin loads: `create` answers Unsupported.
+// profile; a WebView without it runs the single store, Decision 9) no profile WebView is made and
+// no remote origin loads: `create` answers Unsupported.
 // There is no addJavascriptInterface fallback.
 
 package com.capybarahq.shell
@@ -47,22 +48,58 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 
+/** The WebView feature check every decision goes through (one seam, so a debug build can lack one). */
+object WebViewSupport {
+    @Volatile private var lacking: Set<String> = emptySet()
+
+    /** Debug builds only: pretend the WebView lacks [features] (a device test of Decision 9). */
+    fun debugLack(features: Set<String>) {
+        check(BuildConfig.DEBUG) { "debugLack is for debug builds" }
+        lacking = features
+    }
+
+    fun isSupported(feature: String): Boolean = feature !in lacking && WebViewFeature.isFeatureSupported(feature)
+}
+
 /** R9: the WebView features a profile WebView cannot do without. */
 object ProfileWebViewSupport {
     /** Without these the app shows its native unsupported state and loads no remote origin. */
     val GATE = listOf(WebViewFeature.DOCUMENT_START_SCRIPT, WebViewFeature.WEB_MESSAGE_LISTENER)
 
-    val REQUIRED = listOf(
-        WebViewFeature.DOCUMENT_START_SCRIPT,
-        WebViewFeature.WEB_MESSAGE_LISTENER,
-        WebViewFeature.MULTI_PROFILE,
-    )
+    /** Features of a named profile; a WebView without MULTI_PROFILE uses the single store. */
+    val REQUIRED = GATE + WebViewFeature.MULTI_PROFILE
 
-    /** The required features `isSupported` lacks; empty when a profile WebView can be made. */
+    /** The required features `isSupported` lacks; empty when a named profile WebView can be made. */
     fun missing(isSupported: (String) -> Boolean): List<String> = REQUIRED.filterNot(isSupported)
 
     /** The gate features `isSupported` lacks: empty when the app may run at all. */
     fun missingGate(isSupported: (String) -> Boolean): List<String> = GATE.filterNot(isSupported)
+
+    sealed class Admission {
+        object Allowed : Admission()
+
+        /** The WebView lacks a required feature: show the unsupported state, load nothing. */
+        class Unsupported(val missing: List<String>) : Admission()
+
+        /** A caller error: the default profile where named profiles exist (R8). */
+        class Refused(val reason: String) : Admission()
+    }
+
+    /**
+     * May a profile WebView be made? [profileName] null means the single store (Decision 9): only
+     * on a WebView without MULTI_PROFILE, where the gate's features are still required. A named
+     * profile needs MULTI_PROFILE too; "Default" is never a name (R8).
+     */
+    fun admit(isSupported: (String) -> Boolean, profileName: String?): Admission {
+        val gate = missingGate(isSupported)
+        if (gate.isNotEmpty()) return Admission.Unsupported(gate)
+        val multi = isSupported(WebViewFeature.MULTI_PROFILE)
+        if (profileName == null) {
+            return if (multi) Admission.Refused("default_profile") else Admission.Allowed
+        }
+        if (profileName == "Default" || profileName.isBlank()) return Admission.Refused("default_profile")
+        return if (multi) Admission.Allowed else Admission.Unsupported(listOf(WebViewFeature.MULTI_PROFILE))
+    }
 }
 
 /** One gated call, as the runtime receives it (`ShellCallMessage` in src/runtime/protocol.ts). */
@@ -195,7 +232,8 @@ class ProfileWebView private constructor(
 
         /**
          * @param profileOrigin the normalized origin (`normalizeAddress(...).origin`).
-         * @param profileName the profile's own named androidx.webkit profile, never "Default" (R8).
+         * @param profileName the profile's own named androidx.webkit profile, never "Default" (R8); null
+         *   is the single store (Decision 9), allowed only where MULTI_PROFILE is absent.
          * @param state the initial `insets`, `capabilities` and `events` (`registry.descriptors`).
          * @param isSupported the feature check (injected for tests).
          */
@@ -203,23 +241,27 @@ class ProfileWebView private constructor(
             context: Context,
             profileId: String,
             profileOrigin: String,
-            profileName: String,
+            profileName: String?,
             shellVersion: String,
             state: JSONObject,
             script: String,
-            isSupported: (String) -> Boolean = WebViewFeature::isFeatureSupported,
+            isSupported: (String) -> Boolean = WebViewSupport::isSupported,
             pendingLifetimeMs: Long = DEFAULT_PENDING_LIFETIME_MS,
             base: String = profileOrigin,
         ): Result {
-            val missing = ProfileWebViewSupport.missing(isSupported)
-            if (missing.isNotEmpty()) return Result.Unsupported(missing)
-            if (profileName == DEFAULT_PROFILE || profileName.isBlank()) return Result.Refused("default_profile")
+            when (val admission = ProfileWebViewSupport.admit(isSupported, profileName)) {
+                is ProfileWebViewSupport.Admission.Unsupported -> return Result.Unsupported(admission.missing)
+                is ProfileWebViewSupport.Admission.Refused -> return Result.Refused(admission.reason)
+                ProfileWebViewSupport.Admission.Allowed -> {}
+            }
             val origin = Origin.parse(profileOrigin)
             if (origin == null || origin.serialized != profileOrigin) return Result.Refused("bad_origin")
 
             val view = ProfileWebView(context, profileId, origin, base, pendingLifetimeMs)
-            ProfileStore.getInstance().getOrCreateProfile(profileName)
-            WebViewCompat.setProfile(view, profileName)
+            if (profileName != null) {
+                ProfileStore.getInstance().getOrCreateProfile(profileName)
+                WebViewCompat.setProfile(view, profileName)
+            }
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
             // R14: multiple windows on, so a target=_blank link reaches onCreateWindow (instead of

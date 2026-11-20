@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>probe</title>
+<script>
+  // Reports what the store holds; the report's doc comes from ?doc= so one test can probe twice.
+  async function probe() {
+    const out = {
+      cookie: document.cookie,
+      localStorage: localStorage.getItem("seed"),
+      databases: (await indexedDB.databases()).map((d) => d.name),
+      caches: await caches.keys(),
+      workers: (await navigator.serviceWorker.getRegistrations()).length,
+    };
+    await (await fetch("/cacheable-data.json")).text();
+    return out;
+  }
+  const doc = new URLSearchParams(location.search).get("doc");
+  probe().then(
+    (out) => fetch("/report", { method: "POST", body: JSON.stringify({ doc, ...out }) }),
+    (e) => fetch("/report", { method: "POST", body: JSON.stringify({ doc, error: String(e) }) }),
+  );
+</script>

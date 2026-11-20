@@ -22,6 +22,7 @@ function fakePrefs(initial: Record<string, string> = {}) {
 
 function fakeStores(mode: "multi" | "single" = "multi") {
   const calls: string[] = [];
+  const cleared: string[][] = [];
   const stores: DataStorePort = {
     mode: async () => mode,
     create: async (id) => {
@@ -30,11 +31,12 @@ function fakeStores(mode: "multi" | "single" = "multi") {
     remove: async (id) => {
       calls.push(`remove:${id}`);
     },
-    clearAll: async () => {
+    clearAll: async (origins) => {
       calls.push("clearAll");
+      cleared.push(origins);
     },
   };
-  return { stores, calls };
+  return { stores, calls, cleared };
 }
 
 function setup(
@@ -46,7 +48,7 @@ function setup(
   } = {},
 ) {
   const { prefs, values } = fakePrefs(opts.prefs);
-  const { stores, calls } = fakeStores(opts.mode);
+  const { stores, calls, cleared } = fakeStores(opts.mode);
   const asked: { message: string; ok: string; cancel: string }[] = [];
   let n = 0;
   const store = createProfileStore({
@@ -61,7 +63,7 @@ function setup(
     now: () => 1_000 + n,
     ...(opts.locale ? { locale: () => opts.locale as "zh" | "en" } : {}),
   });
-  return { store, prefs, values, calls, asked };
+  return { store, prefs, values, calls, asked, cleared };
 }
 
 const A = { base: "https://a.example", name: "A", iconUrl: null };
@@ -272,6 +274,30 @@ describe("setCurrent", () => {
     expect(a.id).not.toBe(b.id);
   });
 
+  test("single mode: a store that cannot be cleared never lets the next deployment load", async () => {
+    const { prefs, values } = fakePrefs();
+    let n = 0;
+    const store = createProfileStore({
+      prefs,
+      stores: {
+        mode: async () => "single",
+        create: async () => {},
+        remove: async () => {},
+        clearAll: async () => {
+          throw new Error("clear failed");
+        },
+      },
+      confirm: async () => true,
+      newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+      now: () => 0,
+    });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    await expect(store.setCurrent(b.id)).rejects.toThrow("clear failed");
+    expect(store.current()?.id).toBe(a.id);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "{}").currentId).toBe(a.id);
+  });
+
   test("single mode uses the English copy by default", async () => {
     const { store, asked } = setup({ mode: "single", confirm: false });
     await store.add(A);
@@ -299,6 +325,21 @@ describe("setCurrent", () => {
     await store.remove(a.id);
     expect(calls).toContain("clearAll");
     expect(calls).not.toContain(`remove:${a.dataStoreId}`);
+  });
+
+  test("single mode: clearing names the origins whose workers and caches must go", async () => {
+    // Android's default profile keeps service workers and Cache API data across a plain clear;
+    // native unregisters them per origin, so every deployment of this device is named.
+    const { store, cleared } = setup({ mode: "single", confirm: true });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    await store.setCurrent(b.id);
+    await store.remove(b.id);
+    expect(cleared).toEqual([
+      ["https://a.example", "https://b.example"],
+      ["https://a.example", "https://b.example"],
+    ]);
+    expect(a.id).not.toBe(b.id);
   });
 
   test("single mode: removing another profile leaves the shared store alone", async () => {
@@ -410,13 +451,17 @@ describe("dataStorePortFrom", () => {
       mode: async () => ({ mode: "single" }),
       create: async (o) => void calls.push(["create", o]),
       remove: async (o) => void calls.push(["remove", o]),
-      clearAll: async () => void calls.push(["clearAll"]),
+      clearAll: async (o) => void calls.push(["clearAll", o]),
     });
     expect(await port.mode()).toBe("single");
     await port.create("a");
     await port.remove("b");
-    await port.clearAll();
-    expect(calls).toEqual([["create", { id: "a" }], ["remove", { id: "b" }], ["clearAll"]]);
+    await port.clearAll(["https://a.example"]);
+    expect(calls).toEqual([
+      ["create", { id: "a" }],
+      ["remove", { id: "b" }],
+      ["clearAll", { origins: ["https://a.example"] }],
+    ]);
   });
 
   test("an unexpected mode reads as single (the conservative store)", async () => {

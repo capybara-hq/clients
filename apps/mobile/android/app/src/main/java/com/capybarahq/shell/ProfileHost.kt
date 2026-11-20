@@ -50,11 +50,16 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         frame
     }
 
+    /** How many profile WebViews live (single store: at most one). */
+    val viewCount: Int get() = views.size
+
     /** The shown profile's WebView, for system back. */
     val current: ProfileWebView? get() = shown?.let { views[it] }
 
     /** Shows the profile's WebView and loads its base; an error text when it cannot be made. */
     fun open(spec: Spec): String? {
+        // Single store (Decision 9): one deployment at a time, so no other profile's WebView lives.
+        if (DataStores.get(activity).mode == DataStoreMode.SINGLE) closeAllBut(spec.profileId)
         specs[spec.profileId] = spec
         val view = views[spec.profileId] ?: (make(spec) ?: return "not_created")
         shown = spec.profileId
@@ -81,8 +86,30 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
             .isAppearanceLightStatusBars = !lightContent
     }
 
+    /**
+     * Destroys every profile WebView (single store: before the shared store is cleared, so a page
+     * cannot write into it again). The next [open] makes a fresh one.
+     */
+    fun closeAll() = closeAllBut(null)
+
+    private fun closeAllBut(keep: String?) {
+        for (id in views.keys.filter { it != keep }) {
+            views.remove(id)?.let {
+                container.removeView(it)
+                it.destroy()
+            }
+        }
+        specs.keys.retainAll { it == keep }
+        if (shown != keep) shown = null
+        if (shown == null) container.visibility = View.GONE
+    }
+
     private fun make(spec: Spec): ProfileWebView? {
-        val name = DataStores.get(activity).profileName(spec.dataStoreId) ?: return null
+        val core = DataStores.get(activity)
+        if (!core.usable(spec.dataStoreId)) return null
+        // Null name: the default profile, which only the single store (no MULTI_PROFILE) may use.
+        val name = core.profileName(spec.dataStoreId)
+        if (name == null && core.mode != DataStoreMode.SINGLE) return null
         val script = ProfileWebView.bundledScript(activity) ?: return null
         val version = try {
             activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "0.0.0"

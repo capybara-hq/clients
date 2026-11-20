@@ -164,7 +164,7 @@ class DataStoreCore(
     }
 }
 
-class WebkitProfileBackend : ProfileBackend {
+class WebkitProfileBackend(private val context: Context? = null) : ProfileBackend {
     override fun create(name: String) {
         ProfileStore.getInstance().getOrCreateProfile(name)
     }
@@ -181,9 +181,12 @@ class WebkitProfileBackend : ProfileBackend {
     }
 
     override fun clearDefault(done: () -> Unit) {
+        // Single store (Decision 9): the default profile holds one deployment's whole session.
         // WebView 53 left localStorage in place here (spike 1.3); such WebViews lack the gate's
         // features and never load a deployment (spec §15.2), so they never reach this.
         WebStorage.getInstance().deleteAllData()
+        // The HTTP cache is per WebView instance API-wise but one store: a throwaway clears it.
+        context?.let { WebView(it).apply { clearCache(true) }.destroy() }
         val cookies = CookieManager.getInstance()
         cookies.removeAllCookies {
             cookies.flush()
@@ -216,13 +219,23 @@ object DataStores {
     @Volatile private var instance: DataStoreCore? = null
 
     fun create(context: Context, prefsName: String = PREFS): DataStoreCore = DataStoreCore(
-        isFeatureSupported = WebViewFeature::isFeatureSupported,
-        backend = WebkitProfileBackend(),
+        isFeatureSupported = WebViewSupport::isSupported,
+        backend = WebkitProfileBackend(context.applicationContext),
         pending = SharedPrefsPendingDeletions(context.applicationContext, prefsName),
     )
 
     fun get(context: Context): DataStoreCore =
         instance ?: synchronized(this) { instance ?: create(context).also { instance = it } }
+
+    /** Single store: workers and caches first (they need the origins), then cookies and the rest. */
+    fun clearSingleStore(context: Context, core: DataStoreCore, origins: List<String>, done: () -> Unit) =
+        SingleStoreCleaner.clean(context, origins) { core.clearAll(done) }
+
+    /** Debug builds only: forget the process-wide core (a device test changed the feature check). */
+    fun debugReset() {
+        check(BuildConfig.DEBUG) { "debugReset is for debug builds" }
+        instance = null
+    }
 
     /**
      * Puts a deployment's WebView in its data store; call before it loads anything. Returns false
@@ -277,5 +290,12 @@ class DataStoresPlugin : Plugin() {
     fun remove(call: PluginCall) = onMain(call) { core().remove(call.getString("id") ?: "") { call.resolve() } }
 
     @PluginMethod
-    fun clearAll(call: PluginCall) = onMain(call) { core().clearAll { call.resolve() } }
+    fun clearAll(call: PluginCall) = onMain(call) {
+        if (core().mode != DataStoreMode.SINGLE) return@onMain core().clearAll { call.resolve() }
+        // Single store: no page may be alive to write into the store being cleared.
+        (activity as? MainActivity)?.profileHost?.closeAll()
+        val array = call.getArray("origins")
+        val origins = (0 until (array?.length() ?: 0)).mapNotNull { array?.optString(it) }
+        DataStores.clearSingleStore(context, core(), origins) { call.resolve() }
+    }
 }

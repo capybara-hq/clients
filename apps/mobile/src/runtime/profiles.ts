@@ -32,8 +32,13 @@ export interface DataStorePort {
   /** Creates the store now (Android writes its profile registry late; see DataStores.kt). */
   create(id: string): Promise<void>;
   remove(id: string): Promise<void>;
-  /** Clears the store(s) deployments use: in single mode the one shared store. */
-  clearAll(): Promise<void>;
+  /**
+   * Clears the store(s) deployments use: in single mode the one shared store (cookies,
+   * localStorage, IndexedDB, caches, service workers). [origins] are the deployments' origins:
+   * Android's default profile keeps service workers and Cache API data across a plain clear, so
+   * native unregisters and deletes them per origin first.
+   */
+  clearAll(origins: string[]): Promise<void>;
 }
 
 /**
@@ -132,6 +137,7 @@ function readState(prefs: PrefsPort): StoredState {
 export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   const { prefs, stores } = deps;
   let state = readState(prefs);
+  const origins = () => [...new Set(state.profiles.map((p) => p.origin))];
   const listeners = new Set<(p: Profile) => void | Promise<void>>();
   // Mutations run one after another, so two adds of one base never both create a store.
   let queue: Promise<unknown> = Promise.resolve();
@@ -203,7 +209,7 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
           if (!ok) return "cancelled";
           // The shared store holds the current deployment's session: clear it before another
           // deployment can load into it.
-          await stores.clearAll();
+          await stores.clearAll(origins());
         }
         await save({ ...state, currentId: id });
         return "switched";
@@ -222,7 +228,7 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
           }
         }
         if ((await stores.mode()) === "single") {
-          if (state.currentId === id) await stores.clearAll();
+          if (state.currentId === id) await stores.clearAll(origins());
         } else {
           await stores.remove(target.dataStoreId);
         }
@@ -267,7 +273,7 @@ export interface DataStoresNative {
   mode(): Promise<{ mode: "multi" | "single" }>;
   create(options: { id: string }): Promise<void>;
   remove(options: { id: string }): Promise<void>;
-  clearAll(): Promise<void>;
+  clearAll(options: { origins: string[] }): Promise<void>;
 }
 
 export function dataStorePortFrom(native: DataStoresNative): DataStorePort {
@@ -276,6 +282,6 @@ export function dataStorePortFrom(native: DataStoresNative): DataStorePort {
     mode: async () => ((await native.mode()).mode === "multi" ? "multi" : "single"),
     create: (id) => native.create({ id }),
     remove: (id) => native.remove({ id }),
-    clearAll: () => native.clearAll(),
+    clearAll: (origins) => native.clearAll({ origins }),
   };
 }
