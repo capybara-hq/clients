@@ -1,8 +1,10 @@
 // The framed address page's channel to the runtime (N1). Capacitor iOS injects its bridge into
-// the main frame only, so a local page framed over the runtime document has no plugin access, and
-// on purpose neither platform's framed pages use one: the page asks, the runtime acts. Messages
-// travel over the page's MessageChannel port (local-frames.ts, local-channel.ts), which only the
-// frame the runtime created holds.
+// the main frame only, so a local page framed over the runtime document has no plugin access of
+// its own, and on purpose neither platform's framed pages use one: the page asks, the runtime
+// acts. This is not an isolation boundary: the framed pages are same-origin with the runtime
+// document (so `parent.Capacitor` is in their reach); they are trusted bundled code under a strict
+// CSP that renders remote data as text only. Messages travel over the page's MessageChannel port
+// (local-frames.ts, local-channel.ts), which only the frame the runtime created holds.
 //
 //   page -> runtime  address-discover {seq, input}   discover what the person typed
 //   runtime -> page  address-result {seq, result}    the deployment found, or why not
@@ -109,14 +111,18 @@ export function createAddressHost(deps: {
 }): AddressHost {
   // Only a deployment the runtime discovered itself can be added, with the name and icon it saw.
   let found = new Map<string, FoundDeployment>();
+  // Bumped by reset(): a discovery an earlier framing started is dropped when it finishes (M3).
+  let generation = 0;
   return {
     async handle(message) {
       switch (message.type) {
         case "address-discover": {
+          const mine = generation;
           const result = await answerDiscover(message.input, {
             httpGet: deps.httpGet,
             lockedBase: deps.lockedBase(),
           });
+          if (mine !== generation) return;
           if ("found" in result) found.set(result.found.base, result.found);
           deps.post({ type: "address-result", seq: message.seq, result });
           return;
@@ -133,6 +139,7 @@ export function createAddressHost(deps: {
       }
     },
     reset() {
+      generation++;
       found = new Map();
     },
   };

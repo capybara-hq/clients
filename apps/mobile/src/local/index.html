@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- The runtime document (M4): local script only, frames only local pages; the inline style is
+         the frames' style.cssText. Capacitor's injected bridge is a user script, outside the CSP. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; frame-src 'self'; style-src 'unsafe-inline'"
+    />
     <title>Capybara</title>
   </head>
   <body>

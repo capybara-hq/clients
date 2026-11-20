@@ -8,7 +8,9 @@
 // over that port. Only the frame the runtime created ever holds it, so no message needs its
 // `source` checked (WebKit reports the parent itself as the source of a frame's postMessage made
 // from a user-gesture handler, which made source checks drop real clicks). A hidden frame's port
-// is closed. The DOM is injected, so vitest needs none.
+// is closed, and the port goes only to the document that was asked for (its path is checked).
+// This is messaging, not isolation: the framed pages are same-origin with the runtime document
+// and trusted bundled code. The DOM is injected, so vitest needs none.
 // The page's side is src/runtime/local-channel.ts.
 
 export type LocalPage = "error" | "address";
@@ -21,6 +23,8 @@ export interface FrameHandle {
   post(message: unknown, transfer: MessagePort[]): void;
   /** Calls `listener` each time the frame has loaded a document. */
   onLoad(listener: () => void): void;
+  /** The path of the document the frame holds now (same-origin, so readable), or null. */
+  path(): string | null;
   remove(): void;
 }
 
@@ -55,8 +59,10 @@ export function createLocalFrames(deps: {
         port: null,
       };
       shown = entry;
+      // Local pages live at the local origin's root, like the runtime document (index.html).
+      const expected = new URL(src, "https://localhost/").pathname;
       frame.onLoad(() => {
-        if (shown !== entry) return;
+        if (shown !== entry || frame.path() !== expected) return;
         // A reloaded document gets a fresh port; the old one is closed.
         entry.port?.close();
         const channel = new MessageChannel();

@@ -106,11 +106,16 @@ final class LoaderTests: XCTestCase {
             waitNative(server, "sheet for \(url)", timeout: 30) {
                 $0["event"] as? String == "sheet" && $0["url"] as? String == url
             }
-            // The sheet's dismiss button (its label follows the simulator's language).
-            let done = app.otherElements["TopBrowserBar"].buttons.element(boundBy: 0)
+            // The sheet's dismiss button, by its name (localized, so every language the simulator
+            // may run in): while the sheet is still presenting, the bar's first button can be
+            // another one (CI tapped a bar-wide button and the sheet stayed up).
+            let bar = app.otherElements["TopBrowserBar"]
+            let names = ["Done", "Close", "完成", "关闭"]
+            let done = bar.buttons.matching(NSPredicate(format: "identifier IN %@ OR label IN %@", names, names)).firstMatch
             XCTAssertTrue(done.waitForExistence(timeout: 30), "the browser sheet for \(url)")
+            wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: done)], timeout: 30)
             done.tap()
-            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: done)
+            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: bar)
             wait(for: [gone], timeout: 30)
         }
 

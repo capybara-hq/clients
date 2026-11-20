@@ -462,7 +462,11 @@ class ProfileWebView private constructor(
 
         /** A history step restored from the back/forward cache fires no onPageStarted: check here too. */
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
-            if (url != null) backstop(url, fromPageStart = false)
+            // M5: a page restored without onPageStarted still moves the main frame's origin (a
+            // same-document pushState cannot change it, so this is always right).
+            if (url != null && !backstop(url, fromPageStart = false)) {
+                committedOrigin = NavUrl.parse(url)?.origin
+            }
         }
 
         override fun onPageFinished(view: WebView, url: String?) {

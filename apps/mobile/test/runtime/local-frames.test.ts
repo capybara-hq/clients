@@ -4,6 +4,8 @@ import { createLocalFrames, LOCAL_PORT_MESSAGE } from "../../src/runtime/local-f
 
 interface FakeFrame {
   src: string;
+  /** The path of the document the frame loaded (defaults to the one asked for). */
+  path: string | null;
   removed: boolean;
   posted: { message: unknown; transfer: MessagePort[] }[];
   load(): void;
@@ -17,6 +19,7 @@ function fakeDom() {
       const listeners: (() => void)[] = [];
       const frame: FakeFrame = {
         src,
+        path: new URL(src, "https://localhost/").pathname,
         removed: false,
         posted: [],
         load: () => {
@@ -28,6 +31,7 @@ function fakeDom() {
         post: (message: unknown, transfer: MessagePort[]) =>
           frame.posted.push({ message, transfer }),
         onLoad: (listener: () => void) => listeners.push(listener),
+        path: () => frame.path,
         remove: () => {
           frame.removed = true;
         },
@@ -110,6 +114,23 @@ describe("local pages framed over the runtime document (I4)", () => {
     expect(onMessage.mock.calls).toEqual([["address", { from: "new" }]]);
     oldPort.close();
     newPort.close();
+    frames.hide();
+  });
+
+  test("the port goes only to the local page that was asked for (M2)", () => {
+    const dom = fakeDom();
+    const frames = createLocalFrames({ create: dom.create, onMessage: () => {} });
+    frames.show("address", "address/index.html?back=1");
+    const frame = dom.made[0];
+    if (!frame) throw new Error("no frame");
+    for (const other of ["/error/index.html", "/index.html", null]) {
+      frame.path = other;
+      frame.load();
+    }
+    expect(frame.posted).toEqual([]);
+    frame.path = "/address/index.html";
+    frame.load();
+    portOf(frame).close();
     frames.hide();
   });
 

@@ -2,10 +2,10 @@
 // deployment's name and icon, and Sign in hands the address on. Plain DOM, no design package, the
 // same layout as the desktop's connect page. The state machine is src/runtime/address-model.ts.
 //
-// The page is framed over the runtime document and has no Capacitor bridge (N1: iOS injects it in
-// the main frame only, and neither platform's framed pages use it). It asks the runtime by
-// its port (src/runtime/address-bridge.ts, local-channel.ts): the runtime discovers, adds the
-// profile and opens it.
+// The page is framed over the runtime document and uses no Capacitor plugin (N1: iOS injects the
+// bridge in the main frame only). It asks the runtime over its port (src/runtime/address-bridge.ts,
+// local-channel.ts): the runtime discovers, adds the profile and opens it. Same-origin with the
+// runtime, it is trusted bundled code, not isolated: remote data is rendered as text only.
 import { type Locale, t } from "@capybara-hq/shell";
 import { type AddressClient, createAddressClient } from "../../runtime/address-bridge.ts";
 import {

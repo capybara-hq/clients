@@ -88,6 +88,13 @@ function iframe(src: string, title: string): FrameHandle {
     post: (message, transfer) =>
       frame.contentWindow?.postMessage(message, location.origin, transfer),
     onLoad: (listener) => frame.addEventListener("load", listener),
+    path: () => {
+      try {
+        return frame.contentWindow?.location.pathname ?? null;
+      } catch {
+        return null;
+      }
+    },
     remove: () => frame.remove(),
   };
 }

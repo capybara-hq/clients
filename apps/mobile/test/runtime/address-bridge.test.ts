@@ -121,6 +121,28 @@ describe("the runtime side of the address page protocol", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
+  test("a discovery still running when the page is framed anew is dropped (M3)", async () => {
+    let release: (r: HttpGetResult) => void = () => {};
+    const slow = new Promise<HttpGetResult>((r) => (release = r));
+    const posted: AddressRuntimeMessage[] = [];
+    const add = vi.fn(async (found: FoundDeployment) => ({ id: found.base }));
+    const host = createAddressHost({
+      httpGet: { get: () => slow },
+      lockedBase: () => null,
+      add,
+      opened: () => {},
+      closed: () => {},
+      post: (m) => posted.push(m),
+    });
+    const old = host.handle({ type: "address-discover", seq: 1, input: "acme.example.com" });
+    host.reset();
+    release(ok(META));
+    await old;
+    expect(posted).toEqual([]);
+    await host.handle({ type: "address-added", base: ACME });
+    expect(add).not.toHaveBeenCalled();
+  });
+
   test("a locked preset is enforced by the runtime too", async () => {
     const { host, posted } = setup("https://other.example.com");
     await host.handle({ type: "address-discover", seq: 2, input: "acme.example.com" });
