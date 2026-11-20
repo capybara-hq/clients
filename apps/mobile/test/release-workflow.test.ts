@@ -11,6 +11,7 @@ type Step = {
   uses?: string;
   run?: string;
   if?: string;
+  env?: Record<string, string>;
   with?: Record<string, unknown>;
 };
 type Job = { "runs-on": string; steps: Step[]; env?: Record<string, string>; environment?: string };
