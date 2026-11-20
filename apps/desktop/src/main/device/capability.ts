@@ -23,6 +23,7 @@ import type { ControlClient } from "./control.ts";
 import type { DeviceDialogs } from "./dialogs.ts";
 import {
   CEILING_FIELDS,
+  type CeilingField,
   ceilingSetArgs,
   failed,
   hereOrNull,
@@ -249,11 +250,9 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       const machine = await connectedHere(ctx.profile);
       const cur = await readCeiling(cli);
       const args = ceilingSetArgs(req);
-      const widened = {
-        outsideSandbox: widensField(cur, req, "outsideSandbox"),
-        network: widensField(cur, req, "network"),
-        projectReach: widensField(cur, req, "projectReach"),
-      };
+      const widened = Object.fromEntries(
+        CEILING_FIELDS.map((f) => [f, widensField(cur, req, f)]),
+      ) as Record<CeilingField, boolean>;
       if (!widened.outsideSandbox && !widened.network && !widened.projectReach) {
         if (CEILING_FIELDS.every((f) => req[f] === undefined || req[f] === cur[f])) {
           return "applied";
@@ -281,7 +280,9 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         ];
         if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown))) return "cancelled";
         // The ceiling may have narrowed while the dialog was open: --yes must not widen a field
-        // the person did not see named.
+        // the person did not see named. Known limit: with --yes the program does not decide again,
+        // so a narrowing landing between this read and the write is not caught; closing that needs
+        // a precondition the program checks under its lock (an expected revision).
         const now = await readCeiling(cli);
         if (CEILING_FIELDS.some((f) => widensField(now, req, f) && !widened[f])) throw failed();
         await run(cli, [...args, "--yes"]);

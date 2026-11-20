@@ -20,7 +20,7 @@ export const profileA: Profile = {
 
 export const live = (over: Partial<LiveStatus> = {}): LiveStatus => ({
   pid: 41,
-  version: "0.1.0-rc.18",
+  version: "0.1.0-rc.19",
   url: "https://a.example.com/team",
   orgId: "org_1",
   deviceId: "dev_1",

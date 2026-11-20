@@ -319,7 +319,8 @@ test("device@1.requestCeiling refuses the old shape and an empty request across 
       await code({ network: "open", fullAccess: true }),
     ];
   });
-  // Refused before the machine is read: nothing a stale page sends is half applied.
+  // The call crosses the bridge and is refused; the unit tests prove the shape check refuses
+  // these before any device command runs.
   expect(codes).toEqual(["failed", "failed", "failed"]);
 });
 

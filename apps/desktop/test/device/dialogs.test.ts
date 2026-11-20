@@ -54,7 +54,10 @@ describe("the connect dialog", () => {
     expect(box?.options.defaultId).toBe(1);
     expect(box?.options.cancelId).toBe(1);
     expect(box?.options.detail).toContain("本地设备");
-    expect(box?.options.detail).toContain("完全访问");
+    // the starting state as the device program sets it up: in the sandbox, the open network
+    expect(box?.options.detail).toContain("沙箱内运行");
+    expect(box?.options.detail).toContain("公共互联网");
+    expect(box?.options.detail).not.toContain("完全访问");
     expect(box?.options.detail).toContain("登录服务");
     expect(box?.options.detail).toContain("唤醒");
     expect(box?.options.detail).not.toMatch(/企业|agent/i);

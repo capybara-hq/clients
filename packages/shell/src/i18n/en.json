@@ -23,7 +23,7 @@
   "device.cancel": "Cancel",
   "device.connect.message": "Allow {name} ({host}) to run commands on this computer?",
   "device.connect.message_host": "Allow {host} to run commands on this computer?",
-  "device.connect.detail": "This computer becomes a local device of the platform: agents can run commands here, and the platform reviews every command. It starts restricted: no Full access, and only the device's own working directory. It keeps serving as a login service after you close the app, and keeps the computer awake while operations run. You can disconnect it from the menu bar icon at any time.",
+  "device.connect.detail": "This computer becomes a local device of the platform: agents can run commands here, and the platform reviews every command. On a new setup every command runs in the sandbox: nothing runs outside it until you allow that on this computer, sandboxed commands can reach the public internet (private and local addresses stay closed), and only the device's own working directory is in reach. It keeps serving as a login service after you close the app, and keeps the computer awake while operations run. You can disconnect it from the menu bar icon at any time.",
   "device.disconnect_other.message": "This computer is connected to {origin}. Disconnect it first?",
   "device.disconnect_other.detail": "Disconnecting stops the local device there and logs it out on this computer. The device stays registered on that platform until someone deletes it.",
   "device.disconnect_other.confirm": "Disconnect",
