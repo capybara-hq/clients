@@ -14,3 +14,20 @@ export function blockRulesFor(base: string): string {
   if (rules.length === 0) throw new Error("no sign-in block rules for this base");
   return JSON.stringify(rules);
 }
+
+/**
+ * M9: a removed profile's compiled rule list is deleted with its store (iOS keeps lists in
+ * `WKContentRuleListStore.default()` across launches; Android has none and resolves).
+ */
+export function removeBlockRulesOnRemoval(
+  store: { onRemoved(listener: (p: { id: string }) => void | Promise<void>): () => void },
+  native: { removeBlockRules(options: { profileId: string }): Promise<void> },
+): () => void {
+  return store.onRemoved(async (p) => {
+    try {
+      await native.removeBlockRules({ profileId: p.id });
+    } catch {
+      // A list left behind blocks only the sign-in routes of a profile that no longer loads.
+    }
+  });
+}

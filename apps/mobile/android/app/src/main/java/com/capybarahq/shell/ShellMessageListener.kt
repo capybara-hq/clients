@@ -23,6 +23,9 @@ sealed class ShellPost {
     /** `window.open(url)` in the profile document (wrapped by the Android script): to the sheet. */
     data class Open(val docId: String, val url: String) : ShellPost()
 
+    /** Android: the injected script's answer to a sign-in `post` push (ProfileWebView.post). */
+    data class PostResult(val docId: String, val id: String, val ok: Boolean, val status: Int, val hasAccount: Boolean) : ShellPost()
+
     data class Call(
         val docId: String,
         val callId: String,
@@ -40,6 +43,7 @@ sealed class ShellPost {
         private val CALL_ID = Regex("^[A-Za-z0-9:_.-]{1,128}$")
         private val KEY = Regex("^[A-Za-z][A-Za-z0-9]{0,63}@[0-9]{1,4}$")
         private val FN = Regex("^[A-Za-z][A-Za-z0-9]{0,63}$")
+        private val POST_ID = Regex("^[A-Za-z0-9-]{8,64}$")
 
         /** Null unless `body` has exactly the expected types (the patterns match protocol.ts). */
         fun parse(body: Map<String, Any?>): ShellPost? {
@@ -51,6 +55,13 @@ sealed class ShellPost {
                     val url = (body["url"] as? String)?.takeIf { it.length <= MAX_URL && OPEN_URL.containsMatchIn(it) }
                         ?: return null
                     Open(docId, url)
+                }
+                "post-result" -> {
+                    val id = (body["id"] as? String)?.takeIf { POST_ID.matches(it) } ?: return null
+                    val ok = body["ok"] as? Boolean ?: return null
+                    val status = (body["status"] as? Number)?.toInt()?.takeIf { it in 0..999 } ?: return null
+                    val hasAccount = body["hasAccount"] as? Boolean ?: return null
+                    PostResult(docId, id, ok, status, hasAccount)
                 }
                 "call" -> {
                     val callId = (body["callId"] as? String)?.takeIf { CALL_ID.matches(it) } ?: return null

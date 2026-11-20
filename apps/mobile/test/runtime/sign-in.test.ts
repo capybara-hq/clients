@@ -14,7 +14,7 @@ import {
   type SignInProfile,
   signInPortsFrom,
 } from "../../src/runtime/sign-in.ts";
-import { blockRulesFor } from "../../src/runtime/sign-in-block.ts";
+import { blockRulesFor, removeBlockRulesOnRemoval } from "../../src/runtime/sign-in-block.ts";
 
 const BASE = "https://cap.example.com/team";
 const ORIGIN = "https://cap.example.com";
@@ -61,6 +61,7 @@ function setup(
       opts.origin === undefined ? ORIGIN : opts.origin,
     ),
     reload: vi.fn(async (_profileId: string) => {}),
+    revoke: vi.fn(async (_profileId: string, _req: { url: string }) => {}),
     deviceName: "Grant’s iPhone",
     appVersion: "0.1.0",
     now: () => clock,
@@ -337,10 +338,23 @@ describe("signIn@1: cancel and errors", () => {
     const noAccount = setup({ exchange: { ok: true, status: 200, hasAccount: false } });
     expect(await noAccount.start()).toEqual(FAILED);
     expect(noAccount.deps.reload).not.toHaveBeenCalled();
+    // The kernel answered 2xx, so a session cookie may be set: it is logged out (as the desktop).
+    expect(noAccount.deps.revoke).toHaveBeenCalledWith("p1", { url: `${BASE}/api/v1/auth/logout` });
     const throws = setup();
     throws.deps.exchange.mockRejectedValueOnce(new Error("timeout cap_ac_1"));
     expect(await throws.start()).toEqual(FAILED);
     expect(throws.logs.join("\n")).not.toContain("cap_ac_1");
+    expect(throws.deps.revoke).not.toHaveBeenCalled();
+    // A failing logout still ends in failed.
+    const revokeFails = setup({ exchange: { ok: true, status: 200, hasAccount: false } });
+    revokeFails.deps.revoke.mockRejectedValueOnce(new Error("x"));
+    expect(await revokeFails.start()).toEqual(FAILED);
+  });
+
+  test("a refused exchange logs nothing out", async () => {
+    const s = setup({ exchange: { ok: false, status: 400, hasAccount: false } });
+    await s.start();
+    expect(s.deps.revoke).not.toHaveBeenCalled();
   });
 
   test("a later attempt works after a failed one", async () => {
@@ -547,6 +561,7 @@ describe("the plugin adapter", () => {
     signInExchange: vi.fn(async () => answers.exchange),
     currentOrigin: vi.fn(async () => answers.origin),
     reload: vi.fn(async () => {}),
+    signInRevoke: vi.fn(async () => {}),
     appInfo: vi.fn(async () => answers.info),
   });
 
@@ -569,6 +584,8 @@ describe("the plugin adapter", () => {
     });
     expect(n.signInExchange).toHaveBeenCalledWith({ profileId: "p1", url: "u", body: "b" });
     expect(await ports.currentOrigin("p1")).toBe(ORIGIN);
+    await ports.revoke("p1", { url: "u" });
+    expect(n.signInRevoke).toHaveBeenCalledWith({ profileId: "p1", url: "u" });
     expect(await appInfoFrom(n)).toEqual({ deviceName: "iPhone", appVersion: "1.2.3" });
   });
 
@@ -589,5 +606,30 @@ describe("the plugin adapter", () => {
     expect(
       await signInPortsFrom(native({ start: { cancelled: true } })).auth.start("https://x", SCHEME),
     ).toEqual({ cancelled: true });
+  });
+});
+
+describe("removed profiles drop their block rules (M9)", () => {
+  test("the store's removal asks native to delete the profile's rule list", async () => {
+    let listener: ((p: { id: string }) => void | Promise<void>) | undefined;
+    const store = {
+      onRemoved: (l: (p: { id: string }) => void | Promise<void>) => {
+        listener = l;
+        return () => {};
+      },
+    };
+    const native = { removeBlockRules: vi.fn(async (_o: { profileId: string }) => {}) };
+    removeBlockRulesOnRemoval(store, native);
+    await listener?.({ id: "p9" });
+    expect(native.removeBlockRules).toHaveBeenCalledWith({ profileId: "p9" });
+    native.removeBlockRules.mockRejectedValueOnce(new Error("x"));
+    await expect(Promise.resolve(listener?.({ id: "p8" }))).resolves.toBeUndefined();
+  });
+});
+
+describe("no code or verifier in the bridge's logs (M4)", () => {
+  test("Capacitor logs nothing, debug builds included", async () => {
+    const config = (await import("../../capacitor.config.ts")).default;
+    expect(config.loggingBehavior).toBe("none");
   });
 });

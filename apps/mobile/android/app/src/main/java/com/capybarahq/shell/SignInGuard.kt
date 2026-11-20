@@ -5,6 +5,12 @@
 // in `shouldInterceptRequest`, on the WebView client and on its profile's service-worker client,
 // so neither a page's `fetch`, a form post nor a service worker reaches the routes:
 // `POST <base>/api/v1/auth/login` and `<base>/api/v1/auth/sso/<provider>/start` (any method).
+//
+// Known WebView limit (review M2, measured on API 37): a server redirect is never offered to
+// `shouldInterceptRequest`, and a POST's redirect not to `shouldOverrideUrlLoading` either, so a
+// 307 / 308 that a server answers onto the login route (for a fetch or a form POST) reaches it.
+// Only a server can send that redirect: the deployment's own, or one the page chose to post to.
+// iOS content rule lists do apply to redirects.
 
 package com.capybarahq.shell
 

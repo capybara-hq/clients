@@ -74,6 +74,15 @@ export type PagePost =
   | { type: "listen"; docId: string }
   /** Android: the profile document's wrapped `window.open`; native sends the URL to the sheet. */
   | { type: "open"; docId: string; url: string }
+  /** Android: the answer to native's sign-in `post` push (only the injected script holds the port). */
+  | {
+      type: "post-result";
+      docId: string;
+      id: string;
+      ok: boolean;
+      status: number;
+      hasAccount: boolean;
+    }
   | {
       type: "call";
       docId: string;
@@ -93,7 +102,9 @@ export type NativePush =
   | { type: "reply"; callId: string; result: ShellCallResult }
   | { type: "denied"; callId: string }
   | { type: "state"; state: unknown }
-  | { type: "event"; key: string; event: string; payload: unknown };
+  | { type: "event"; key: string; event: string; payload: unknown }
+  /** Android: the sign-in exchange or logout, run by the injected script with its own `fetch`. */
+  | { type: "post"; id: string; url: string; body: string | null };
 
 /** The shapes native accepts too (`ShellMessageHandler.swift`, `ShellMessageListener.kt`). */
 export const DOC_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;

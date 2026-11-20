@@ -30,6 +30,8 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "currentOrigin", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "reload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "appInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "signInRevoke", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "removeBlockRules", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
@@ -254,7 +256,7 @@ extension ShellPlugin {
     /// Shows `ASWebAuthenticationSession` on the authorize URL; resolves `{ callback }` or
     /// `{ cancelled: true }`.
     @objc func signInStart(_ call: CAPPluginCall) {
-        guard let raw = call.getString("url"), let url = ExternalURL.parse(raw),
+        guard let raw = call.getString("url"), let url = ExternalURL.parse(raw), AuthSession.isAuthorizeURL(url),
               let scheme = call.getString("scheme"), scheme == ShellPlugin.brandScheme
         else {
             call.reject("signInStart needs an http(s) url and the app's scheme")
@@ -286,6 +288,26 @@ extension ShellPlugin {
         DispatchQueue.main.async {
             guard let view = self.profileHost()?.view(for: profileId) else { return call.reject("no profile WebView") }
             view.exchange(url: url, body: body) { call.resolve($0) }
+        }
+    }
+
+    /// The logout of a session the app did not want, through the same path as the exchange.
+    @objc func signInRevoke(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId"), let url = call.getString("url") else {
+            call.reject("signInRevoke needs profileId and url")
+            return
+        }
+        DispatchQueue.main.async {
+            guard let view = self.profileHost()?.view(for: profileId) else { return call.reject("no profile WebView") }
+            view.exchange(url: url, body: nil) { _ in call.resolve() }
+        }
+    }
+
+    /// M9: a removed profile's rule list goes with it (a list that is already gone is fine).
+    @objc func removeBlockRules(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("removeBlockRules needs profileId") }
+        DispatchQueue.main.async {
+            ProfileWebView.removeBlockRules(profileId) { _ in call.resolve() }
         }
     }
 

@@ -280,15 +280,88 @@ interface AndroidPort {
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
 }
 
-/** Android: the web message port; replies, drops and pushes all arrive on it as JSON. */
+interface FetchAnswer {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+}
+type FetchLike = (url: string, init: Record<string, unknown>) => Promise<FetchAnswer>;
+
+const POST_FAILED = { ok: false, status: 0, hasAccount: false };
+
+/**
+ * Android: the web message port; replies, drops and pushes all arrive on it as JSON.
+ *
+ * Sign-in (Task 17 fix I1): the port is taken off `window` here, before any page script runs, so a
+ * page can neither listen on it nor post through it; only this closure holds it. Native sends the
+ * code exchange (and the logout of an unwanted session) as a `post` push, and this script runs it
+ * with the `fetch` it captured at document start: a page that patches `fetch` later never sees the
+ * code, the verifier or the redirect URI. Only `{ ok, status, hasAccount }` goes back.
+ */
 export function androidTransport(win: Record<string, unknown>): NativeTransport | null {
   const port = win[ANDROID_PORT_NAME] as AndroidPort | undefined;
   if (!port || typeof port.postMessage !== "function") return null;
   const post = port.postMessage.bind(port);
+  try {
+    delete win[ANDROID_PORT_NAME];
+  } catch {
+    // Native checks the port is gone before it sends a post (`"capybaraShellPort" in window`).
+  }
   const stringify = JSON.stringify;
   const parse = JSON.parse;
+  const fetchAtStart =
+    typeof win.fetch === "function" ? (win.fetch as FetchLike).bind(win) : undefined;
+  const UrlAtStart = URL;
+  const timeout =
+    typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout.bind(AbortSignal)
+      : undefined;
+  const location = win.location as { origin?: unknown } | undefined;
   const pending = new Map<string, (result: ShellCallResult) => void>();
   let receiver: ((push: { type: string }) => void) | undefined;
+  let docId = "";
+
+  async function runPost(url: string, body: string | null): Promise<typeof POST_FAILED> {
+    if (!fetchAtStart) return POST_FAILED;
+    let target: string;
+    try {
+      const u = new UrlAtStart(url);
+      // `location` is unforgeable: the post goes only to this document's own origin.
+      if (u.origin !== String(location?.origin)) return POST_FAILED;
+      target = u.href;
+    } catch {
+      return POST_FAILED;
+    }
+    const init: Record<string, unknown> = {
+      method: "POST",
+      headers:
+        body === null
+          ? { "X-Capybara-Csrf": "1" }
+          : { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
+      credentials: "include",
+      redirect: "error",
+      cache: "no-store",
+    };
+    if (body !== null) init.body = body;
+    if (timeout) init.signal = timeout(30000);
+    try {
+      const res = await fetchAtStart(target, init);
+      if (!res.ok) return { ok: false, status: res.status, hasAccount: false };
+      let hasAccount = false;
+      try {
+        const data = await res.json();
+        const account =
+          data !== null && typeof data === "object"
+            ? (data as Record<string, unknown>).account
+            : null;
+        hasAccount = account !== null && typeof account === "object";
+      } catch {}
+      return { ok: true, status: res.status, hasAccount };
+    } catch {
+      return POST_FAILED;
+    }
+  }
+
   port.addEventListener("message", (event) => {
     let push: unknown;
     try {
@@ -309,6 +382,15 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
       );
       return;
     }
+    if (p.type === "post") {
+      const { id, url, body } = p;
+      if (typeof id !== "string" || typeof url !== "string") return;
+      if (body !== null && typeof body !== "string") return;
+      void runPost(url, body).then((result) => {
+        post(stringify({ type: "post-result", docId, id, ...result }));
+      });
+      return;
+    }
     receiver?.(p as { type: string });
   });
   return {
@@ -318,8 +400,9 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
         post(stringify(message));
       });
     },
-    hello(docId) {
-      post(stringify({ type: "hello", docId }));
+    hello(id) {
+      docId = id;
+      post(stringify({ type: "hello", docId: id }));
     },
     open(message) {
       post(stringify(message));
@@ -355,7 +438,14 @@ function main(): void {
       activationGetter && activationObject
         ? activationGetter.call(activationObject) === true
         : false,
-    transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win),
+    // Android: only the top frame takes its port (off its window); a same-origin frame keeps its
+    // own, whose posts the gate drops and which never receives the top document's pushes.
+    transport:
+      init?.platform === "android"
+        ? win.top === win
+          ? androidTransport(win)
+          : null
+        : iosTransport(win),
     baseUrl: () => String((win.location as { href?: unknown } | undefined)?.href ?? ""),
     onRestore: (listener) => {
       const target = win as unknown as {

@@ -72,6 +72,11 @@ final class SignInExchangeTests: XCTestCase {
 
         let stolen = try await view.evaluateJavaScript("window.stolen === true")
         XCTAssertEqual(stolen as? Bool, false, "the page's patched fetch never saw the exchange")
+        // Control (M6): the patch is live in the page world, so a page-world exchange would leak.
+        _ = try await view.callAsyncJavaScript("try { await fetch('/x'); } catch (e) {} return 1;",
+                                               arguments: [:], in: nil, contentWorld: .page)
+        let patched = try await view.evaluateJavaScript("window.stolen === true")
+        XCTAssertEqual(patched as? Bool, true)
         let mine = await cookies(store)
         XCTAssertEqual(mine.first { $0.name == "cap_at" }?.value, "session-1")
         let theirs = await cookies(other)
@@ -88,6 +93,22 @@ final class SignInExchangeTests: XCTestCase {
         XCTAssertEqual(result["ok"] as? Bool, false)
         XCTAssertEqual(result["status"] as? Int, 400)
         XCTAssertEqual(result["hasAccount"] as? Bool, false)
+    }
+
+    func testALogoutPostHasNoBody() async throws {
+        let view = try profileView(store: .nonPersistent())
+        let waiter = NavigationWaiter()
+        view.navigationDelegate = waiter
+        _ = await waiter.run { view.loadBase() }
+        server.clear()
+        let _: [String: Any] = await withCheckedContinuation { c in
+            view.exchange(url: "\(origin)/api/v1/auth/logout", body: nil) { c.resume(returning: $0) }
+        }
+        let post = try XCTUnwrap(server.requests.first { $0.method == "POST" })
+        XCTAssertEqual(post.target, "/api/v1/auth/logout")
+        XCTAssertEqual(post.headers["x-capybara-csrf"], "1")
+        XCTAssertEqual(post.body, "")
+        XCTAssertNil(post.headers["content-type"])
     }
 
     func testNoExchangeWhileOffTheProfileOriginOrToAnotherOrigin() async throws {
@@ -133,6 +154,11 @@ final class SignInExchangeTests: XCTestCase {
                               code: ASWebAuthenticationSessionError.presentationContextInvalid.rawValue)
         XCTAssertThrowsError(try AuthSession.answer(callbackURL: nil, error: failure, scheme: "capybara").get())
         XCTAssertTrue(AuthSession.isScheme("capybara"))
+        // M5: https, or http only to loopback.
+        XCTAssertTrue(AuthSession.isAuthorizeURL(URL(string: "https://cap.example.com/apps/authorize")!))
+        XCTAssertTrue(AuthSession.isAuthorizeURL(URL(string: "http://127.0.0.1:8080/apps/authorize")!))
+        XCTAssertFalse(AuthSession.isAuthorizeURL(URL(string: "http://cap.example.com/apps/authorize")!))
+        XCTAssertFalse(AuthSession.isAuthorizeURL(URL(string: "file:///etc/passwd")!))
         XCTAssertFalse(AuthSession.isScheme("Cap bara"))
     }
 

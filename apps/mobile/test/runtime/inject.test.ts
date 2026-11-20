@@ -617,3 +617,116 @@ describe("the Android transport", () => {
     });
   });
 });
+
+describe("the Android sign-in post (Task 17 fix I1: never through the page's fetch)", () => {
+  const ORIGIN = "https://a.example";
+  function setup(
+    answer: { status: number; body: unknown } = { status: 200, body: { account: {} } },
+  ) {
+    const sent: string[] = [];
+    let listener: ((e: { data: unknown }) => void) | undefined;
+    const port = {
+      postMessage: (m: string) => sent.push(m),
+      addEventListener: (_t: "message", l: (e: { data: unknown }) => void) => {
+        listener = l;
+      },
+    };
+    const original = vi.fn(async (_url: string, _init: Record<string, unknown>) => ({
+      ok: answer.status >= 200 && answer.status < 300,
+      status: answer.status,
+      json: async () => answer.body,
+    }));
+    const win: Record<string, unknown> = {
+      capybaraShellPort: port,
+      fetch: original,
+      location: { origin: ORIGIN },
+    };
+    const t = androidTransport(win);
+    const pushes = vi.fn();
+    t?.onPush(pushes);
+    t?.hello("doc-1234-5678");
+    sent.length = 0;
+    const results = async () => {
+      await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+      return sent.map((s) => JSON.parse(s));
+    };
+    return { win, original, pushes, results, fire: (data: unknown) => listener?.({ data }) };
+  }
+  const post = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "post",
+      id: "p-1",
+      url: `${ORIGIN}/api/v1/app-auth/token`,
+      body: '{"code":"c","codeVerifier":"v","redirectUri":"r"}',
+      ...over,
+    });
+
+  test("the port is gone from the page's window once the script took it", () => {
+    const { win } = setup();
+    expect("capybaraShellPort" in win).toBe(false);
+  });
+
+  test("runs the fetch captured at document start with the fixed request and answers 3 fields", async () => {
+    const { win, original, pushes, results, fire } = setup();
+    // A page script patches fetch later: it must never see the post.
+    const patched = vi.fn();
+    win.fetch = patched;
+    fire(post());
+    expect(await results()).toEqual([
+      {
+        type: "post-result",
+        docId: "doc-1234-5678",
+        id: "p-1",
+        ok: true,
+        status: 200,
+        hasAccount: true,
+      },
+    ]);
+    expect(patched).not.toHaveBeenCalled();
+    expect(pushes).not.toHaveBeenCalled();
+    const [url, init] = original.mock.calls[0] ?? [];
+    expect(url).toBe(`${ORIGIN}/api/v1/app-auth/token`);
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
+      body: '{"code":"c","codeVerifier":"v","redirectUri":"r"}',
+      credentials: "include",
+      redirect: "error",
+      cache: "no-store",
+    });
+  });
+
+  test("a logout post has no body; a refused one reports its status only", async () => {
+    const { original, results, fire } = setup({ status: 400, body: { secret: "x" } });
+    fire(post({ id: "p-2", url: `${ORIGIN}/api/v1/auth/logout`, body: null }));
+    expect(await results()).toEqual([
+      {
+        type: "post-result",
+        docId: "doc-1234-5678",
+        id: "p-2",
+        ok: false,
+        status: 400,
+        hasAccount: false,
+      },
+    ]);
+    expect(original.mock.calls[0]?.[1]).not.toHaveProperty("body");
+  });
+
+  test("a URL off the document's origin, or a malformed post, is never fetched", async () => {
+    const { original, results, fire } = setup();
+    fire(post({ id: "p-3", url: "https://evil.example/api/v1/app-auth/token" }));
+    expect(await results()).toEqual([
+      {
+        type: "post-result",
+        docId: "doc-1234-5678",
+        id: "p-3",
+        ok: false,
+        status: 0,
+        hasAccount: false,
+      },
+    ]);
+    fire(post({ id: 7 }));
+    fire(post({ body: 1 }));
+    expect(original).not.toHaveBeenCalled();
+  });
+});

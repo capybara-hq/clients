@@ -191,10 +191,10 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
     /** Opens the authorize URL in a Custom Tab; resolves `{ callback }` or `{ cancelled: true }`. */
     @PluginMethod
     fun signInStart(call: PluginCall) {
-        val url = call.getString("url")?.let { ExternalUrl.parse(it) }
+        val url = call.getString("url")?.let { AuthAttempts.authorizeUrl(it) }
         val scheme = call.getString("scheme")
-        if (url == null || scheme != BuildConfig.BRAND_SCHEME) {
-            call.reject("signInStart needs an http(s) url and the app's scheme")
+        if (url == null || scheme != BuildConfig.BRAND_SCHEME || AuthAttempts.queryValue(url, "state").isNullOrEmpty()) {
+            call.reject("signInStart needs an https (or loopback http) url with a state and the app's scheme")
             return
         }
         main.post {
@@ -221,8 +221,29 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         }
         main.post {
             val view = host?.view(profileId) ?: return@post call.reject("no profile WebView")
-            view.exchange(url, body) { result -> call.resolve(JSObject.fromJSONObject(result)) }
+            view.post(url, body) { result -> call.resolve(JSObject.fromJSONObject(result)) }
         }
+    }
+
+    /** The logout of a session the app did not want, through the same path as the exchange. */
+    @PluginMethod
+    fun signInRevoke(call: PluginCall) {
+        val profileId = call.getString("profileId")
+        val url = call.getString("url")
+        if (profileId == null || url == null) {
+            call.reject("signInRevoke needs profileId and url")
+            return
+        }
+        main.post {
+            val view = host?.view(profileId) ?: return@post call.reject("no profile WebView")
+            view.post(url, null) { call.resolve() }
+        }
+    }
+
+    /** iOS deletes a removed profile's compiled rule list; Android has none (SignInGuard). */
+    @PluginMethod
+    fun removeBlockRules(call: PluginCall) {
+        call.resolve()
     }
 
     /** The profile WebView's top-level origin when it is the profile origin, else null. */

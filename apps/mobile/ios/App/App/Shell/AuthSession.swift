@@ -32,12 +32,21 @@ final class AuthSession: NSObject, ASWebAuthenticationPresentationContextProvidi
     }
 
     /// The scheme a callback may use: the brand's, lower case letters, digits, `+ . -`.
-    static func isScheme(_ scheme: String) -> Bool {
+    nonisolated static func isScheme(_ scheme: String) -> Bool {
         scheme.range(of: "^[a-z][a-z0-9+.-]*$", options: .regularExpression) != nil
     }
 
+    /// M5: https, or http only to a loopback host (a debug deployment on this machine).
+    nonisolated static func isAuthorizeURL(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "https": return url.host?.isEmpty == false
+        case "http": return ["127.0.0.1", "localhost", "::1"].contains(url.host?.lowercased() ?? "")
+        default: return false
+        }
+    }
+
     /// What the session's completion means: a callback link of `scheme`, a cancel, or a failure.
-    static func answer(callbackURL: URL?, error: Error?, scheme: String) -> Result<AuthAnswer, AuthSessionError> {
+    nonisolated static func answer(callbackURL: URL?, error: Error?, scheme: String) -> Result<AuthAnswer, AuthSessionError> {
         if let error {
             let e = error as NSError
             if e.domain == ASWebAuthenticationSessionErrorDomain,
@@ -52,7 +61,7 @@ final class AuthSession: NSObject, ASWebAuthenticationPresentationContextProvidi
 
     func start(url: URL, scheme: String, completion: @escaping (Result<AuthAnswer, AuthSessionError>) -> Void) {
         guard session == nil else { return completion(.failure(.busy)) }
-        guard AuthSession.isScheme(scheme), let s = url.scheme?.lowercased(), s == "https" || s == "http" else {
+        guard AuthSession.isScheme(scheme), AuthSession.isAuthorizeURL(url) else {
             return completion(.failure(.invalidRequest))
         }
         let done: (URL?, Error?) -> Void = { [weak self] callbackURL, error in

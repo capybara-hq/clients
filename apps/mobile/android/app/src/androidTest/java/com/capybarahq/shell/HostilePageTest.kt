@@ -149,13 +149,13 @@ object HostileEvaluator {
             if (str(p, "shellEarly") != "object" || str(p, "shellAtProbe") != "object") failures.add("$profile: no capybaraShell")
             if (p.opt("redefineTook") != false) failures.add("$profile: capybaraShell replaced")
             if (str(p, "replies", "shell") != "pong") failures.add("$profile: shell reply ${str(p, "replies", "shell")}")
-            if (str(p, "attempts", "raw") != "posted" || str(p, "replies", "raw") != "pong" || logged("accept", "$profile:raw").isEmpty()) {
-                failures.add("$profile: raw post not accepted")
-            }
-            if (str(p, "attempts", "malformed") != "posted" || str(p, "replies", "malformed") !in denied ||
-                logged("drop", "$profile:malformed").none { it.optString("reason") == "shape" }
+            // Task 17 fix I1: the shell script takes the port off the profile document's window
+            // before any page script runs, so the page has no raw endpoint at all (the native shape
+            // checks are covered by ShellPostTest; hostile documents below still attack theirs).
+            if (str(p, "rawEndpointType") != "undefined" || str(p, "attempts", "raw") != "no-endpoint" ||
+                str(p, "attempts", "malformed") != "no-endpoint"
             ) {
-                failures.add("$profile: malformed post not dropped (${str(p, "replies", "malformed")})")
+                failures.add("$profile: the raw port is reachable (${str(p, "rawEndpointType")}, ${str(p, "attempts", "raw")})")
             }
             if (str(p, "pushedBottom") != "7") failures.add("$profile: pushed state not seen (${str(p, "pushedBottom")})")
             checkNoCapacitor(profile, p)

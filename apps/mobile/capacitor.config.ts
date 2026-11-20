@@ -7,6 +7,9 @@ const config: CapacitorConfig = {
   appId: brand.appId,
   appName: brand.productName,
   webDir: "dist/local",
+  // M4: Capacitor logs plugin calls and results in debug builds; the sign-in calls carry a code
+  // and a verifier, so the bridge logs nothing.
+  loggingBehavior: "none",
   plugins: {
     // Off: CapacitorCookies rewrites the default Android profile's cookies on Activity start and
     // destroy, and CapacitorHttp patches fetch / XHR. The app needs neither.

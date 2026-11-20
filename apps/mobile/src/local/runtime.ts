@@ -63,6 +63,7 @@ import {
   type SignInNative,
   signInPortsFrom,
 } from "../runtime/sign-in.ts";
+import { removeBlockRulesOnRemoval } from "../runtime/sign-in-block.ts";
 import { createSplash } from "../runtime/splash.ts";
 
 /**
@@ -79,6 +80,7 @@ type HostPlugin = CapybaraHostPlugin &
   ProfileHostPlugin &
   HttpGetNative &
   SignInNative & {
+    removeBlockRules(options: { profileId: string }): Promise<void>;
     launchOptions(): Promise<LaunchOptions>;
     openExternal(options: { url: string }): Promise<void>;
   };
@@ -157,6 +159,7 @@ async function main(): Promise<void> {
       locale,
     });
     profiles = store;
+    removeBlockRulesOnRemoval(store, plugin);
     list = () => store.list();
     switchTo = async (id) => ((await store.setCurrent(id)) === "switched" ? store.current() : null);
     start = startRoute(brand, null, store);

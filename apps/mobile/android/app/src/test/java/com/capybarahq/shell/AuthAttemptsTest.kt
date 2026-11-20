@@ -13,7 +13,7 @@ class AuthAttemptsTest {
     private val answers = mutableListOf<AuthAnswer>()
     private val attempts = AuthAttempts()
 
-    private fun begin(): AuthAttempts.Handle = attempts.begin { answers.add(it) }
+    private fun begin(state: String = "s"): AuthAttempts.Handle = attempts.begin(state) { answers.add(it) }
 
     @Test
     fun theCallbackResolvesTheAttemptAndALaterResumeDoesNothing() {
@@ -80,5 +80,32 @@ class AuthAttemptsTest {
         assertFalse(AuthAttempts.isCallback("capybara://auth/other?code=c", "capybara"))
         assertFalse(AuthAttempts.isCallback("evil://auth/callback?code=c", "capybara"))
         assertFalse(AuthAttempts.isCallback("capybara://connect?url=x", "capybara"))
+    }
+
+    @Test
+    fun aLinkWithAnotherStateIsIgnoredAndNeverEndsTheAttempt() {
+        begin("s-right")
+        // M8: any app can send the exported callback activity a link: without the state it is dropped.
+        assertFalse(attempts.deliver("capybara://auth/callback?code=x&state=s-wrong&iss=x"))
+        assertFalse(attempts.deliver("capybara://auth/callback?code=x&iss=x"))
+        assertTrue(answers.isEmpty())
+        assertTrue(attempts.deliver("capybara://auth/callback?code=c&state=s-right&iss=x"))
+        assertEquals(listOf<AuthAnswer>(AuthAnswer.Callback("capybara://auth/callback?code=c&state=s-right&iss=x")), answers)
+    }
+
+    @Test
+    fun theStateIsReadFromTheQuery() {
+        assertEquals("a b/c", AuthAttempts.queryValue("https://x/apps/authorize?client=mobile&state=a+b%2Fc&x=1#f", "state"))
+        assertEquals(null, AuthAttempts.queryValue("https://x/apps/authorize?client=mobile", "state"))
+    }
+
+    @Test
+    fun theAuthorizeUrlIsHttpsOrLoopbackHttp() {
+        assertEquals("https://cap.example.com/apps/authorize?state=s", AuthAttempts.authorizeUrl("https://cap.example.com/apps/authorize?state=s"))
+        assertEquals("http://127.0.0.1:8080/apps/authorize", AuthAttempts.authorizeUrl("http://127.0.0.1:8080/apps/authorize"))
+        assertEquals("http://localhost/apps/authorize", AuthAttempts.authorizeUrl("http://localhost/apps/authorize"))
+        assertEquals(null, AuthAttempts.authorizeUrl("http://cap.example.com/apps/authorize"))
+        assertEquals(null, AuthAttempts.authorizeUrl("javascript:alert(1)"))
+        assertEquals(null, AuthAttempts.authorizeUrl("file:///x"))
     }
 }

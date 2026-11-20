@@ -134,6 +134,42 @@ final class SignInBlockTests: XCTestCase {
         return String(array.dropFirst().dropLast())
     }
 
+    /// M6: the harness sees a blocked vector's request when no list is installed.
+    func testControlWithoutTheListTheLoginReachesTheServer() async throws {
+        let server = try await TestHttpServer.start { _ in
+            TestHttpServer.Response(headers: ["Content-Type: text/html"], body: "<!doctype html><p>ok</p>")
+        }
+        defer { server.stop() }
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 480), configuration: configuration)
+        let waiter = NavigationWaiter()
+        webView.navigationDelegate = waiter
+        let start = try XCTUnwrap(URL(string: "http://127.0.0.1:\(server.port)/start-page"))
+        _ = await waiter.run { webView.load(URLRequest(url: start)) }
+        server.clear()
+        _ = try await webView.callAsyncJavaScript(
+            "try { await fetch('/api/v1/auth/login', { method: 'POST', mode: 'no-cors', body: '{}' }); } catch (e) {} return 1;",
+            arguments: [:], in: nil, contentWorld: .page)
+        XCTAssertTrue(server.requests.contains { $0.method == "POST" && $0.target == "/api/v1/auth/login" })
+    }
+
+    /// M9: a removed profile's list is deleted from the store.
+    func testARemovedProfilesListIsDeleted() async throws {
+        let store = WKContentRuleListStore.default()!
+        let id = ProfileWebView.blockRulesIdentifier("removal-test")
+        let rules = #"[{"trigger":{"url-filter":"^https://x\\.example/a$"},"action":{"type":"block"}}]"#
+        _ = try await compile(rules, id: id)
+        let removed: Error? = await withCheckedContinuation { c in
+            ProfileWebView.removeBlockRules("removal-test") { c.resume(returning: $0) }
+        }
+        XCTAssertNil(removed)
+        let identifiers: [String] = await withCheckedContinuation { c in
+            store.getAvailableContentRuleListIdentifiers { c.resume(returning: $0 ?? []) }
+        }
+        XCTAssertFalse(identifiers.contains(id))
+    }
+
     // MARK: The profile WebView installs the rules before it loads
 
     func testAProfileWebViewInstallsTheRulesAndKeepsTheSameList() async throws {

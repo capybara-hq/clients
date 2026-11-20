@@ -29,7 +29,7 @@ sealed class AuthAnswer {
 
 /** The one pending attempt and its lifecycle; pure, so JVM tests drive it. Main thread only. */
 class AuthAttempts {
-    internal class Attempt(val resolve: (AuthAnswer) -> Unit) {
+    internal class Attempt(val state: String, val resolve: (AuthAnswer) -> Unit) {
         /** The activity paused since the browser was asked for: a resume now means it came back. */
         var away = false
     }
@@ -41,10 +41,13 @@ class AuthAttempts {
         fun fail() = finish(attempt, AuthAnswer.Failed)
     }
 
-    /** Starts an attempt; one that was pending ends cancelled (the system shows one browser). */
-    fun begin(resolve: (AuthAnswer) -> Unit): Handle {
+    /**
+     * Starts an attempt for the authorize URL's `state`; one that was pending ends cancelled (the
+     * system shows one browser).
+     */
+    fun begin(state: String, resolve: (AuthAnswer) -> Unit): Handle {
         pending?.let { finish(it, AuthAnswer.Cancelled) }
-        val attempt = Attempt(resolve)
+        val attempt = Attempt(state, resolve)
         pending = attempt
         return Handle(attempt)
     }
@@ -59,9 +62,14 @@ class AuthAttempts {
         if (attempt.away) finish(attempt, AuthAnswer.Cancelled)
     }
 
-    /** A callback link for the pending attempt; false when there is none (a stray or second link). */
+    /**
+     * A callback link for the pending attempt. M8: the callback activity is exported, so any app
+     * can send a link; one whose `state` is not the attempt's is ignored (false) and never ends the
+     * attempt. False too when there is no attempt (a stray or second link).
+     */
     fun deliver(url: String): Boolean {
         val attempt = pending ?: return false
+        if (attempt.state.isEmpty() || queryValue(url, "state") != attempt.state) return false
         finish(attempt, AuthAnswer.Callback(url))
         return true
     }
@@ -73,6 +81,33 @@ class AuthAttempts {
     }
 
     companion object {
+        /** The first value of `name` in the URL's query, percent- and form-decoded; null when absent. */
+        fun queryValue(url: String, name: String): String? {
+            val q = url.substringBefore('#').substringAfter('?', "")
+            if (q.isEmpty()) return null
+            for (pair in q.split('&')) {
+                val key = PercentDecoding.lenient(pair.substringBefore('=').replace('+', ' '))
+                if (key == name) return PercentDecoding.lenient(pair.substringAfter('=', "").replace('+', ' '))
+            }
+            return null
+        }
+
+        /**
+         * M5: the authorize URL the browser may open: https, or http only to a loopback host (a
+         * debug deployment on this machine); at most 2048 characters. Null for anything else.
+         */
+        fun authorizeUrl(raw: String): String? {
+            val url = ExternalUrl.parse(raw) ?: return null
+            val origin = NavUrl.parse(url)?.origin ?: return null
+            return when (origin.scheme) {
+                "https" -> url
+                "http" -> if (origin.host in LOOPBACK) url else null
+                else -> null
+            }
+        }
+
+        private val LOOPBACK = setOf("127.0.0.1", "localhost", "[::1]")
+
         /** `<scheme>://auth/callback` (a trailing slash, query or fragment allowed), scheme case-free. */
         fun isCallback(url: String, scheme: String): Boolean {
             val prefix = "${scheme.lowercase(Locale.ROOT)}://auth/callback"
@@ -95,7 +130,7 @@ object AuthSession {
      */
     fun start(activity: Activity, url: String, scheme: String, resolve: (AuthAnswer) -> Unit) {
         this.scheme = scheme
-        val handle = attempts.begin(resolve)
+        val handle = attempts.begin(AuthAttempts.queryValue(url, "state") ?: "", resolve)
         try {
             CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(activity, Uri.parse(url))
         } catch (_: Exception) {

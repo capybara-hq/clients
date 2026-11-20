@@ -439,6 +439,14 @@ extension ProfileWebView {
     /// The content rule list identifier of a profile (one list per profile, replaced on change).
     static func blockRulesIdentifier(_ profileId: String) -> String { "capybara-sign-in-\(profileId)" }
 
+    /// M9: deletes a removed profile's compiled rule list from the store.
+    static func removeBlockRules(_ profileId: String, store: WKContentRuleListStore = .default(),
+                                 done: @escaping (Error?) -> Void) {
+        store.removeContentRuleList(forIdentifier: blockRulesIdentifier(profileId)) { error in
+            DispatchQueue.main.async { done(error) }
+        }
+    }
+
     /// Compiles `json` (`blockRulesFor(base)` from the runtime) and adds it to this WebView. A list
     /// already installed with the same text is kept. `done(nil)` once it is in force.
     func installBlockRules(_ json: String, store: WKContentRuleListStore = .default(),
@@ -471,11 +479,12 @@ extension ProfileWebView {
         if currentProfileOrigin != nil { reload() } else { loadBase() }
     }
 
-    /// The code exchange (decision 6): POSTs `body` to `url` from the top document in the
+    /// The code exchange (decision 6), or with a nil `body` the logout of an unwanted session:
+    /// POSTs `body` to `url` from the top document in the
     /// `.defaultClient` world. Refused unless the top document and `url` are on the profile
     /// origin; the script checks the origin again. `done` gets `{ ok, status, hasAccount }` once:
     /// the script's answer, a refusal or the total deadline (`ExchangeScript.deadline`).
-    func exchange(url target: String, body: String, done: @escaping ([String: Any]) -> Void) {
+    func exchange(url target: String, body: String?, done: @escaping ([String: Any]) -> Void) {
         let failed: [String: Any] = ["ok": false, "status": 0, "hasAccount": false]
         guard currentProfileOrigin != nil, NavURL(target)?.origin == profileOrigin else { return done(failed) }
         var finished = false
@@ -486,7 +495,7 @@ extension ProfileWebView {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + ExchangeScript.deadline) { finish(failed) }
         callAsyncJavaScript(ExchangeScript.source,
-                            arguments: ["url": target, "body": body, "origin": profileOrigin.serialized],
+                            arguments: ["url": target, "body": body ?? NSNull(), "origin": profileOrigin.serialized],
                             in: nil, in: .defaultClient) { result in
             switch result {
             case .success(let value):
@@ -509,12 +518,14 @@ enum ExchangeScript {
     if (location.origin !== origin) return { ok: false, status: 0, hasAccount: false };
     const init = {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
-      body,
+      headers: body === null
+        ? { "X-Capybara-Csrf": "1" }
+        : { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
       credentials: "include",
       redirect: "error",
       cache: "no-store",
     };
+    if (body !== null) init.body = body;
     if (typeof AbortSignal.timeout === "function") init.signal = AbortSignal.timeout(30000);
     let res;
     try {

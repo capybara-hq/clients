@@ -103,13 +103,22 @@ class SignInServer : AutoCloseable {
         // The WebView asks for the page's icon on its own: not a request the test makes.
         if (!isMark && target != "/favicon.ico") synchronized(lock) { log.add(request) }
         val (type, extra, text) = when {
+            target == "/patched" ->
+                // A page script patches fetch: it must never see the exchange (fix I1).
+                Triple(
+                    "text/html",
+                    "",
+                    "<!doctype html><script>window.fetch = function () { window.stolen = true; " +
+                        "return Promise.reject(new Error('patched')); };</script><p>page</p>",
+                )
             target == "/api/v1/app-auth/token" ->
                 Triple("application/json", "Set-Cookie: cap_at=session-1; Path=/; HttpOnly\r\n", "{\"account\":{\"displayName\":\"A\"}}")
             else -> Triple("text/html", "", "<!doctype html><p>page</p>")
         }
         val bytes = text.toByteArray()
+        val status = "200 OK"
         client.getOutputStream().write(
-            ("HTTP/1.1 200 OK\r\nContent-Type: $type\r\n${extra}Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray() + bytes,
+            ("HTTP/1.1 $status\r\nContent-Type: $type\r\n${extra}Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray() + bytes,
         )
         client.getOutputStream().flush()
         if (isMark) mark(target.removePrefix("/mark?")).countDown()
@@ -120,14 +129,21 @@ class SignInServer : AutoCloseable {
 class SignInBlockPageTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    private fun withView(base: String, profile: String, block: (SignInServer, ActivityScenario<MainActivity>, ProfileWebView) -> Unit) {
+    private fun withView(
+        base: String,
+        profile: String,
+        page: String = "/start",
+        block: (SignInServer, ActivityScenario<MainActivity>, ProfileWebView) -> Unit,
+    ) {
         SignInServer().use { server ->
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val finished = LinkedBlockingQueue<String>()
+                val hello = LinkedBlockingQueue<String>()
                 var view: ProfileWebView? = null
                 scenario.onActivity { activity ->
                     val script = ProfileWebView.bundledScript(activity) ?: error("no shell script")
-                    val state = JSONObject().put("insets", JSONObject()).put("capabilities", JSONObject()).put("events", JSONObject())
+                    val insets = JSONObject().put("top", 0).put("right", 0).put("bottom", 0).put("left", 0)
+                    val state = JSONObject().put("insets", insets).put("capabilities", JSONObject()).put("events", JSONObject())
                     val result = ProfileWebView.create(
                         activity, "sign-in", server.origin, profile, "0.0.0-test", state, script,
                         base = "${server.origin}$base",
@@ -135,12 +151,14 @@ class SignInBlockPageTest {
                     val v = (result as? ProfileWebView.Result.Ready)?.view ?: error("not created: $result")
                     v.monitor = ProfileWebView.Monitor { _, e ->
                         if (e["event"] == "load") finished.add(e["detail"].toString())
+                        if (e["event"] == "accept" && e["kind"] == "hello") hello.add("hello")
                     }
                     activity.addContentView(v, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                    v.loadUrl("${server.origin}/start")
+                    v.loadUrl("${server.origin}$page")
                     view = v
                 }
                 assertNotNull("start page never loaded", finished.poll(60, TimeUnit.SECONDS))
+                assertNotNull("the shell script never said hello", hello.poll(60, TimeUnit.SECONDS))
                 try {
                     block(server, scenario, view!!)
                 } finally {
@@ -193,7 +211,7 @@ class SignInBlockPageTest {
         var origin: String? = null
         scenario.onActivity {
             origin = view.currentProfileOrigin()
-            view.exchange("${server.origin}/api/v1/app-auth/token", body) { result.add(it) }
+            view.post("${server.origin}/api/v1/app-auth/token", body) { result.add(it) }
         }
         assertEquals(server.origin, origin)
         val r = result.poll(40, TimeUnit.SECONDS)
@@ -219,10 +237,75 @@ class SignInBlockPageTest {
     fun noExchangeToAnotherOrigin() = withView("", "sign-in-exchange-other") { server, scenario, view ->
         server.clear()
         val result = LinkedBlockingQueue<JSONObject>()
-        scenario.onActivity { view.exchange("http://localhost:${server.port}/api/v1/app-auth/token", "{}") { result.add(it) } }
+        scenario.onActivity { view.post("http://localhost:${server.port}/api/v1/app-auth/token", "{}") { result.add(it) } }
         val r = result.poll(10, TimeUnit.SECONDS)
         assertNotNull(r)
         assertFalse(r!!.getBoolean("ok"))
         assertTrue(server.requests().isEmpty())
+    }
+
+    /** Evaluates `js` in the page and returns its JSON result. */
+    private fun eval(scenario: ActivityScenario<MainActivity>, view: ProfileWebView, js: String): String {
+        val out = LinkedBlockingQueue<String>()
+        scenario.onActivity { view.evaluateJavascript(js) { out.add(it ?: "null") } }
+        return out.poll(30, TimeUnit.SECONDS) ?: "timeout"
+    }
+
+    @Test
+    fun aPageThatPatchedFetchNeverSeesTheExchange() = withView("", "sign-in-patched", "/patched") { server, scenario, view ->
+        // The script took the port off window before the page ran: the page cannot listen on it.
+        assertEquals("\"undefined\"", eval(scenario, view, "typeof window.capybaraShellPort"))
+        val result = LinkedBlockingQueue<JSONObject>()
+        val body = "{\"code\":\"cap_ac_secret\",\"codeVerifier\":\"verifier-secret\",\"redirectUri\":\"capybara://auth/callback\"}"
+        scenario.onActivity { view.post("${server.origin}/api/v1/app-auth/token", body) { result.add(it) } }
+        val r = result.poll(40, TimeUnit.SECONDS)
+        assertNotNull(r)
+        assertTrue("$r", r!!.getBoolean("ok") && r.getBoolean("hasAccount"))
+        assertEquals(body, server.requests().first { it.method == "POST" }.body)
+        assertEquals("false", eval(scenario, view, "window.stolen === true"))
+        // Control (M6): the patch is live, so the page's own fetch would have shown the secrets.
+        eval(scenario, view, "fetch('/x').catch(function () {}); 1")
+        assertEquals("true", eval(scenario, view, "window.stolen === true"))
+    }
+
+    @Test
+    fun aRefusedPostCannotBeForgedByThePage() = withView("", "sign-in-forged", "/start") { _, scenario, view ->
+        // No port on window: a page has no way to post a result (or anything) to native.
+        assertEquals("false", eval(scenario, view, "\"capybaraShellPort\" in window"))
+    }
+
+    @Test
+    fun controlAPlainWebViewWithoutTheGuardLetsTheLoginThrough() {
+        // M6: the block test's harness can see a login request when nothing blocks it.
+        SignInServer().use { server ->
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val loaded = LinkedBlockingQueue<String>()
+                var plain: android.webkit.WebView? = null
+                scenario.onActivity { activity ->
+                    val w = android.webkit.WebView(activity)
+                    w.settings.javaScriptEnabled = true
+                    w.webViewClient = object : android.webkit.WebViewClient() {
+                        override fun onPageFinished(view: android.webkit.WebView, url: String?) {
+                            loaded.add(url ?: "")
+                        }
+                    }
+                    activity.addContentView(w, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    w.loadUrl("${server.origin}/start")
+                    plain = w
+                }
+                assertNotNull(loaded.poll(60, TimeUnit.SECONDS))
+                server.clear()
+                scenario.onActivity {
+                    plain?.evaluateJavascript(
+                        "fetch('/api/v1/auth/login', { method: 'POST', mode: 'no-cors' }).catch(function () {})" +
+                            ".then(function () { return fetch('/mark?plain'); });",
+                        null,
+                    )
+                }
+                assertTrue(server.awaitMark("plain"))
+                assertTrue(server.requests().any { it.method == "POST" && it.target == "/api/v1/auth/login" })
+                scenario.onActivity { plain?.destroy() }
+            }
+        }
     }
 }

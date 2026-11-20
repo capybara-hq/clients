@@ -19,7 +19,8 @@
 //
 // Sign-in (Task 17): every request of the WebView and of its profile's service workers meets
 // `SignInGuard` in `shouldInterceptRequest` (the in-WebView sign-in routes answer 403); the code
-// exchange runs `ExchangeScript` in the top document, only while it is on the profile origin.
+// exchange runs in the top document's injected script (its own `fetch`), only while it is on the
+// profile origin (`post`).
 //
 // R9: without DOCUMENT_START_SCRIPT and WEB_MESSAGE_LISTENER (and MULTI_PROFILE for a named
 // profile; a WebView without it runs the single store, Decision 9) no profile WebView is made and
@@ -227,6 +228,9 @@ class ProfileWebView private constructor(
     companion object {
         private const val TAG = "CapybaraGate"
 
+        /** A sign-in post's total deadline, a little past the script's 30 s `AbortSignal.timeout`. */
+        const val POST_DEADLINE_MS: Long = 31_000
+
         /** An unanswered call ends after this long with `failed` (it ends sooner with its document). */
         const val DEFAULT_PENDING_LIFETIME_MS: Long = 600_000
         const val DEFAULT_PROFILE = "Default"
@@ -381,6 +385,13 @@ class ProfileWebView private constructor(
                 report(mapOf("event" to "accept", "kind" to "open", "origin" to origin.serialized))
                 route(post.url, isMainFrame = true, targetBlank = true)
             }
+            is ShellPost.PostResult -> {
+                // Only the injected script holds the port: the answer of a post sent to this document.
+                if (post.docId != currentDocId) return
+                posts[post.id]?.invoke(
+                    JSONObject().put("ok", post.ok).put("status", post.status).put("hasAccount", post.ok && post.hasAccount),
+                )
+            }
             is ShellPost.Hello -> {
                 report(mapOf("event" to "accept", "kind" to "hello", "origin" to origin.serialized))
                 if (post.docId != currentDocId) endDocument()
@@ -418,6 +429,7 @@ class ProfileWebView private constructor(
      */
     private fun endDocument() {
         pending.failAll()
+        failPosts()
         current = null
         val ended = currentDocId ?: return
         currentDocId = null
@@ -427,6 +439,7 @@ class ProfileWebView private constructor(
     /** No expiry callback outlives the WebView (each would retain it for up to the lifetime). */
     override fun destroy() {
         pending.clear()
+        failPosts()
         current = null
         currentDocId = null
         onSheet = null
@@ -446,42 +459,54 @@ class ProfileWebView private constructor(
         if (currentProfileOrigin() != null) reload() else loadBase()
     }
 
+    /** Sign-in posts sent to the current document and not answered yet: id -> its callback. */
+    private val posts = HashMap<String, (JSONObject) -> Unit>()
+
     /**
-     * The code exchange (decision 6): `ExchangeScript` POSTs `body` to `url` from the top document,
-     * so the session cookie lands in this WebView's profile store only. Refused unless the top
-     * document and `url` are on the profile origin; the script checks the origin again in the
-     * page. `done` gets `{ ok, status, hasAccount }` once: the script's answer, a refusal, the
-     * document going away, or the deadline ([ExchangeScript.DEADLINE_MS], a total one).
+     * A sign-in POST from the top document (Task 17 fix I1): the code exchange (`body` set) or the
+     * logout of an unwanted session (`body` null). It goes as a `post` push to the document that
+     * said hello, whose injected script took the port off `window` at document start and runs the
+     * request with the `fetch` it captured then, so a page script that patched `fetch` never sees
+     * the code or the verifier. Refused unless the top document and `url` are on the profile
+     * origin and the port is gone from the page (`"capybaraShellPort" in window` is false). `done`
+     * gets `{ ok, status, hasAccount }` once: the script's answer, a refusal, the document ending,
+     * or the total deadline ([POST_DEADLINE_MS]).
      */
-    fun exchange(url: String, body: String, done: (JSONObject) -> Unit) {
-        val failed = { status: Int -> JSONObject().put("ok", false).put("status", status).put("hasAccount", false) }
-        if (currentProfileOrigin() == null || NavUrl.parse(url)?.origin != profileOrigin) {
-            done(failed(0))
+    fun post(url: String, body: String?, done: (JSONObject) -> Unit) {
+        val failed = { JSONObject().put("ok", false).put("status", 0).put("hasAccount", false) }
+        if (currentProfileOrigin() == null || NavUrl.parse(url)?.origin != profileOrigin || current == null) {
+            done(failed())
             return
         }
-        val key = ExchangeScript.newKey()
         val generation = documentGeneration
-        val deadline = System.currentTimeMillis() + ExchangeScript.DEADLINE_MS
-        var finished = false
-        val finish = { result: JSONObject ->
-            if (!finished) {
-                finished = true
-                done(result)
+        evaluateJavascript("\"${ShellMessageListener.PORT_NAME}\" in window") { exposed ->
+            val proxy = current
+            if (exposed != "false" || proxy == null || generation != documentGeneration) {
+                report(mapOf("event" to "post-refused", "exposed" to exposed))
+                return@evaluateJavascript done(failed())
             }
-        }
-        lateinit var poll: Runnable
-        poll = Runnable {
-            if (finished) return@Runnable
-            if (gone || generation != documentGeneration) return@Runnable finish(failed(0))
-            if (System.currentTimeMillis() >= deadline) return@Runnable finish(failed(0))
-            evaluateJavascript(ExchangeScript.take(key)) { raw ->
-                val result = ExchangeScript.parse(raw)
-                if (result != null) finish(result) else main.postDelayed(poll, ExchangeScript.POLL_MS)
+            val id = java.util.UUID.randomUUID().toString()
+            var finished = false
+            val finish = { result: JSONObject ->
+                if (!finished) {
+                    finished = true
+                    posts.remove(id)
+                    done(result)
+                }
             }
+            posts[id] = finish
+            main.postDelayed({ finish(failed()) }, POST_DEADLINE_MS)
+            proxy.postMessage(
+                JSONObject().put("type", "post").put("id", id).put("url", url)
+                    .put("body", body ?: JSONObject.NULL).toString(),
+            )
         }
-        evaluateJavascript(ExchangeScript.source(url, body, profileOrigin.serialized, key)) {
-            main.postDelayed(poll, ExchangeScript.POLL_MS)
-        }
+    }
+
+    /** Every unanswered sign-in post fails (its document ended or the WebView went away). */
+    private fun failPosts() {
+        for (finish in posts.values.toList()) finish(JSONObject().put("ok", false).put("status", 0).put("hasAccount", false))
+        posts.clear()
     }
 
     // ---- Navigation and loading ----
@@ -640,77 +665,4 @@ class ProfileWebView private constructor(
 class SignInServiceWorkerClient(private val base: String) : ServiceWorkerClient() {
     override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
         SignInGuard.intercept(request.method, request.url.toString(), base, SignInGuard::forbidden)
-}
-
-/**
- * The code exchange, run in the profile's top document with `evaluateJavascript` (decision 6: the
- * page world, the same trust as the page). The script is a fixed string; the only value spliced in
- * is one JSON argument object. Its answer is left under a random key on `window` and read back by
- * [take] (evaluateJavascript cannot await a promise); it holds only `{ ok, status, hasAccount }`.
- */
-object ExchangeScript {
-    /** The total deadline, a little past the script's own 30 s `AbortSignal.timeout`. */
-    const val DEADLINE_MS: Long = 31_000
-    const val POLL_MS: Long = 100
-
-    internal const val PREFIX = """(function (a) {
-  "use strict";
-  var put = function (r) {
-    try {
-      Object.defineProperty(window, a.key, { value: JSON.stringify(r), configurable: true });
-    } catch (e) {}
-  };
-  var failed = { ok: false, status: 0, hasAccount: false };
-  if (location.origin !== a.origin) return put(failed);
-  var init = {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
-    body: a.body,
-    credentials: "include",
-    redirect: "error",
-    cache: "no-store"
-  };
-  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-    init.signal = AbortSignal.timeout(30000);
-  }
-  fetch(a.url, init).then(function (res) {
-    if (!res.ok) return put({ ok: false, status: res.status, hasAccount: false });
-    return res.json().then(function (data) {
-      var account = data !== null && typeof data === "object" ? data.account : null;
-      put({ ok: true, status: res.status, hasAccount: account !== null && typeof account === "object" });
-    }, function () {
-      put({ ok: true, status: res.status, hasAccount: false });
-    });
-  }).catch(function () { put(failed); });
-})("""
-
-    fun newKey(): String = "__capybaraExchange_" + java.util.UUID.randomUUID().toString().replace("-", "")
-
-    /** The script with its one JSON argument object. */
-    fun source(url: String, body: String, origin: String, key: String): String {
-        val args = JSONObject().put("url", url).put("body", body).put("origin", origin).put("key", key)
-        return PREFIX + args.toString() + ");"
-    }
-
-    /** Reads and removes the answer under `key`: a JSON string, or null while it is not there. */
-    fun take(key: String): String {
-        val k = JSONObject.quote(key)
-        return "(function (k) { var v = window[k]; if (v === undefined) return null; " +
-            "try { delete window[k]; } catch (e) {} return v; })($k);"
-    }
-
-    /** `evaluateJavascript`'s result of [take]: the answer, or null when there is none yet. */
-    fun parse(raw: String?): JSONObject? {
-        if (raw == null || raw == "null") return null
-        return try {
-            val text = JSONArray("[$raw]").getString(0)
-            val r = JSONObject(text)
-            JSONObject()
-                .put("ok", r.optBoolean("ok", false))
-                .put("status", r.optInt("status", 0))
-                .put("hasAccount", r.optBoolean("hasAccount", false))
-        } catch (_: Exception) {
-            null
-        }
-    }
 }

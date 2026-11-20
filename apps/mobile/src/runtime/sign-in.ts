@@ -21,6 +21,8 @@ export const SIGN_IN_KEY = SHELL_CAPABILITY_KEYS.signIn;
 
 /** The token exchange route under the deployment's base. */
 export const TOKEN_PATH = "/api/v1/app-auth/token";
+/** The kernel's logout route under the base: ends a session the app did not want. */
+export const LOGOUT_PATH = "/api/v1/auth/logout";
 
 /** The fields of a stored profile sign-in reads (Task 14's `Profile` has them). */
 export interface SignInProfile extends ProfileRef {
@@ -45,6 +47,11 @@ export interface SignInDeps<P extends SignInProfile = SignInProfile> {
   /** The profile WebView's top-level origin now; null when it has none. */
   currentOrigin(profileId: string): Promise<string | null>;
   reload(profileId: string): Promise<void>;
+  /**
+   * POSTs a logout to `url` from the profile's top document, the same path as `exchange`: ends a
+   * session the app did not want (a 2xx exchange answer without an account, as the desktop does).
+   */
+  revoke(profileId: string, req: { url: string }): Promise<void>;
   /** Shown on the consent page and in the session's user agent (`Capybara Mobile/<v> (<name>)`). */
   deviceName: string;
   appVersion: string;
@@ -197,7 +204,13 @@ export function createSignIn<P extends SignInProfile>(deps: SignInDeps<P>): Sign
       return "failed";
     }
     if (!result.hasAccount) {
+      // A 2xx may have set the session cookie: end that session before reporting the failure.
       log("sign-in exchange answered without an account");
+      try {
+        await deps.revoke(profileId, { url: `${base}${LOGOUT_PATH}` });
+      } catch {
+        log("sign-in revoke failed");
+      }
       return "failed";
     }
     try {
@@ -277,6 +290,8 @@ export interface SignInNative {
   signInExchange(options: { profileId: string; url: string; body: string }): Promise<unknown>;
   currentOrigin(options: { profileId: string }): Promise<unknown>;
   reload(options: { profileId: string }): Promise<void>;
+  /** The logout POST from the profile's top document (same path as the exchange). */
+  signInRevoke(options: { profileId: string; url: string }): Promise<unknown>;
   /** The device's name and the app's marketing version. */
   appInfo(): Promise<unknown>;
 }
@@ -288,7 +303,7 @@ function record(v: unknown): Record<string, unknown> {
 /** The ports `createSignIn` takes, over the plugin; a malformed answer is a failure. */
 export function signInPortsFrom(
   native: SignInNative,
-): Pick<SignInDeps, "auth" | "exchange" | "currentOrigin" | "reload"> {
+): Pick<SignInDeps, "auth" | "exchange" | "currentOrigin" | "reload" | "revoke"> {
   return {
     auth: {
       async start(url, scheme) {
@@ -311,6 +326,9 @@ export function signInPortsFrom(
       return typeof origin === "string" ? origin : null;
     },
     reload: (profileId) => native.reload({ profileId }),
+    async revoke(profileId, req) {
+      await native.signInRevoke({ profileId, ...req });
+    },
   };
 }
 
