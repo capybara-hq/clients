@@ -85,6 +85,21 @@ final class LoaderTests: XCTestCase {
             (web.links["Blank link"], "\(server.originB)/foreign.html?via=blank"),
             (web.links["Redirect link"], "\(server.originB)/redirected.html"),
         ]
+        tapEachToTheSheet(app, server, cases)
+
+        let log = server.snapshot().nativeLog
+        let commits = log.filter { $0["event"] as? String == "commit" }.compactMap { $0["url"] as? String }
+        XCTAssertFalse(commits.isEmpty)
+        XCTAssertEqual(commits.filter { !$0.hasPrefix(server.originA) }, [], "a foreign page committed in the profile WebView")
+        let allowedForeign = log.filter {
+            $0["event"] as? String == "navigation" && $0["decision"] as? String == "allow"
+                && ($0["url"] as? String ?? "").hasPrefix(server.originB)
+        }
+        XCTAssertEqual(allowedForeign.count, 0, "\(allowedForeign)")
+        XCTAssertTrue(server.requestLog().contains { $0.hasSuffix(" /redirect") })
+    }
+    /// Taps each element; each must open the browser sheet with its URL, which is then closed.
+    private func tapEachToTheSheet(_ app: XCUIApplication, _ server: HostileServer, _ cases: [(XCUIElement, String)]) {
         for (element, url) in cases {
             XCTAssertTrue(element.waitForExistence(timeout: 30), url)
             element.tap()
@@ -99,15 +114,30 @@ final class LoaderTests: XCTestCase {
             wait(for: [gone], timeout: 30)
         }
 
-        let log = server.snapshot().nativeLog
-        let commits = log.filter { $0["event"] as? String == "commit" }.compactMap { $0["url"] as? String }
-        XCTAssertFalse(commits.isEmpty)
-        XCTAssertEqual(commits.filter { !$0.hasPrefix(server.originA) }, [], "a foreign page committed in the profile WebView")
-        let allowedForeign = log.filter {
-            $0["event"] as? String == "navigation" && $0["decision"] as? String == "allow"
-                && ($0["url"] as? String ?? "").hasPrefix(server.originB)
-        }
-        XCTAssertEqual(allowedForeign.count, 0, "\(allowedForeign)")
-        XCTAssertTrue(server.requestLog().contains { $0.hasSuffix(" /redirect") })
+    }
+
+    func testEveryNewWindowGoesToTheSheetWhateverItsOrigin() throws {
+        let server = try HostileServer(pagesDir: pagesDir)
+        let app = launch(server, page: "popups.html")
+        defer { app.terminate() }
+
+        let ready = expectation(description: "popups page ready")
+        server.onReport(doc: "popups-ready") { ready.fulfill() }
+        wait(for: [ready], timeout: 120)
+        let web = app.webViews.firstMatch
+        let oauth = web.links["OAuth link"]
+        XCTAssertTrue(oauth.waitForExistence(timeout: 30))
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: oauth)
+        wait(for: [hittable], timeout: 30)
+        let a = server.originA, b = server.originB
+        tapEachToTheSheet(app, server, [
+            // An OAuth-shaped target=_blank link must never leave in place (fix round 1, I1).
+            (oauth, "\(b)/foreign.html?via=oauth&response_type=code&client_id=c&state=s&redirect_uri=\(a)%2Fcb"),
+            (web.links["Same-origin link"], "\(a)/foreign.html?via=same-blank"),
+            (web.buttons["Same-origin window"], "\(a)/foreign.html?via=same-open"),
+        ])
+        let commits = server.snapshot().nativeLog.filter { $0["event"] as? String == "commit" }
+            .compactMap { $0["url"] as? String }
+        XCTAssertEqual(commits.filter { !$0.hasSuffix("/popups.html") }, [], "a new window loaded in the profile WebView")
     }
 }

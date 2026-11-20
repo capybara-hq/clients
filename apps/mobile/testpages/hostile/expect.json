@@ -4,7 +4,7 @@
   "popupChild": "A-popup-child",
   "popupResults": {
     "ios": ["null"],
-    "android": ["null", "same-window"]
+    "android": ["null"]
   },
   "sequenceEnd": "sequence-done",
   "hostile": {

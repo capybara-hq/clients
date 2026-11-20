@@ -20,6 +20,9 @@ import java.lang.ref.WeakReference
 sealed class ShellPost {
     data class Hello(val docId: String) : ShellPost()
 
+    /** `window.open(url)` in the profile document (wrapped by the Android script): to the sheet. */
+    data class Open(val docId: String, val url: String) : ShellPost()
+
     data class Call(
         val docId: String,
         val callId: String,
@@ -31,6 +34,8 @@ sealed class ShellPost {
 
     companion object {
         const val MAX_CHARS = 65536
+        const val MAX_URL = 4096
+        private val OPEN_URL = Regex("^https?://", RegexOption.IGNORE_CASE)
         private val DOC_ID = Regex("^[A-Za-z0-9-]{8,64}$")
         private val CALL_ID = Regex("^[A-Za-z0-9:_.-]{1,128}$")
         private val KEY = Regex("^[A-Za-z][A-Za-z0-9]{0,63}@[0-9]{1,4}$")
@@ -42,6 +47,11 @@ sealed class ShellPost {
             if (!DOC_ID.matches(docId)) return null
             return when (body["type"]) {
                 "hello" -> Hello(docId)
+                "open" -> {
+                    val url = (body["url"] as? String)?.takeIf { it.length <= MAX_URL && OPEN_URL.containsMatchIn(it) }
+                        ?: return null
+                    Open(docId, url)
+                }
                 "call" -> {
                     val callId = (body["callId"] as? String)?.takeIf { CALL_ID.matches(it) } ?: return null
                     val key = (body["key"] as? String)?.takeIf { KEY.matches(it) } ?: return null

@@ -29,6 +29,7 @@ class NavigationTest {
                 v.getBoolean("isMainFrame"),
                 v.getBoolean("targetBlank"),
                 v.getBoolean("oauthReturnPending"),
+                v.getBoolean("fromProfileOrigin"),
             )
             assertEquals(v.getString("name"), v.getString("expect"), got.wire)
         }
@@ -50,7 +51,7 @@ class NavigationTest {
     @Test
     fun thePendingOauthReturn() {
         val profile = Origin.parse("https://cap.example.com")!!
-        val authorize = "https://idp.example/a?response_type=code&redirect_uri=https%3A%2F%2Fcap.example.com%2Fcb"
+        val authorize = "https://idp.example/a?response_type=code&client_id=c&state=s&redirect_uri=https%3A%2F%2Fcap.example.com%2Fcb"
         assertTrue(NavigationPolicy.isAuthorizationUrl(authorize, profile))
         val started = OauthReturn.next(null, authorize, NavigationDecision.ALLOW, profile, 1000)
         assertEquals(OauthReturn(1000), started)

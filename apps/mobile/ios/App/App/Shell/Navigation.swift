@@ -175,13 +175,15 @@ enum NavigationPolicy {
 
     static func isAuthorizationUrl(_ url: String, profileOrigin: Origin) -> Bool {
         guard let u = NavURL(url), u.isHttp, u.queryValue("response_type") != nil,
+              u.queryValue("client_id") != nil, u.queryValue("state") != nil,
               let back = u.queryValue("redirect_uri").flatMap(NavURL.init), back.isHttp
         else { return false }
         return back.origin == profileOrigin
     }
 
     static func decide(url: String, profileOrigin: String, base: String, isMainFrame: Bool,
-                       targetBlank: Bool, oauthReturnPending: Bool) -> NavigationDecision {
+                       targetBlank: Bool, oauthReturnPending: Bool,
+                       fromProfileOrigin: Bool) -> NavigationDecision {
         guard let u = NavURL(url), let profile = Origin(string: profileOrigin) else { return .block }
         if u.isHttp, u.origin == profile, SignInGuard.isInWindowSignIn(method: "POST", url: url, base: base) {
             return .block
@@ -190,7 +192,9 @@ enum NavigationPolicy {
         if !isMainFrame { return frameSchemes.contains(u.scheme) ? .allow : .block }
         guard u.isHttp, let origin = u.origin else { return .block }
         if origin == profile { return .allow }
-        if oauthReturnPending || isAuthorizationUrl(url, profileOrigin: profile) { return .allow }
+        if oauthReturnPending { return .allow }
+        // Only a page on the profile origin may start a leave-and-return (never a foreign one).
+        if fromProfileOrigin, isAuthorizationUrl(url, profileOrigin: profile) { return .allow }
         return .sheet
     }
 }

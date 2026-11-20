@@ -22,7 +22,8 @@ final class NavigationTests: XCTestCase {
                 url: v["url"] as? String ?? "", profileOrigin: profile["origin"] ?? "",
                 base: profile["base"] ?? "", isMainFrame: v["isMainFrame"] as? Bool ?? false,
                 targetBlank: v["targetBlank"] as? Bool ?? false,
-                oauthReturnPending: v["oauthReturnPending"] as? Bool ?? false)
+                oauthReturnPending: v["oauthReturnPending"] as? Bool ?? false,
+                fromProfileOrigin: v["fromProfileOrigin"] as? Bool ?? false)
             XCTAssertEqual(got.rawValue, v["expect"] as? String, v["name"] as? String ?? "?")
         }
     }
@@ -42,7 +43,7 @@ final class NavigationTests: XCTestCase {
     func testThePendingOauthReturn() throws {
         let profile = try XCTUnwrap(Origin(string: "https://cap.example.com"))
         let t0 = Date(timeIntervalSince1970: 1000)
-        let authorize = "https://idp.example/a?response_type=code&redirect_uri=https%3A%2F%2Fcap.example.com%2Fcb"
+        let authorize = "https://idp.example/a?response_type=code&client_id=c&state=s&redirect_uri=https%3A%2F%2Fcap.example.com%2Fcb"
         XCTAssertTrue(NavigationPolicy.isAuthorizationUrl(authorize, profileOrigin: profile))
         let started = OauthReturn.next(nil, url: authorize, decision: .allow, profileOrigin: profile, now: t0)
         XCTAssertEqual(started, OauthReturn(since: t0))

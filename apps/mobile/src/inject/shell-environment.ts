@@ -45,6 +45,8 @@ export interface NativeTransport {
   onRestart?(listener: () => void): void;
   /** The document came back from the back/forward cache: the restart budget starts again. */
   restored?(): void;
+  /** Android: a new window's URL for the browser sheet (the wrapped `window.open`). */
+  open?(post: Extract<PagePost, { type: "open" }>): void;
 }
 
 export interface InjectDeps {
@@ -65,6 +67,8 @@ export interface InjectDeps {
    * `persisted`). Optional: tests and old hosts omit it.
    */
   onRestore?(listener: () => void): void;
+  /** The document's URL at call time, to resolve a relative `window.open` URL. */
+  baseUrl?(): string;
 }
 
 function isDescriptors(v: unknown): v is CapabilityDescriptors {
@@ -159,6 +163,30 @@ export function bootShellEnvironment(deps: InjectDeps): boolean {
   };
 
   installShellEnvironment({ ...init, kind: "mobile" }, bridge, deps.target);
+  const open = transport.open;
+  if (init.platform === "android" && open) {
+    // R14 on Android: multiple windows are on so links reach onCreateWindow, but a script's
+    // window.open carries no URL there. Here it posts the URL (resolved against the document) to
+    // native, which sends it to the browser sheet; nothing ever opens or navigates in place.
+    const resolve = (url: unknown): string | null => {
+      try {
+        const u = new URL(String(url ?? ""), deps.baseUrl?.() || init.origin);
+        return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+      } catch {
+        return null;
+      }
+    };
+    Object.defineProperty(deps.target, "open", {
+      value: (url?: unknown) => {
+        // An empty or non-http(s) URL opens nothing (the policy would block it anyway).
+        const href = url === undefined || url === "" ? null : resolve(url);
+        if (href) open({ type: "open", docId, url: href });
+        return null;
+      },
+      writable: false,
+      configurable: false,
+    });
+  }
   transport.hello(docId);
   // A restored page or a lost push channel gets a fresh hello, still through native's gate: a
   // document that is not the profile's gated main frame stays rejected.
@@ -293,6 +321,9 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
     hello(docId) {
       post(stringify({ type: "hello", docId }));
     },
+    open(message) {
+      post(stringify(message));
+    },
     onPush(listener) {
       receiver = listener;
     },
@@ -325,6 +356,7 @@ function main(): void {
         ? activationGetter.call(activationObject) === true
         : false,
     transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win),
+    baseUrl: () => String((win.location as { href?: unknown } | undefined)?.href ?? ""),
     onRestore: (listener) => {
       const target = win as unknown as {
         addEventListener(type: "pageshow", fn: (event: { persisted?: boolean }) => void): void;

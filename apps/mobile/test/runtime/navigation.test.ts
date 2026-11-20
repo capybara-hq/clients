@@ -16,6 +16,7 @@ const ctx = (over: Partial<NavigationContext> = {}): NavigationContext => ({
   isMainFrame: true,
   targetBlank: false,
   oauthReturnPending: false,
+  fromProfileOrigin: true,
   ...over,
 });
 
@@ -30,7 +31,7 @@ describe("decideNavigation", () => {
 
   test("a connector OAuth leave-and-return stays in the WebView (desktop spec §7.1)", () => {
     const authorize =
-      "https://idp.example/authorize?response_type=code&redirect_uri=" +
+      "https://idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=" +
       encodeURIComponent("https://cap.example.com/team/api/v1/oauth/callback");
     expect(decideNavigation(authorize, ctx())).toBe("allow");
     // The provider's own pages until the return, then the profile origin again.
@@ -67,17 +68,21 @@ describe("decideNavigation", () => {
         isMainFrame: v.isMainFrame,
         targetBlank: v.targetBlank,
         oauthReturnPending: v.oauthReturnPending,
+        fromProfileOrigin: v.fromProfileOrigin,
       }),
     ).toBe(v.expect);
   });
 });
 
 describe("isAuthorizationUrl", () => {
-  test("needs response_type and a redirect_uri on exactly the profile origin", () => {
+  test("needs response_type, client_id, state and a redirect_uri on exactly the profile origin", () => {
     const origin = "https://cap.example.com";
-    const ok = "https://idp.example/a?response_type=code&redirect_uri=https://cap.example.com/cb";
+    const ok =
+      "https://idp.example/a?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com/cb";
     expect(isAuthorizationUrl(ok, origin)).toBe(true);
     expect(isAuthorizationUrl(ok.replace("response_type", "x"), origin)).toBe(false);
+    expect(isAuthorizationUrl(ok.replace("client_id=c&", ""), origin)).toBe(false);
+    expect(isAuthorizationUrl(ok.replace("state=s&", ""), origin)).toBe(false);
     expect(isAuthorizationUrl(ok.replace("cap.example.com/cb", "evil.test/cb"), origin)).toBe(
       false,
     );
@@ -89,7 +94,7 @@ describe("isAuthorizationUrl", () => {
 describe("nextOauthReturn (the pending leave-and-return)", () => {
   const p = profile;
   const authorize =
-    "https://idp.example/a?response_type=code&redirect_uri=https://cap.example.com/team/cb";
+    "https://idp.example/a?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com/team/cb";
 
   test("starts when a main-frame navigation leaves the origin, ends back on it", () => {
     const started = nextOauthReturn(null, {

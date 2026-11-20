@@ -513,6 +513,51 @@ describe("the host hop end to end", () => {
   });
 });
 
+describe("window.open on Android (R14: every new window goes to the browser sheet)", () => {
+  test("the profile document's window.open posts the resolved URL and opens nothing", () => {
+    const opened: string[] = [];
+    const transport = Object.assign(fakeTransport(), {
+      open: (post: { type: "open"; docId: string; url: string }) => {
+        expect(post).toMatchObject({ type: "open", docId: "doc-1234-5678" });
+        opened.push(post.url);
+      },
+    });
+    const target: { open?: unknown; capybaraShell?: unknown } = { open: () => "native window" };
+    bootShellEnvironment({
+      init: { ...init, platform: "android" },
+      target,
+      isTopFrame: true,
+      windowOrigin: ORIGIN,
+      randomId: () => "doc-1234-5678",
+      userActivation: () => true,
+      transport,
+      baseUrl: () => "https://a.example/chat/1",
+    });
+    const open = target.open as (url?: unknown) => unknown;
+    expect(open("/files/2")).toBeNull();
+    expect(open("https://b.example/x")).toBeNull();
+    expect(open()).toBeNull();
+    expect(open("javascript:alert(1)")).toBeNull();
+    expect(opened).toEqual(["https://a.example/files/2", "https://b.example/x"]);
+  });
+
+  test("on iOS window.open is left to WebKit (createWebViewWith routes it)", () => {
+    const original = () => "native window";
+    const target: { open?: unknown } = { open: original };
+    const transport = Object.assign(fakeTransport(), { open: vi.fn() });
+    bootShellEnvironment({
+      init,
+      target,
+      isTopFrame: true,
+      windowOrigin: ORIGIN,
+      randomId: () => "doc-1234-5678",
+      userActivation: () => true,
+      transport,
+    });
+    expect(target.open).toBe(original);
+  });
+});
+
 describe("the Android transport", () => {
   function fakePort() {
     const sent: string[] = [];
@@ -532,6 +577,10 @@ describe("the Android transport", () => {
 
   test("is null without the port", () => {
     expect(androidTransport({})).toBeNull();
+    const { win, sent } = fakePort();
+    const post = { type: "open", docId: "doc-1234-5678", url: "https://b.example/x" } as const;
+    androidTransport(win)?.open?.(post);
+    expect(sent.map((m) => JSON.parse(m))).toEqual([post]);
   });
 
   test("a reply resolves its call; a denied drop resolves failed instead of hanging", async () => {
