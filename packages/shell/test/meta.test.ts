@@ -362,7 +362,8 @@ describe("discover", () => {
     });
   });
   test("a stalled server is unreachable after the 10 s timeout", async () => {
-    vi.useFakeTimers();
+    const timer = new AbortController();
+    const spy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
     try {
       const stalled = ((_u: unknown, init?: RequestInit) =>
         new Promise<Response>((_res, rej) => {
@@ -371,10 +372,11 @@ describe("discover", () => {
           );
         })) as typeof fetch;
       const p = discover("x.example", stalled);
-      await vi.advanceTimersByTimeAsync(META_TIMEOUT_MS + 1);
+      timer.abort();
       expect(await p).toEqual({ ok: false, error: "unreachable" });
+      expect(spy).toHaveBeenCalledWith(META_TIMEOUT_MS);
     } finally {
-      vi.useRealTimers();
+      spy.mockRestore();
     }
   });
   test("non-2xx, non-JSON and wrong shape are not_capybara", async () => {
