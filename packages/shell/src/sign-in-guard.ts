@@ -63,35 +63,48 @@ export function isInWindowSignIn(method: string, url: string, base: string): boo
 // quantifiers `* + ?` on a character, a class or a group. No `|`, no `{n}`, no lookarounds, no
 // non-capturing groups, no backreferences. Rules are case-insensitive by default.
 //
-// The engine matches the URL the WebView has parsed: `\` is already `/`, dot segments are
-// resolved, the host is lower case, while percent-escapes and doubled slashes stay as written.
-// What the rules therefore tolerate, in place of `canonicalPath`:
+// The engine matches the URL the WebView has parsed: `\` is already `/`, literal dot segments are
+// resolved, the host is lower case; percent-escapes, doubled slashes and userinfo stay as
+// written. What the rules tolerate, in place of `canonicalPath`:
+//  - userinfo before the host (`user:pass@`);
 //  - a separator is `/`, `%2f` or `%5c`, repeated (`SEP`);
-//  - each letter of a route word is the letter or its `%xx` escape: `[l%]6?c?` (the first digit
-//    and the letter's own hex digit are optional, which also accepts a few look-alikes such as
-//    `l6c`: block when in doubt);
-//  - anything may sit between `v1` and the final word (`..%2f` segments the engine cannot
-//    resolve), but the word before the last separator and after it stay literal.
-// Not reproduced: a double-encoded `%25xx`, which `canonicalPath` does not decode either.
+//  - each letter or digit of a path word (the base path segments and the route) is the character
+//    or its `%xx` escape: `[l%][46]?c?` (the two hex digits are optional, which also accepts a few
+//    look-alikes such as `l6c`: block when in doubt);
+//  - a pop pair `x<SEP>..` with an escaped dot or slash the engine could not resolve (`POP`),
+//    allowed after the host and after every word, nowhere else: the words stay adjacent, so
+//    `/api/v1/auth/refresh/login` is not the login route (as in `isInWindowSignIn`).
+// Deliberate non-goals, on all three platforms: a double-encoded `%25xx` (the server never
+// decodes twice), and an escaped `x` in a pop pair.
 
 const SEP = "([/%]5?c?2?f?)";
 const NOT_QS = "[^?#]";
+const POP = `(${SEP}+[^?#/%]+${SEP}+[.%]2?e?[.%]2?e?)*`;
 
 function escapeLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** `login` -> `[l%]6?c?[o%]6?f?...`: each letter, or `%` and its two hex digits. */
+/** `login` -> `[l%]6?c?[o%]6?f?...`: each letter or digit, or `%` and its two hex digits. */
 function word(text: string): string {
   let out = "";
-  for (const ch of text) {
+  for (const ch of text.toLowerCase()) {
+    if (!/[a-z0-9]/.test(ch)) {
+      out += escapeLiteral(ch);
+      continue;
+    }
     const hex = ch.charCodeAt(0).toString(16);
-    const hi = hex.charAt(0);
-    const lo = hex.charAt(1);
-    // The letter itself, or `%`, then the high digit, then the low digit, each optional.
-    out += `[${ch}%]${hi}?${lo}?`;
+    // The character itself, or `%`, then the high digit, then the low digit, each optional.
+    // An upper-case escape (`%54` for `t`) has the high digit 4 / 5 where the lower case has 6 / 7.
+    const hi = /[a-o]/.test(ch) ? "[46]" : /[p-z]/.test(ch) ? "[57]" : "3";
+    out += `[${ch}%]${hi}?${hex.charAt(1)}?`;
   }
   return out;
+}
+
+/** The path words of the rules: `SEP+ word POP` per segment. */
+function words(segments: string[]): string {
+  return segments.map((seg) => `${SEP}+${word(seg)}${POP}`).join("");
 }
 
 /**
@@ -105,10 +118,10 @@ export function signInBlockRules(
 ): { trigger: { "url-filter": string }; action: { type: "block" } }[] {
   const home = parse(base);
   if (!home || (home.protocol !== "https:" && home.protocol !== "http:")) return [];
-  const prefix = escapeLiteral(home.pathname.replace(/\/+$/, ""));
-  const head = `^${escapeLiteral(`${home.protocol}//${home.host}`)}${prefix}${SEP}+${word("api")}${SEP}+${word("v1")}`;
-  const login = `${head}${NOT_QS}*${word("auth")}${NOT_QS}*${SEP}${word("login")}${SEP}*`;
-  const ssoStart = `${head}${NOT_QS}*${word("auth")}${NOT_QS}*${word("sso")}${SEP}+[^?#/%]${NOT_QS}*${SEP}+${word("start")}${SEP}*`;
+  const prefix = canonicalPath(home.pathname).split("/").filter(Boolean);
+  const head = `^${escapeLiteral(home.protocol)}//([^/@]*@)?${escapeLiteral(home.host)}${POP}${words([...prefix, "api", "v1", "auth"])}`;
+  const login = `${head}${words(["login"])}${SEP}*`;
+  const ssoStart = `${head}${words(["sso"])}${SEP}+[^?#/%]${NOT_QS}*${SEP}+${word("start")}${POP}${SEP}*`;
   // `$` and `[?#]` are the two ends: no alternation, so one rule each.
   return [login, ssoStart].flatMap((filter) =>
     [`${filter}$`, `${filter}[?#]`].map((f) => ({

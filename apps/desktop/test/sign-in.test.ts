@@ -1231,6 +1231,7 @@ describe("no tokens are kept", () => {
       "./profiles.ts",
       "./user-agent.ts",
       "@capybara-hq/shell",
+      "@capybara-hq/shell/pkce-node",
       "node:crypto",
     ]);
     expect(source).not.toMatch(/safeStorage|keytar|localStorage|writeFile/);

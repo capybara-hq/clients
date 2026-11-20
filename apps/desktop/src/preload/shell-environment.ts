@@ -1,7 +1,7 @@
 // The Shell environment in the deployment window (mobile spec §9.1, §9.4). The preload runs in the
 // isolated world of every document the window loads; it asks main for the environment, re-checks
 // the frame and the origin itself, and installs `window.capybaraShell` in the page's world.
-// The subpath, not the package index: the sandboxed preload bundle must not reach `node:crypto`.
+// The subpath keeps the preload bundle to this one module (the installer must stay self-contained).
 import { installShellEnvironment, type ShellBridge } from "@capybara-hq/shell/install-shell";
 import {
   type CapabilityDescriptors,

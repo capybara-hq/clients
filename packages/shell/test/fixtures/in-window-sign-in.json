@@ -383,5 +383,89 @@
     "url": "https://capybara.example.com/api/v1/auth/sso/lark/callback?x=/start",
     "base": "https://capybara.example.com",
     "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/team/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/%74eam/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/%54EAM/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/%63ap/api/v1/auth/login",
+    "base": "https://capybara.example.com/cap",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://capybara.example.com/%63ap/api/v1/auth/sso/lark/start",
+    "base": "https://capybara.example.com/cap",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/%74eam/api/v1/auth/%6cogout",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://u:p@capybara.example.com/team/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://u@capybara.example.com/team/api/v1/auth/sso/lark/start",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://u:p@capybara.example.com/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com@evil.test/team/api/v1/auth/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/team/api/v1/auth/refresh/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "GET",
+    "url": "https://capybara.example.com/team/api/v1/auth/refresh/sso/lark/start",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/team/api/v1/auth/x/login",
+    "base": "https://capybara.example.com/team",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://capybara.example.com/team/api/v1/auth/login/x/..%2f",
+    "base": "https://capybara.example.com/team",
+    "blocked": true
   }
 ]

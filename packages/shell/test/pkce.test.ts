@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
-import { createPkce, createPkceWeb } from "../src/pkce.ts";
+import { createPkceWeb } from "../src/pkce.ts";
+import { createPkce } from "../src/pkce-node.ts";
 
 test("RFC 7636 Appendix B vector", () => {
   const bytes = Buffer.from([

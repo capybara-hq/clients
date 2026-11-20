@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./i18n": "./src/i18n/index.ts",
-    "./install-shell": "./src/install-shell.ts"
+    "./install-shell": "./src/install-shell.ts",
+    "./pkce-node": "./src/pkce-node.ts"
   }
 }
