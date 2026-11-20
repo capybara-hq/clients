@@ -81,15 +81,16 @@ describe("the mobile release workflow", () => {
 
   test("secrets are set only on the steps that need them, never on a job or an action step", () => {
     for (const job of jobs) {
-      for (const value of Object.values(job.env ?? {})) expect(value).not.toMatch(/secrets\./);
+      for (const value of Object.values(job.env ?? {}))
+        expect(String(value)).not.toMatch(/secrets\./);
     }
     for (const step of steps) {
-      const secretEnv = Object.values(step.env ?? {}).some((v) => /secrets\./.test(v));
+      const secretEnv = Object.values(step.env ?? {}).some((v) => /secrets\./.test(String(v)));
       if (step.uses) expect(secretEnv, String(step.uses)).toBe(false);
       if (/pnpm install|cap sync|pnpm .*build/.test(step.run ?? "")) expect(secretEnv).toBe(false);
     }
     const usingSecrets = steps.filter((s) =>
-      Object.values(s.env ?? {}).some((v) => /secrets\./.test(v)),
+      Object.values(s.env ?? {}).some((v) => /secrets\./.test(String(v))),
     );
     expect(usingSecrets.length).toBeGreaterThan(0);
   });
