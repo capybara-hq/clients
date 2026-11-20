@@ -44,7 +44,12 @@ class HostilePageTest {
                     )
                     val ready = result as? ProfileWebView.Result.Ready ?: error("not created: $result")
                     val v = ready.view
-                    v.monitor = ProfileWebView.Monitor { _, event -> server.logNative(event) }
+                    v.monitor = ProfileWebView.Monitor { wv, event ->
+                        server.logNative(event)
+                        // A push while a hostile document is active: it must reach only the
+                        // profile document that said hello (the probe records strays).
+                        if (event["event"] == "drop") wv.pushState(strayState)
+                    }
                     v.sink = sink
                     activity.addContentView(
                         v,
@@ -61,6 +66,7 @@ class HostilePageTest {
                 tapCenter(view!!)
                 assertTrue("sequence never finished: ${server.snapshot()}", server.await(expect.optString("sequenceEnd", "sequence-done"), 120))
 
+                assertTrue("no gesture result: ${server.snapshot()}", server.await("A-popup-gesture", 60))
                 val (reports, nativeLog) = server.snapshot()
                 val evidence = JSONObject().put("reports", org.json.JSONArray(reports)).put("nativeLog", org.json.JSONArray(nativeLog))
                 evidence.toString().chunked(3000).forEachIndexed { i, chunk -> Log.i("HOSTILE-EVIDENCE", "$i $chunk") }
@@ -70,6 +76,10 @@ class HostilePageTest {
             }
         }
     }
+
+    private val strayState = JSONObject()
+        .put("insets", JSONObject().put("top", 0).put("right", 0).put("bottom", 9).put("left", 0))
+        .put("capabilities", JSONObject().put("test@1", org.json.JSONArray().put("ping")))
 
     /** Replies "pong" to test@1.ping and pushes one state change to every new document. */
     private val sink = object : ProfileWebView.Sink {
@@ -162,6 +172,16 @@ object HostileEvaluator {
             }
             if (str(r, "shellEarly") != "undefined" || str(r, "shellAtProbe") != "undefined") failures.add("$doc: sees capybaraShell")
             checkNoCapacitor(doc, r)
+            if (r.opt("strayPush") != false) failures.add("$doc: a push reached it")
+            when (spec.optString("viaTop")) {
+                // Spec §15.3, pinned: a same-origin unsandboxed frame calls the top document's shell.
+                "pong" -> if (str(r, "attempts", "viaTop") != "posted" || str(r, "replies", "viaTop") != "pong") {
+                    failures.add("$doc: the top document's shell was not reachable (${str(r, "replies", "viaTop")})")
+                }
+                "blocked" -> if (str(r, "viaTopType")?.startsWith("blocked") != true) {
+                    failures.add("$doc: reached window.top.capybaraShell (${str(r, "viaTopType")})")
+                }
+            }
             val expected = spec.optJSONObject("endpoint")?.optString(platform, "yes") ?: "yes"
             val vias = if (spec.optBoolean("frame")) listOf("raw", "fake") else listOf("raw")
             for (via in vias) {
@@ -188,9 +208,11 @@ object HostileEvaluator {
         } else {
             val allowed = expect.optJSONObject("popupResults")?.optJSONArray(platform)
                 ?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: listOf("null")
-            for (key in listOf("noGesture", "gesture")) {
-                if (str(pr, "popup", key) !in allowed) failures.add("$popup: window.open ($key) gave ${str(pr, "popup", key)}")
+            if (str(pr, "popup", "noGesture") !in allowed) {
+                failures.add("$popup: window.open without a gesture gave ${str(pr, "popup", "noGesture")}")
             }
+            val gesture = results("$popup-gesture")?.let { str(it, "gesture") }
+            if (gesture !in allowed) failures.add("$popup: window.open with a gesture gave $gesture")
             checkNoCapacitor(popup, pr)
         }
         if (nativeLog.any { it.optString("event") == "popup-window" }) failures.add("$popup: a popup window was created")

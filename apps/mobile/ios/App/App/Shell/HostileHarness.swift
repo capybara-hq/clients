@@ -1,7 +1,7 @@
 // Debug builds only: the app side of the hostile-page UI test (AppUITests/HostilePageTests).
 // Launched with `-hostilePort <p>`, the app opens a real ProfileWebView for the profile origin
 // http://127.0.0.1:<p> (the test's loopback server) on its own identified data store, answers
-// `test@1.ping` with "pong", pushes one state change when the profile document says hello, and
+// `test@1.ping` with "pong", pushes one state change when the profile document says hello and one on every drop, and
 // reports every gate decision to the server's /native-log.
 
 #if DEBUG
@@ -73,6 +73,14 @@ final class HostileHarness: NSObject, ShellCallSink, ShellGateMonitor {
 
     func profileWebView(_ webView: ProfileWebView, gate event: [String: Any]) {
         log(event)
+        // A push while a hostile document is active: it must reach only the profile document
+        // that listened (the probe records strays).
+        if event["event"] as? String == "drop" {
+            webView.pushState([
+                "insets": ["top": 0, "right": 0, "bottom": 9, "left": 0],
+                "capabilities": ["test@1": ["ping"]],
+            ])
+        }
     }
 
     private func log(_ fields: [String: Any]) {

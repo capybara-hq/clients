@@ -34,7 +34,9 @@ final class HostilePageTests: XCTestCase {
 
         let done = expectation(description: "sequence done")
         server.onReport(doc: expect["sequenceEnd"] as? String ?? "sequence-done") { done.fulfill() }
-        wait(for: [done], timeout: 120)
+        let gesture = expectation(description: "gesture result")
+        server.onReport(doc: "A-popup-gesture") { gesture.fulfill() }
+        wait(for: [done, gesture], timeout: 120)
 
         let (reports, nativeLog) = server.snapshot()
         let evidence: [String: Any] = ["reports": reports, "nativeLog": nativeLog]
@@ -116,6 +118,20 @@ enum HostileEvaluator {
                 failures.append("\(doc): sees capybaraShell")
             }
             checkNoCapacitor(doc, r)
+            if (r["strayPush"] as? Bool) != false { failures.append("\(doc): a push reached it") }
+            switch spec["viaTop"] as? String {
+            case "pong":
+                // Spec §15.3, pinned: a same-origin unsandboxed frame calls the top document's shell.
+                if string(r, "attempts", "viaTop") != "posted" || string(r, "replies", "viaTop") != "pong" {
+                    failures.append("\(doc): the top document's shell was not reachable (\(string(r, "replies", "viaTop") ?? "none"))")
+                }
+            case "blocked":
+                if !(string(r, "viaTopType") ?? "").hasPrefix("blocked") {
+                    failures.append("\(doc): reached window.top.capybaraShell (\(string(r, "viaTopType") ?? "none"))")
+                }
+            default:
+                break
+            }
             let expected = (spec["endpoint"] as? [String: String])?[platform] ?? "yes"
             let vias = (spec["frame"] as? Bool) == true ? ["raw", "fake"] : ["raw"]
             for via in vias {
@@ -139,8 +155,12 @@ enum HostileEvaluator {
         let popup = expect["popup"] as? String ?? "A-popup"
         let popupResults = (expect["popupResults"] as? [String: [String]])?[platform] ?? ["null"]
         if let r = results(popup) {
-            for key in ["noGesture", "gesture"] where !popupResults.contains(string(r, "popup", key) ?? "") {
-                failures.append("\(popup): window.open (\(key)) gave \(string(r, "popup", key) ?? "nothing")")
+            if !popupResults.contains(string(r, "popup", "noGesture") ?? "") {
+                failures.append("\(popup): window.open without a gesture gave \(string(r, "popup", "noGesture") ?? "nothing")")
+            }
+            let gesture = results("\(popup)-gesture").flatMap { string($0, "gesture") }
+            if !popupResults.contains(gesture ?? "") {
+                failures.append("\(popup): window.open with a gesture gave \(gesture ?? "nothing")")
             }
             checkNoCapacitor(popup, r)
         } else {

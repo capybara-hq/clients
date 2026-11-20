@@ -36,7 +36,13 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
                 } catch (_: Exception) {
                     break
                 }
-                thread(isDaemon = true) { client.use { handle(it) } }
+                thread(isDaemon = true) {
+                    try {
+                        client.use { handle(it) }
+                    } catch (_: java.io.IOException) {
+                        // The WebView dropped the connection (a page navigated away mid-request).
+                    }
+                }
             }
         }
     }

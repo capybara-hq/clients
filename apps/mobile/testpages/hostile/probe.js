@@ -20,6 +20,13 @@
     replies: {},
   };
   const realShell = window.capybaraShell;
+  if (!realShell) {
+    // An imitation of a global push receiver: native must never deliver into a hostile document.
+    results.strayPush = false;
+    window.__capybaraShellReceive = () => {
+      results.strayPush = true;
+    };
+  }
 
   // Try to replace the shell object (page scripts always run after the shell script).
   try {
@@ -50,6 +57,10 @@
         message = JSON.parse(event.data);
       } catch {
         return;
+      }
+      // A state or event push is for the profile document that said hello, never a hostile one.
+      if (!realShell && (message.type === "state" || message.type === "event")) {
+        results.strayPush = true;
       }
       const resolve = androidWaiters.get(message.callId);
       if (!resolve) return;
@@ -125,12 +136,17 @@
       // A frame defines its own capybaraShell that forwards to the native endpoint.
       window.capybaraShell = { ping: () => rawPost(`${doc}:fake`) };
       await attempt("fake", () => window.capybaraShell.ping());
+      // Spec §15.3: a same-origin unsandboxed frame shares the top document's trust and can call
+      // its shell (the call is posted from the top frame, so native accepts it); any other frame
+      // is blocked by the same-origin policy.
+      let topShell;
       try {
-        const topShell = window.top.capybaraShell;
+        topShell = window.top.capybaraShell;
         results.viaTopType = typeof topShell;
       } catch (error) {
         results.viaTopType = `blocked:${error?.name ?? error}`;
       }
+      if (topShell) await attempt("viaTop", () => topShell.capabilities["test@1"].ping());
     }
     if (window.__extraProbe) await window.__extraProbe(results);
     // about:srcdoc and about:blank frames have no URL origin of their own: report via the base.

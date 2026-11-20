@@ -20,28 +20,32 @@
       "endpoint": {
         "ios": "yes",
         "android": "yes"
-      }
+      },
+      "viaTop": "pong"
     },
     "A-frame-cross": {
       "frame": true,
       "endpoint": {
         "ios": "yes",
         "android": "no"
-      }
+      },
+      "viaTop": "blocked"
     },
     "A-frame-srcdoc": {
       "frame": true,
       "endpoint": {
         "ios": "yes",
         "android": "yes"
-      }
+      },
+      "viaTop": "pong"
     },
     "A-frame-blank": {
       "frame": true,
       "endpoint": {
         "ios": "yes",
-        "android": "yes"
-      }
+        "android": "any"
+      },
+      "viaTop": "pong"
     },
     "A-csp-sandbox": {
       "frame": false,
@@ -63,6 +67,14 @@
         "ios": "yes",
         "android": "no"
       }
+    },
+    "A-frame-sandboxed": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      },
+      "viaTop": "blocked"
     }
   }
 }

@@ -11,23 +11,31 @@
 <script>
   // "same-window": the target loads in this WebView (Android, multiple windows off).
   const describe = (w) => (w === null ? "null" : w === window ? "same-window" : typeof w);
-  window.__extraProbe = (results) =>
-    new Promise((resolve) => {
-      results.popup = { noGesture: describe(window.open("/popup-child.html?via=script")) };
-      const button = document.createElement("button");
-      button.id = "open-popup";
-      button.textContent = "Open popup";
-      button.setAttribute("aria-label", "Open popup");
-      button.addEventListener("click", () => {
-        results.popup.gesture = describe(window.open("/popup-child.html?via=gesture"));
-        results.popup.gestureActivation = navigator.userActivation?.isActive ?? null;
-        button.remove();
-        resolve();
-      });
-      document.body.append(button);
-      fetch("/report", { method: "POST", body: JSON.stringify({ doc: "popup-ready" }) }).catch(() => {});
+  window.__extraProbe = async (results) => {
+    results.popup = { noGesture: describe(window.open("/popup-child.html?via=script")) };
+  };
+  // After this document's report is out: a real tap opens the second window. On Android the target
+  // may replace this document at once, so the gesture's result goes out as a beacon of its own.
+  window.__afterProbe = () => {
+    const button = document.createElement("button");
+    button.id = "open-popup";
+    button.textContent = "Open popup";
+    button.setAttribute("aria-label", "Open popup");
+    button.addEventListener("click", () => {
+      const gesture = describe(window.open("/popup-child.html?via=gesture"));
+      navigator.sendBeacon("/report", JSON.stringify({ doc: "A-popup-gesture", results: { gesture } }));
+      button.remove();
+      location.href = "/done.html";
     });
-  window.__afterProbe = () => { location.href = "/done.html"; };
+    document.body.append(button);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        fetch("/report", { method: "POST", body: JSON.stringify({ doc: "popup-ready" }) }).catch(
+          () => {},
+        );
+      }),
+    );
+  };
 </script>
 <script src="/probe.js"></script>
 </body>

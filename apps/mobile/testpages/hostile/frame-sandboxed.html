@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>A-frame-sandboxed outer</title></head>
+<body>
+<p>Origin A, top frame hosting the frame A-frame-sandboxed (sandbox="allow-scripts": opaque origin).</p>
+<script>
+  window.addEventListener("message", (event) => {
+    if (event.data?.gateDone) location.href = "/csp-sandbox.html";
+  });
+</script>
+<iframe title="probe frame" sandbox="allow-scripts" src="/inner.html?doc=A-frame-sandboxed"></iframe>
+</body>
+</html>

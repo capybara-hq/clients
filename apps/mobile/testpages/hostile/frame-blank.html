@@ -5,7 +5,7 @@
 <p>Origin A, top frame hosting the frame A-frame-blank.</p>
 <script>
   window.addEventListener("message", (event) => {
-    if (event.data?.gateDone) location.href = "/csp-sandbox.html";
+    if (event.data?.gateDone) location.href = "/frame-sandboxed.html";
   });
 </script>
 <iframe title="probe frame" id="blank"></iframe>
