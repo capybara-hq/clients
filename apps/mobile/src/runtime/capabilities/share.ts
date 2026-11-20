@@ -1,20 +1,17 @@
 // `share@1` (mobile app spec §5.2): the system share sheet through `@capacitor/share`. Confirming:
 // the sheet is a native dialog, one at a time per profile, and needs a user activation.
+import { SHELL_CAPABILITY_KEYS, type ShareInputV1 } from "@capybara-hq/plugin-sdk";
 import type { CapabilityImpl } from "../registry.ts";
 import { fail, isRecord, MOBILE_SHELL_LIMITS, onlyKeys, resolveWebUrl } from "./limits.ts";
 
-export interface ShareOptions {
-  title?: string;
-  text?: string;
-  url?: string;
-}
+export type ShareOptions = ShareInputV1;
 
 /** The part of `@capacitor/share`'s `Share` the capability uses. */
 export interface SharePort {
   share(options: ShareOptions): Promise<unknown>;
 }
 
-export const SHARE_KEY = "share@1";
+export const SHARE_KEY = SHELL_CAPABILITY_KEYS.share;
 
 function text(v: unknown, max: number): string {
   if (typeof v !== "string" || v.length === 0 || v.length > max) return fail();

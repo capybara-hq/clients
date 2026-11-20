@@ -2,9 +2,11 @@
 // projects (`webDir`): every file of src/local, with each `.ts` file bundled into an IIFE beside its
 // page, and the shell environment script (src/inject/shell-environment.ts) as
 // dist/local/inject/shell-environment.js for the native side to inject into profile WebViews.
-// Everything targets the browser: no Node built-ins (node:crypto included) reach the bundle.
+// Everything targets the browser: no Node built-ins (node:crypto included) reach the bundle. The
+// SDK's index also exports Node-only helpers; they are tree-shaken away (the SDK declares no side
+// effects), so `node:*` is left unresolved and the output is checked to name none of it.
 // Run: pnpm --filter @capybara-hq/mobile build
-import { cp, glob, mkdir, rm, stat } from "node:fs/promises";
+import { cp, glob, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -40,6 +42,12 @@ if (Object.keys(entryPoints).length > 0) {
     format: "iife",
     platform: "browser",
     target: ["safari17", "chrome120"],
+    external: ["node:*"],
     logLevel: "warning",
   });
+  for await (const file of glob("**/*.js", { cwd: out })) {
+    if ((await readFile(`${out}/${file}`, "utf8")).includes("node:")) {
+      throw new Error(`dist/local/${file} still refers to a Node built-in`);
+    }
+  }
 }

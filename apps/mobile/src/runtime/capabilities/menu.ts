@@ -1,6 +1,7 @@
 // `menu@1` (mobile app spec §5.2): a native menu. The runtime validates the input, hands the
 // native `MenuHost` (MenuHost.swift: an action sheet or iPad popover; MenuHost.kt: a modal bottom
 // sheet) a normalized copy, and resolves the picked item id or null. Confirming.
+import { type MenuInputV1, SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
 import { type Locale, t } from "@capybara-hq/shell";
 import type { CapabilityImpl } from "../registry.ts";
 import { fail, isRecord, MENU_ITEM_ID, MOBILE_SHELL_LIMITS, onlyKeys } from "./limits.ts";
@@ -12,12 +13,7 @@ export interface MenuShowItem {
   disabled: boolean;
 }
 
-export interface MenuAnchor {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+export type MenuAnchor = NonNullable<MenuInputV1["anchor"]>;
 
 export interface MenuShowInput {
   title?: string;
@@ -47,7 +43,7 @@ export function menuHostPortFrom(plugin: MenuHostPlugin, locale?: () => Locale):
   };
 }
 
-export const MENU_KEY = "menu@1";
+export const MENU_KEY = SHELL_CAPABILITY_KEYS.menu;
 
 function bool(v: unknown): boolean {
   if (v === undefined) return false;

@@ -2,6 +2,8 @@
 // follow the page's theme, and `ready()` drops the launch splash. Neither is confirming: no
 // dialog, no activation. A valid appearance is set natively and kept per profile; an unchanged
 // one is not written again (the design reports on every theme change and on load).
+
+import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
 import {
   type AppearanceStore,
   type ChromeAppearance,
@@ -12,7 +14,7 @@ import {
 import type { ProfileRef } from "../protocol.ts";
 import type { CapabilityImpl } from "../registry.ts";
 
-export const CHROME_CAPABILITY_KEY = "chrome@1";
+export const CHROME_CAPABILITY_KEY = SHELL_CAPABILITY_KEYS.chrome;
 
 export interface ChromeDeps {
   appearance: AppearanceStore;

@@ -1,6 +1,7 @@
 // `haptics@1` (mobile app spec §5.2): a haptic impact through `@capacitor/haptics`. The plugin is
 // called from the local runtime only; Capacitor's bridge never exists in a profile WebView.
 import { ImpactStyle, NotificationType } from "@capacitor/haptics";
+import { type HapticKind, SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
 import type { CapabilityImpl } from "../registry.ts";
 import { fail } from "./limits.ts";
 
@@ -11,13 +12,13 @@ export interface HapticsPort {
   notification(options: { type: NotificationType }): Promise<void>;
 }
 
-export const HAPTICS_KEY = "haptics@1";
+export const HAPTICS_KEY = SHELL_CAPABILITY_KEYS.haptics;
 
 export function createHapticsCapability(port: HapticsPort): CapabilityImpl {
   return {
     functions: {
       async impact(_ctx, kind) {
-        switch (kind) {
+        switch (kind as HapticKind) {
           case "selection":
             return port.selectionChanged();
           case "light":
