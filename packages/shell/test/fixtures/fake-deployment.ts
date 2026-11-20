@@ -5,12 +5,13 @@
 //   POST /api/v1/app-auth/token      X-Capybara-Csrf: 1, PKCE S256, one use; sets a cookie
 //   POST /api/v1/auth/login          counts the hit (the app must never let it reach here)
 //   POST /api/v1/auth/logout         X-Capybara-Csrf: 1; ends the session, clears the cookie (204);
-//                                    with `holdLogoutBody`, a 200 whose body waits for GET /login,
-//                                    and that /login waits for `releaseLogin()`
+//                                    with `holdLogoutBody`, a 200 whose body waits for
+//                                    `releaseLogout()`
 //   GET  /login                      the web's sign-in page (the end of the web's sign-out)
 //   GET  /                           prints the Shell environment the page sees, signed in or out
 //   GET  /frame, /plugin-ui/x/frame  iframes that report whether they see window.capybaraShell
 //   GET  /ua, /hop?to=<url>          the user agent the server saw; a redirect to another origin
+// With `down` set, `/` and `/api/v1/meta` answer 503 (a deployment in maintenance).
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -50,14 +51,15 @@ export interface FakeDeployment {
   /** Accepted `POST /api/v1/auth/logout` requests. */
   logouts: number;
   /**
-   * The next logout answers its headers at once and its body only when `GET /login` arrives (the
-   * page's fetch resolves on the headers, so the navigation starts before the request completes);
-   * that `/login` is answered only at `releaseLogin()`, so the navigation cannot commit before.
-   * Reset after use.
+   * The next logout answers its headers at once and its body only at `releaseLogout()` (the page's
+   * fetch resolves on the headers, so the page navigates to `/login` before the request
+   * completes). Reset after use.
    */
   holdLogoutBody: boolean;
-  /** Answers a `/login` held by `holdLogoutBody` (a no-op when none is). */
-  releaseLogin(): void;
+  /** Ends a logout body held by `holdLogoutBody` (a no-op when none is). */
+  releaseLogout(): void;
+  /** While true, `/` and `/api/v1/meta` answer 503 (the platform is unreachable). */
+  down: boolean;
   /** Issues a one-use code bound to the `state` of a recorded authorize request. */
   issueCode(state: string): string;
   close(): Promise<void>;
@@ -159,8 +161,6 @@ export async function startFakeDeployment(
   const sessions = new Set<string>();
   /** A held logout body: ends it. */
   let heldLogout: (() => void) | undefined;
-  /** A held /login answer. */
-  let heldLogin: (() => void) | undefined;
   const fake: FakeDeployment = {
     base: "",
     requests: [],
@@ -170,9 +170,10 @@ export async function startFakeDeployment(
     loginHits: 0,
     logouts: 0,
     holdLogoutBody: false,
-    releaseLogin() {
-      const release = heldLogin;
-      heldLogin = undefined;
+    down: false,
+    releaseLogout() {
+      const release = heldLogout;
+      heldLogout = undefined;
       release?.();
     },
     issueCode(state) {
@@ -238,6 +239,9 @@ export async function startFakeDeployment(
     const cookie = String(req.headers.cookie ?? "");
     const signedIn = [...sessions].some((s) => cookie.includes(`${COOKIE_NAME}=${s}`));
 
+    if (fake.down && (url.pathname === "/" || url.pathname === "/api/v1/meta")) {
+      return send(res, 503, "unavailable", { "content-type": "text/plain" });
+    }
     if (url.pathname === "/api/v1/meta") {
       const merge = (base: Record<string, unknown>, over?: Record<string, unknown>) => {
         const out = { ...base, ...over };
@@ -293,14 +297,9 @@ export async function startFakeDeployment(
       return send(res, 204, "", { "set-cookie": clear });
     }
     if (url.pathname === "/login") {
-      const page = () =>
-        send(res, 200, html(`<h1 id="login-page">login</h1>`), { "content-type": "text/html" });
-      const held = heldLogout;
-      heldLogout = undefined;
-      if (!held) return page();
-      held();
-      heldLogin = page;
-      return;
+      return send(res, 200, html(`<h1 id="login-page">login</h1>`), {
+        "content-type": "text/html",
+      });
     }
     if (url.pathname === "/ua") {
       return send(res, 200, String(req.headers["user-agent"] ?? ""), {

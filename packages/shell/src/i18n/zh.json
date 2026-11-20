@@ -139,6 +139,8 @@
   "mainError.expired.title": "登录已过期",
   "mainError.expired.lead": "重新登录后，会回到刚才的页面。",
   "mainError.expired.signIn": "在浏览器中重新登录",
+  "mainError.expired.waiting": "在浏览器里确认登录后，会自动回到刚才的页面。",
+  "mainError.expired.reopen": "重新打开浏览器",
   "mainError.unreachable.title": "平台暂时连不上",
   "mainError.unreachable.lead": "可能在升级或维护，也可能是网络、VPN 断了。恢复后自动回到刚才的页面。",
   "mainError.unreachable.meta": "{host} · {duration}无响应",

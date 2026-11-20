@@ -10,7 +10,6 @@ import {
   LOGIN_PAIR_MS,
   type SignOutDeps,
   SUPPRESS_GRACE_MS,
-  signOutOnLogin,
   watchLoginNavigations,
   watchLogout,
 } from "../src/main/sign-out.ts";
@@ -182,18 +181,10 @@ describe("noteLoggedOut / takeLoggedOut", () => {
 });
 
 describe("either order: the completion after the /login", () => {
-  function contents() {
-    const em = fakeEmitter();
-    return { ...em, on: em.on };
-  }
-
-  test("after will-navigate: the completion completes at once", async () => {
+  // The /login decision (session-watch.ts) calls noteLogin for a /login that ended no sign-out.
+  test("a completion within 5 s of a noted /login completes at once", async () => {
     const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    const e = { preventDefault: vi.fn() };
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    expect(e.preventDefault).not.toHaveBeenCalled();
+    h.signOut.noteLogin("p1");
     expect(h.deps.showSignedOut).not.toHaveBeenCalled();
     h.advance(LOGIN_PAIR_MS - 1);
     h.signOut.noteLoggedOut("p1");
@@ -201,15 +192,6 @@ describe("either order: the completion after the /login", () => {
     expect(h.order).toEqual(["mark", "show", "close"]);
     // No note is left for a later /login.
     expect(h.signOut.takeLoggedOut("p1")).toBe(false);
-  });
-
-  test("after did-navigate-in-page: the same", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    wc.emit("did-navigate-in-page", {}, "https://a.example.com/team/login", true);
-    h.signOut.noteLoggedOut("p1");
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
   });
 
   test("a /login older than 5 s does not pair: the completion waits for the next one", () => {
@@ -438,40 +420,6 @@ describe("the login navigation watch", () => {
     return { ...em, on: em.on };
   }
   const event = () => ({ preventDefault: vi.fn() });
-
-  test("a /login after a logout completes the sign-out and stops the navigation", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    h.signOut.noteLoggedOut("p1");
-    const e = event();
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    expect(e.preventDefault).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
-    // Reported again (committed anyway): once only.
-    wc.emit("did-navigate", {}, "https://a.example.com/team/login");
-    expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1);
-  });
-
-  test("a client navigation (did-navigate-in-page) counts too", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    h.signOut.noteLoggedOut("p1");
-    wc.emit("did-navigate-in-page", {}, "https://a.example.com/team/login?returnTo=%2F", true);
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
-  });
-
-  test("a /login without a logout is left alone (K9 adds the expired page)", () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    const e = event();
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    wc.emit("did-navigate", {}, "https://a.example.com/team/login");
-    expect(e.preventDefault).not.toHaveBeenCalled();
-    expect(h.deps.showSignedOut).not.toHaveBeenCalled();
-  });
 
   test("subframes, other pages and other origins are ignored", () => {
     const onLogin = vi.fn();

@@ -50,6 +50,13 @@ What it covers:
   calling it (twice) does not throw.
 - The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
   the main window and shows the small window's signed-out page; the profile stays, signed out.
+  When the logout completes only after the page navigated to `/login`, that `/login` is stopped
+  (it never reaches the server), the expired overlay shows, and the completion ends the sign-out.
+- A `/login` navigation without a logout is stopped and the main window shows the expired page
+  (a `WebContentsView` with `app://local/main-error.html`); signing in again removes it and loads
+  the `returnTo` page.
+- A deployment document answered 503 shows the unreachable page; 重试 probes `/api/v1/meta`
+  (still 503: the page stays); once it answers 2xx the overlay goes and the page loads again.
 
 ## Manual acceptance on a real Mac with a dev kernel
 

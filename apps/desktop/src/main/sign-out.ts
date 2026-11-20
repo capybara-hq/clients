@@ -6,8 +6,9 @@
 // (`takeLoggedOut`), not an expiry. The two can arrive in either order: the page's fetch resolves
 // on the response headers and the completion comes with the body, so the navigation may be seen
 // first. A `/login` that was not the end of a sign-out is recorded (`noteLogin`); a completion
-// that follows it within 5 s, or that finds a window of the profile on `/login`, completes the
-// sign-out at once. The shell's own logout POSTs (the menu's, sign-in's revoke of an unwanted
+// that follows it within 5 s, or that finds a window of the profile on `/login` or showing the
+// expired page (`showsLogin`; session-watch.ts stops the navigation and shows that page), completes
+// the sign-out at once. The shell's own logout POSTs (the menu's, sign-in's revoke of an unwanted
 // session) also complete on the partition (`session.fetch` passes through `webRequest`, after
 // its promise resolved); they run inside `suppress` and leave no note. The app menu's entry asks in a shell dialog, posts the logout
 // itself through the partition's fetch and completes whatever the POST answered: a dead session
@@ -55,8 +56,11 @@ function parse(url: string): URL | null {
   }
 }
 
-/** `url`'s path below `base` (same origin, under the base path), without a trailing slash. */
-function routeUnder(url: string, base: string): string | null {
+/**
+ * `url`'s path below `base` (same origin, under the base path), without a trailing slash; null
+ * for a URL elsewhere.
+ */
+export function routeUnder(url: string, base: string): string | null {
   const target = parse(url);
   const home = parse(base);
   if (!target || !home || target.origin !== home.origin) return null;
@@ -108,10 +112,9 @@ export interface NavigationContents {
  * that cannot be stopped). One navigation may be reported more than once (stopped or not), so
  * `onLogin` must be idempotent; `takeLoggedOut` is, being true once.
  *
- * K9 takes this over for the expired page: it passes its own `onLogin` (the session-watch
- * decision) instead of `signOutOnLogin`, and calls `signOut.takeLoggedOut` / `complete` from it,
- * and `signOut.noteLogin` for a `/login` that was not the end of a sign-out (so a completion that
- * arrives after it still ends the sign-out).
+ * The decision is session-watch.ts's: `signOut.takeLoggedOut` / `complete` for the end of a
+ * sign-out, else `signOut.noteLogin` (so a completion that arrives after it still ends the
+ * sign-out) and the expired page.
  */
 export function watchLoginNavigations(
   contents: NavigationContents,
@@ -140,25 +143,6 @@ export function watchLoginNavigations(
   contents.on("did-navigate-in-page", committed("did-navigate-in-page"));
 }
 
-/**
- * The decision until K9 adds the expired page: a `/login` right after a logout ends the sign-out
- * (the navigation is stopped where it can be; the window closes anyway); any other `/login` is
- * left to the web for now.
- */
-export function signOutOnLogin(
-  signOut: Pick<SignOut, "takeLoggedOut" | "complete" | "noteLogin">,
-  profileId: string,
-): (nav: LoginNavigation) => void {
-  return (nav) => {
-    if (!signOut.takeLoggedOut(profileId)) {
-      signOut.noteLogin(profileId);
-      return;
-    }
-    nav.stop();
-    void signOut.complete(profileId);
-  };
-}
-
 export interface SignOutDeps {
   /** The profile as stored now; undefined once removed. */
   getProfile(id: string): Profile | undefined;
@@ -170,7 +154,10 @@ export interface SignOutDeps {
   closeProfileWindows(id: string): void;
   /** Whether a main window of the profile is open (absent: assumed). */
   hasProfileWindows?(id: string): boolean;
-  /** Whether a main window of the profile shows its `/login` now (absent: never). */
+  /**
+   * Whether a main window of the profile shows its `/login` now, or the expired page that replaced
+   * it (absent: never).
+   */
   showsLogin?(id: string): boolean;
   /** Board `SignOut` in a shell dialog: true only for 退出登录. */
   confirm(profile: Profile): Promise<boolean>;

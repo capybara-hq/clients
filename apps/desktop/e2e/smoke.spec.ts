@@ -431,32 +431,90 @@ test("the web's own sign-out ends in the small window's signed-out page", async 
   expect(fake.logouts).toBe(1);
 });
 
-test("the same when the /login navigation lands before the logout completes", async () => {
-  // Sign in again from the signed-out page.
+/** The URLs of the overlays (WebContentsViews) over the open windows. */
+const overlayUrls = () =>
+  app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().flatMap((w) =>
+      w.contentView.children.map((v) => (v as Electron.WebContentsView).webContents.getURL()),
+    ),
+  );
+
+/** Signs in again from the page shown (`page`), playing the browser and the callback link. */
+async function signInFromPage(from: Page): Promise<void> {
   const opened = (await openedUrls()).length;
-  await page.locator("main .lp-btn").click();
+  await from.locator("main .lp-btn").click();
   await expect.poll(openedUrls).toHaveLength(opened + 1);
   const url = new URL((await openedUrls())[opened] as string);
-  await page.request.get(url.href);
+  await from.request.get(url.href);
   const signInState = url.searchParams.get("state") as string;
   const code = fake.issueCode(signInState);
   const link = `capybara://auth/callback?${new URLSearchParams({ code, state: signInState, iss: fake.base })}`;
   await app.evaluate(({ app: electronApp }, u) => {
     electronApp.emit("open-url", { preventDefault() {} }, u);
   }, link);
+}
+
+test("the same when the logout completes after the /login navigation", async () => {
+  // Sign in again from the signed-out page.
+  await signInFromPage(page);
   page = await windowOn(`${fake.base}/`);
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
 
-  // The logout's body (its completion on the partition) waits for the /login request, and that
-  // /login stays unanswered: the sign-out must end on the completion, not on a committed /login.
+  // The logout's body (its completion on the partition) is held: the page's fetch resolves on the
+  // headers and navigates to /login first. That /login is stopped (it never reaches the server)
+  // and the expired page covers the window until the completion ends the sign-out.
   fake.holdLogoutBody = true;
+  const before = fake.requests.length;
   await page.locator("#logout").click();
   try {
-    await expectSignedOut();
-    expect(fake.logouts).toBe(2);
-    const paths = fake.requests.map((r) => r.path);
-    expect(paths.lastIndexOf("/login")).toBeGreaterThan(paths.lastIndexOf("/api/v1/auth/logout"));
+    await expect.poll(overlayUrls).toEqual(["app://local/main-error.html"]);
   } finally {
-    fake.releaseLogin();
+    fake.releaseLogout();
   }
+  page = await expectSignedOut();
+  expect(fake.logouts).toBe(2);
+  expect(fake.requests.slice(before).map((r) => r.path)).not.toContain("/login");
+});
+
+test("an expired session: the expired page, then back to the page after signing in again", async () => {
+  await signInFromPage(page);
+  page = await windowOn(`${fake.base}/`);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+
+  // The web's session guard sends the window to /login: stopped, replaced by the local page.
+  const before = fake.requests.length;
+  await page.evaluate(() => {
+    window.location.href = "/login?returnTo=%2Fua";
+  });
+  const overlay = await windowOn("app://local/main-error.html");
+  await expect(overlay.locator("h1")).toHaveText(/^(登录已过期|Your session has expired)$/);
+  expect(fake.requests.slice(before).map((r) => r.path)).not.toContain("/login?returnTo=%2Fua");
+
+  await signInFromPage(overlay);
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page).toHaveURL(`${fake.base}/ua`);
+});
+
+test("an unreachable platform: the unreachable page, 重试, back when it answers", async () => {
+  fake.down = true;
+  try {
+    await page.goto(`${fake.base}/`);
+    const overlay = await windowOn("app://local/main-error.html");
+    await expect(overlay.locator("h1")).toHaveText(
+      /^(平台暂时连不上|Can’t reach the platform right now)$/,
+    );
+    // Still down: 重试 probes and the page stays.
+    const probes = () => fake.requests.filter((r) => r.path === "/api/v1/meta").length;
+    const seen = probes();
+    await overlay.locator("main .lp-btn").click();
+    await expect.poll(probes).toBeGreaterThan(seen);
+    await expect(overlay.locator("main .lp-btn")).toBeEnabled();
+    expect(await overlayUrls()).toEqual(["app://local/main-error.html"]);
+    fake.down = false;
+    await overlay.locator("main .lp-btn").click();
+  } finally {
+    fake.down = false;
+  }
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
 });
