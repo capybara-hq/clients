@@ -22,6 +22,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- The sign-in callback: ${brandScheme}://auth/callback (brand.properties). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${brandScheme}" android:host="auth" />
+            </intent-filter>
+
         </activity>
 
         <provider

@@ -1,12 +1,17 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// applicationId and the URL scheme come from brand.properties (generated from brand.ts).
+def brandProperties = new Properties()
+file("../brand.properties").withInputStream { brandProperties.load(it) }
+
 android {
     // The app's own code lives in com.capybarahq.shell whatever the brand's application id.
     namespace = "com.capybarahq.shell"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.capybarahq.mobile"
+        applicationId brandProperties.getProperty("applicationId")
+        manifestPlaceholders = [brandScheme: brandProperties.getProperty("scheme")]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

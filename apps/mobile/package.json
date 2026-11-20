@@ -12,6 +12,7 @@
     "test:ios:all": "scripts/ios-test.sh AppTests AppUITests",
     "test:android": "node scripts/build.ts && cap sync android && cd android && ./gradlew :app:testDebugUnitTest",
     "test:android:device": "node scripts/build.ts && cap sync android && cd android && ./gradlew :app:connectedDebugAndroidTest",
+    "apply-brand": "node scripts/apply-brand.ts",
     "check:brand": "node scripts/apply-brand.ts --check"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@capacitor/ios": "8.6.2"
   },
   "devDependencies": {
+    "@capacitor/assets": "4.0.0",
     "@capacitor/cli": "8.6.2",
     "@capybara-hq/plugin-sdk": "0.1.0-rc.41",
     "@capybara-hq/shell": "workspace:*",
