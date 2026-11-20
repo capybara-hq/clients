@@ -11,7 +11,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-export const FAKE_ACCOUNT = { id: "acc_1", name: "Fake Person" };
+// The kernel's `Account` shape, as the token exchange answers it.
+export const FAKE_ACCOUNT = { id: "acc_1", displayName: "Fake Person", email: "fake@example.com" };
 const COOKIE_NAME = "cap_at";
 // 1x1 transparent PNG.
 const PNG = Buffer.from(
@@ -100,7 +101,7 @@ document.getElementById("hop").addEventListener("click", () => {
 
 function rootPage(signedIn: boolean, peer: string): string {
   return html(
-    `<h1 id="auth">${signedIn ? `signed-in:${FAKE_ACCOUNT.name}` : "signed-out"}</h1>
+    `<h1 id="auth">${signedIn ? `signed-in:${FAKE_ACCOUNT.displayName}` : "signed-out"}</h1>
 <pre id="shell"></pre>
 <button id="signin">sign in</button><span id="signin-result"></span>
 <button id="login">login</button><span id="login-result"></span>
