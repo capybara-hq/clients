@@ -38,6 +38,11 @@ export interface NativeTransport {
   hello(docId: string): void;
   /** Native pushes (`state`, `event`) for this document. */
   onPush(listener: (push: { type: string; [k: string]: unknown }) => void): void;
+  /**
+   * The transport lost its push channel (a rejected listen): the script sends a fresh hello. The
+   * transport bounds how often it asks in a row.
+   */
+  onRestart?(listener: () => void): void;
 }
 
 export interface InjectDeps {
@@ -53,6 +58,11 @@ export interface InjectDeps {
   userActivation(): boolean;
   /** Null when the platform's endpoint is missing in this document. */
   transport: NativeTransport | null;
+  /**
+   * Calls the listener when the document comes back from the back/forward cache (`pageshow` with
+   * `persisted`). Optional: tests and old hosts omit it.
+   */
+  onRestore?(listener: () => void): void;
 }
 
 function isDescriptors(v: unknown): v is CapabilityDescriptors {
@@ -105,7 +115,7 @@ export function bootShellEnvironment(deps: InjectDeps): boolean {
   const transport = deps.transport;
   if (!transport) return false;
 
-  const docId = deps.randomId();
+  let docId = deps.randomId();
   let nextCall = 1;
   let changed: ((state: ShellState) => void) | undefined;
   const subscribers = new Map<string, Set<(payload: unknown) => void>>();
@@ -148,6 +158,14 @@ export function bootShellEnvironment(deps: InjectDeps): boolean {
 
   installShellEnvironment({ ...init, kind: "mobile" }, bridge, deps.target);
   transport.hello(docId);
+  // A restored page or a lost push channel gets a fresh hello, still through native's gate: a
+  // document that is not the profile's gated main frame stays rejected.
+  const rehello = (): void => {
+    docId = deps.randomId();
+    transport.hello(docId);
+  };
+  transport.onRestart?.(rehello);
+  deps.onRestore?.(rehello);
   return true;
 }
 
@@ -162,8 +180,12 @@ interface IosHandler {
  * script keeps one `listen` post outstanding, native answers it with the pushes queued for this
  * document, and the script posts the next one. WebKit binds a reply to the document that posted,
  * so a push never reaches another document (the same property as Android's reply proxy). A
- * rejected listen (the document ended, or a drop) ends the loop.
+ * rejected listen (the document ended, a bfcache restore, or a drop) ends that loop and asks the
+ * script for a fresh hello, at most `MAX_RESTARTS` times in a row (a listen that native answers
+ * resets the count), so a document native keeps rejecting stops asking.
  */
+const MAX_RESTARTS = 3;
+
 export function iosTransport(win: Record<string, unknown>): NativeTransport | null {
   const webkit = win.webkit as { messageHandlers?: Record<string, IosHandler> } | undefined;
   const handler = webkit?.messageHandlers?.[IOS_HANDLER_NAME];
@@ -171,16 +193,24 @@ export function iosTransport(win: Record<string, unknown>): NativeTransport | nu
   const post = handler.postMessage.bind(handler);
   const isArray = Array.isArray;
   let receiver: ((push: { type: string }) => void) | undefined;
+  let restart: (() => void) | undefined;
+  let current = "";
+  let restarts = 0;
   const listen = (docId: string): void => {
     post({ type: "listen", docId }).then(
       (pushes) => {
-        if (!isArray(pushes)) return;
+        if (!isArray(pushes) || docId !== current) return;
+        restarts = 0;
         for (const push of pushes) {
           if (typeof push === "object" && push !== null) receiver?.(push as { type: string });
         }
         listen(docId);
       },
-      () => {},
+      () => {
+        if (docId !== current || restarts >= MAX_RESTARTS) return;
+        restarts += 1;
+        restart?.();
+      },
     );
   };
   return {
@@ -191,13 +221,19 @@ export function iosTransport(win: Record<string, unknown>): NativeTransport | nu
       );
     },
     hello(docId) {
+      current = docId;
       post({ type: "hello", docId }).then(
-        () => listen(docId),
+        () => {
+          if (docId === current) listen(docId);
+        },
         () => {},
       );
     },
     onPush(listener) {
       receiver = listener;
+    },
+    onRestart(listener) {
+      restart = listener;
     },
   };
 }
@@ -280,6 +316,14 @@ function main(): void {
         ? activationGetter.call(activationObject) === true
         : false,
     transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win),
+    onRestore: (listener) => {
+      const target = win as unknown as {
+        addEventListener(type: "pageshow", fn: (event: { persisted?: boolean }) => void): void;
+      };
+      target.addEventListener("pageshow", (event) => {
+        if (event.persisted === true) listener();
+      });
+    },
   });
 }
 

@@ -28,7 +28,6 @@ import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
-import java.util.UUID
 
 /** R9: the WebView features a profile WebView cannot do without. */
 object ProfileWebViewSupport {
@@ -70,6 +69,7 @@ class ProfileWebView private constructor(
     context: Context,
     val profileId: String,
     val profileOrigin: Origin,
+    pendingLifetimeMs: Long,
 ) : WebView(context), ShellMessageListenerDelegate {
 
     /** Receives what the gate let through. Held weakly. */
@@ -106,18 +106,27 @@ class ProfileWebView private constructor(
 
     private var current: JavaScriptReplyProxy? = null
     private var currentDocId: String? = null
-    private val pending = HashMap<String, Pair<String, JavaScriptReplyProxy>>()
-    private var nextCall = 0
-
-    /** Random per instance: a late reply for an earlier or recreated WebView never matches. */
-    private val callPrefix = UUID.randomUUID().toString().replace("-", "").take(12)
     private val main = Handler(Looper.getMainLooper())
+
+    /** Owed answers; ids carry a random per-instance prefix, timers die with the WebView. */
+    private val pending = PendingCalls<Pair<String, JavaScriptReplyProxy>>(
+        pendingLifetimeMs,
+        object : Expiry {
+            override fun postDelayed(task: Runnable, delayMs: Long) {
+                main.postDelayed(task, delayMs)
+            }
+
+            override fun cancel(task: Runnable) {
+                main.removeCallbacks(task)
+            }
+        },
+    )
 
     companion object {
         private const val TAG = "CapybaraGate"
 
         /** An unanswered call ends after this long with `failed` (it ends sooner with its document). */
-        var pendingLifetimeMs: Long = 600_000
+        const val DEFAULT_PENDING_LIFETIME_MS: Long = 600_000
         const val DEFAULT_PROFILE = "Default"
 
         /** The Shell environment bundle (dist/local/inject, copied into the app's public assets). */
@@ -146,6 +155,7 @@ class ProfileWebView private constructor(
             state: JSONObject,
             script: String,
             isSupported: (String) -> Boolean = WebViewFeature::isFeatureSupported,
+            pendingLifetimeMs: Long = DEFAULT_PENDING_LIFETIME_MS,
         ): Result {
             val missing = ProfileWebViewSupport.missing(isSupported)
             if (missing.isNotEmpty()) return Result.Unsupported(missing)
@@ -153,7 +163,7 @@ class ProfileWebView private constructor(
             val origin = Origin.parse(profileOrigin)
             if (origin == null || origin.serialized != profileOrigin) return Result.Refused("bad_origin")
 
-            val view = ProfileWebView(context, profileId, origin)
+            val view = ProfileWebView(context, profileId, origin, pendingLifetimeMs)
             ProfileStore.getInstance().getOrCreateProfile(profileName)
             WebViewCompat.setProfile(view, profileName)
             view.settings.javaScriptEnabled = true
@@ -195,7 +205,7 @@ class ProfileWebView private constructor(
 
     /** Answers one call; false when it is unknown (already answered). */
     fun reply(callId: String, result: JSONObject): Boolean {
-        val (pageCallId, proxy) = pending.remove(callId) ?: return false
+        val (pageCallId, proxy) = pending.take(callId) ?: return false
         proxy.postMessage(
             JSONObject().put("type", "reply").put("callId", pageCallId).put("result", result).toString(),
         )
@@ -241,23 +251,26 @@ class ProfileWebView private constructor(
                     )
                     return
                 }
-                nextCall += 1
-                val callId = "$callPrefix-$nextCall"
-                pending[callId] = post.callId to reply
-                main.postDelayed({
-                    pending.remove(callId)?.let { (pageCallId, proxy) ->
-                        proxy.postMessage(
-                            JSONObject().put("type", "reply").put("callId", pageCallId)
-                                .put("result", JSONObject().put("ok", false).put("code", "failed")).toString(),
-                        )
-                    }
-                }, pendingLifetimeMs)
+                val callId = pending.add(post.callId to reply) { (pageCallId, proxy) ->
+                    proxy.postMessage(
+                        JSONObject().put("type", "reply").put("callId", pageCallId)
+                            .put("result", JSONObject().put("ok", false).put("code", "failed")).toString(),
+                    )
+                }
                 target.onCall(
                     this,
                     ShellCall(profileId, origin.serialized, post.docId, callId, post.key, post.fn, post.args, post.activation),
                 )
             }
         }
+    }
+
+    /** No expiry callback outlives the WebView (each would retain it for up to the lifetime). */
+    override fun destroy() {
+        pending.clear()
+        current = null
+        currentDocId = null
+        super.destroy()
     }
 
     override fun dropped(reason: String, callId: String?, isMainFrame: Boolean, origin: String) {

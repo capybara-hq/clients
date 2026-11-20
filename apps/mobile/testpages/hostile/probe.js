@@ -20,13 +20,11 @@
     replies: {},
   };
   const realShell = window.capybaraShell;
-  if (!realShell) {
-    // An imitation of a global push receiver: native must never deliver into a hostile document.
-    results.strayPush = false;
-    window.__capybaraShellReceive = () => {
-      results.strayPush = true;
-    };
-  }
+  // Pushes reach a document only as the answer to its own `listen` post (iOS) or on its reply
+  // proxy (Android), and native answers only the profile's gated main frame. Android's port
+  // listener below flags a stray state or event push; on iOS the `listen` attempt in run() must
+  // be rejected, so no push can ever be answered to a hostile document.
+  results.strayPush = false;
 
   // Try to replace the shell object (page scripts always run after the shell script).
   try {
@@ -128,6 +126,11 @@
       results.pushedBottom = await waitForPush();
     }
     await attempt("raw", () => rawPost(`${doc}:raw`));
+    if (!realShell) {
+      // A raw `listen` for the profile document's id: native must reject it, so it never receives
+      // the pushes queued for the profile document.
+      await attempt("listen", () => rawPost(`${doc}:listen`, { type: "listen" }));
+    }
     if (isTop && realShell) {
       // A malformed post (a bad document id) from the trusted document: native drops the shape.
       await attempt("malformed", () => rawPost(`${doc}:malformed`, { docId: "x" }));

@@ -183,7 +183,7 @@ object HostileEvaluator {
                 }
             }
             val expected = spec.optJSONObject("endpoint")?.optString(platform, "yes") ?: "yes"
-            val vias = if (spec.optBoolean("frame")) listOf("raw", "fake") else listOf("raw")
+            val vias = if (spec.optBoolean("frame")) listOf("raw", "fake", "listen") else listOf("raw", "listen")
             for (via in vias) {
                 val id = "$doc:$via"
                 when (val attempt = str(r, "attempts", via)) {

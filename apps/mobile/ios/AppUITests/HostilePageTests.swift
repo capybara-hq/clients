@@ -133,7 +133,7 @@ enum HostileEvaluator {
                 break
             }
             let expected = (spec["endpoint"] as? [String: String])?[platform] ?? "yes"
-            let vias = (spec["frame"] as? Bool) == true ? ["raw", "fake"] : ["raw"]
+            let vias = (spec["frame"] as? Bool) == true ? ["raw", "fake", "listen"] : ["raw", "listen"]
             for via in vias {
                 let id = "\(doc):\(via)"
                 switch string(r, "attempts", via) {

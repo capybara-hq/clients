@@ -177,8 +177,13 @@ final class ProfileWebView: WKWebView {
     }
 
     deinit {
-        pending.flush("gone")
-        pushes.end()
+        // The queues are main-actor only; a WebView is released on the main queue (this traps
+        // loudly if that ever stops being true).
+        let pending = pending, pushes = pushes
+        MainActor.assumeIsolated {
+            pending.flush("gone")
+            pushes.end()
+        }
         configuration.userContentController.removeAllScriptMessageHandlers()
     }
 

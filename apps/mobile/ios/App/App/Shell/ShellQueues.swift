@@ -6,11 +6,13 @@ import Foundation
 
 typealias ShellReply = (Any?, String?) -> Void
 
+/// Main-actor only: every caller (WebKit delegates, the plugin, timers) is on the main queue.
 /// Pushes (state changes, capability events) for the current document. The shell script keeps one
 /// `listen` post outstanding; its reply carries the queued pushes. WebKit binds a reply to the
 /// document that posted, so a push can only reach the document that listened: a document that
 /// never passed the gate never posts a listen, and on every commit the queue and the outstanding
 /// listen end.
+@MainActor
 final class PushQueue {
     static let maxQueued = 64
 
@@ -67,10 +69,11 @@ final class PushQueue {
 /// The replies a WebView owes. Ids carry a random prefix per WebView instance, so a late runtime
 /// reply for an earlier (or recreated) WebView never resolves this one's call. Every entry has a
 /// lifetime: it ends with its document ("gone") or, unanswered, after `lifetime` (`failed`).
+@MainActor
 final class PendingReplies {
-    typealias Schedule = (TimeInterval, @escaping () -> Void) -> Void
+    typealias Schedule = (TimeInterval, @escaping @Sendable () -> Void) -> Void
 
-    static let defaultLifetime: TimeInterval = 600
+    nonisolated static let defaultLifetime: TimeInterval = 600
 
     let prefix: String
     private let lifetime: TimeInterval
@@ -94,7 +97,9 @@ final class PendingReplies {
         let id = "\(prefix)-\(next)"
         entries[id] = reply
         schedule(lifetime) { [weak self] in
-            self?.entries.removeValue(forKey: id)?(["ok": false, "code": "failed"], nil)
+            MainActor.assumeIsolated {
+                self?.entries.removeValue(forKey: id)?(["ok": false, "code": "failed"], nil)
+            }
         }
         return id
     }

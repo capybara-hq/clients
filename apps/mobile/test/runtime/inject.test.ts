@@ -95,6 +95,35 @@ describe("where the script installs", () => {
   });
 });
 
+describe("a restored or restarted document", () => {
+  test("a restart request and a bfcache restore each send a hello with a fresh id", async () => {
+    let restart: (() => void) | undefined;
+    let restore: (() => void) | undefined;
+    const ids = ["doc-1", "doc-2", "doc-3"];
+    const transport = Object.assign(fakeTransport(), {
+      onRestart(l: () => void) {
+        restart = l;
+      },
+    });
+    const { target } = boot({
+      transport,
+      randomId: () => ids.shift() ?? "x",
+      onRestore: (l) => {
+        restore = l;
+      },
+    });
+    restart?.();
+    restore?.();
+    expect(transport.hello.mock.calls.map(([d]) => d)).toEqual(["doc-1", "doc-2", "doc-3"]);
+    const haptics = (target.capybaraShell as CapybaraShell).capabilities["haptics@1"] as Record<
+      string,
+      (...a: unknown[]) => Promise<unknown>
+    >;
+    await haptics.impact?.("light");
+    expect(transport.call.mock.calls[0]?.[0]).toMatchObject({ docId: "doc-3" });
+  });
+});
+
 describe("the top frame on the profile origin", () => {
   test("gets a frozen, unreplaceable global with the mobile values and no controls", () => {
     const { installed, target, transport } = boot();
@@ -290,6 +319,51 @@ describe("the iOS transport", () => {
     ]);
     // Only one listen is ever outstanding.
     expect(posted.filter((p) => (p as { type: string }).type === "listen")).toHaveLength(2);
+  });
+
+  test("a rejected listen asks for a fresh hello, at most three times in a row", async () => {
+    const posted: { type: string; docId: string }[] = [];
+    const { win } = fakeWebkit((m) => {
+      posted.push(m as { type: string; docId: string });
+      if ((m as { type: string }).type === "hello") return Promise.resolve(true);
+      return Promise.reject(new Error("gone"));
+    });
+    const t = iosTransport(win);
+    let n = 0;
+    t?.onRestart?.(() => {
+      n += 1;
+      t.hello(`doc-${n}`);
+    });
+    t?.hello("doc-0");
+    await vi.waitFor(() => expect(posted.filter((p) => p.type === "listen")).toHaveLength(4));
+    await new Promise((r) => setImmediate(r));
+    expect(n).toBe(3);
+    expect(posted.filter((p) => p.type === "hello").map((p) => p.docId)).toEqual([
+      "doc-0",
+      "doc-1",
+      "doc-2",
+      "doc-3",
+    ]);
+  });
+
+  test("a superseded document id's listen stops without restarting", async () => {
+    const listens: ((v: unknown) => void)[] = [];
+    const { win } = fakeWebkit((m) => {
+      if ((m as { type: string }).type === "hello") return Promise.resolve(true);
+      return new Promise((resolve) => listens.push(resolve));
+    });
+    const t = iosTransport(win);
+    const restart = vi.fn();
+    t?.onRestart?.(restart);
+    t?.onPush(vi.fn());
+    t?.hello("doc-a");
+    await vi.waitFor(() => expect(listens).toHaveLength(1));
+    t?.hello("doc-b");
+    await vi.waitFor(() => expect(listens).toHaveLength(2));
+    listens[0]?.([]);
+    await new Promise((r) => setImmediate(r));
+    expect(listens).toHaveLength(2);
+    expect(restart).not.toHaveBeenCalled();
   });
 
   test("a rejected listen (the document ended, or a drop) ends the loop", async () => {

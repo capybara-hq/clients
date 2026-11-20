@@ -3,6 +3,7 @@ import XCTest
 
 // Pushes reach only the document that said hello and listened; owed replies end with their
 // document or their lifetime, and their ids never repeat across WebView instances.
+@MainActor
 final class PushQueueTests: XCTestCase {
     private final class Recorder {
         var answers: [(Any?, String?)] = []
@@ -76,6 +77,7 @@ final class PushQueueTests: XCTestCase {
     }
 }
 
+@MainActor
 final class PendingRepliesTests: XCTestCase {
     func testIdsCarryARandomPrefixPerInstance() {
         let a = PendingReplies(schedule: { _, _ in }), b = PendingReplies(schedule: { _, _ in })
