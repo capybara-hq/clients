@@ -1,19 +1,9 @@
-// The mobile shell's input limits, declared structurally: the same values as the SDK's
-// `MOBILE_SHELL_LIMITS` and `MENU_ITEM_ID` (core packages/plugin-sdk/src/shell-capabilities.ts).
-// The pinned `@capybara-hq/plugin-sdk` predates them; the coordinator replaces this file with the
-// SDK's exports once a release carries them.
+// Shared input checks of the mobile capabilities. The limits themselves are the SDK's
+// (`MOBILE_SHELL_LIMITS`, `MENU_ITEM_ID`), so the shell and the web keep within the same values.
+import { MENU_ITEM_ID, MOBILE_SHELL_LIMITS } from "@capybara-hq/plugin-sdk";
 import type { ProfileRef } from "../protocol.ts";
 
-export const MOBILE_SHELL_LIMITS = {
-  menuItems: 12,
-  menuLabel: 64,
-  menuTitle: 128,
-  shareTitle: 256,
-  shareText: 4000,
-  url: 2048,
-} as const;
-
-export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+export { MENU_ITEM_ID, MOBILE_SHELL_LIMITS };
 
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);

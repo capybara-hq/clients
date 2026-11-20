@@ -2,29 +2,13 @@
 // spec §9.2): validated, kept per profile under `appearance.<profileId>`, and turned into what
 // native sets (the background behind the WebView and the status bar style). The stored value is
 // applied at the next launch before the WebView loads, so the launch never flashes another color.
+import type { ChromeCapabilityV1, ShellChromeTokens } from "@capybara-hq/plugin-sdk";
 import { isRecord } from "@capybara-hq/shell";
 
-/**
- * The shapes of `ChromeCapabilityV1` (`@capybara-hq/plugin-sdk` after 0.1.0-rc.43, not on npm
- * yet), declared here structurally until apps/mobile can bump its SDK pin.
- */
-export interface ChromeTokens {
-  bg: string;
-  panel: string;
-  ink: string;
-  muted: string;
-  line: string;
-  accent: string;
-  onAccent: string;
-}
+export type ChromeTokens = ShellChromeTokens;
 
-export interface ChromeAppearance {
-  scheme: "light" | "dark";
-  /** The theme's `--cb-bg`. */
-  background: string;
-  tokens?: ChromeTokens;
-  singleScheme?: boolean;
-}
+/** What `chrome@1.setAppearance` takes. */
+export type ChromeAppearance = Parameters<ChromeCapabilityV1["setAppearance"]>[0];
 
 /** What native sets: an opaque `#rrggbb` and the status bar content style. */
 export interface NativeLook {
