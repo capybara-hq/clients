@@ -179,6 +179,9 @@ class ProfileWebView private constructor(
     /** Where a navigation that leaves the profile goes: the browser sheet (BrowserSheet.kt). */
     var onSheet: ((String) -> Unit)? = null
 
+    /** Every main-frame origin that starts loading (single store: the wipe must reach them). */
+    var onOrigin: ((String) -> Unit)? = null
+
     /** A connector OAuth leave-and-return under way (NavigationPolicy). */
     private var oauthReturn: OauthReturn? = null
     /** The origin of the main frame's last started page (a redirect keeps it). */
@@ -498,6 +501,7 @@ class ProfileWebView private constructor(
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             // A new main-frame document: the one that said hello is gone.
             endDocument()
+            NavUrl.parse(url ?: "")?.origin?.let { onOrigin?.invoke(it.serialized) }
             if (url != null && backstop(url)) return
             committedOrigin = NavUrl.parse(url ?: "")?.origin
         }

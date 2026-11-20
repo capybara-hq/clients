@@ -14,6 +14,7 @@ import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -52,6 +53,13 @@ class SingleStoreModeTest {
     }
 
     private fun onMain(block: () -> Unit) = instrumentation.runOnMainSync(block)
+
+    private fun <T> onMainValue(block: () -> T): T {
+        var value: T? = null
+        instrumentation.runOnMainSync { value = block() }
+        @Suppress("UNCHECKED_CAST")
+        return value as T
+    }
 
     private fun create(origin: String, name: String?): ProfileWebView.Result {
         var result: ProfileWebView.Result? = null
@@ -119,7 +127,10 @@ class SingleStoreModeTest {
                 onMain {
                     val stores = DataStores.create(context, "capybara.dataStores.test.${UUID.randomUUID()}")
                     assertEquals(DataStoreMode.SINGLE, stores.mode)
-                    DataStores.clearSingleStore(context, stores, listOf(server.originA)) { cleared.complete(Unit) }
+                    DataStores.clearSingleStore(context, stores, listOf(server.originA)) { ok ->
+                        assertTrue(ok)
+                        cleared.complete(Unit)
+                    }
                 }
                 cleared.get(30, TimeUnit.SECONDS)
 
@@ -131,6 +142,57 @@ class SingleStoreModeTest {
                 assertEquals(after.toString(), "[]", after.getJSONArray("caches").toString())
                 assertEquals(after.toString(), 0, after.getInt("workers"))
                 assertEquals("the HTTP cache was cleared", 2, server.requests().count { it.endsWith(" /cacheable-data.json") })
+            }
+        }
+    }
+
+    private fun wipe(stores: DataStoreCore, origins: List<String>, timeoutMs: Long = SingleStoreCleaner.STEP_TIMEOUT_MS): Boolean {
+        val result = CompletableFuture<Boolean>()
+        onMain { DataStores.clearSingleStore(context, stores, origins, timeoutMs) { result.complete(it) } }
+        return result.get(120, TimeUnit.SECONDS)
+    }
+
+    @Test
+    fun aWorkerThatAnswersNavigationsDoesNotTakeOverTheCleaner() {
+        HostileServer(instrumentation.context.assets, "singlestore").use { server ->
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                load(server, scenario, "seed.html?sw=/sw-answer.js", "seeded")
+                assertTrue(report(server, "seeded").toString(), report(server, "seeded").optBoolean("ok"))
+                load(server, scenario, "probe.html?doc=before", "before")
+                assertEquals(1, report(server, "before").getInt("workers"))
+
+                val stores = onMainValue { DataStores.create(context, "capybara.dataStores.test.${UUID.randomUUID()}") }
+                assertTrue("the wipe finished", wipe(stores, listOf(server.originA)))
+                assertEquals("the real server never saw the clean URL", 0,
+                    server.requests().count { it.contains("__capybara_clean__") })
+
+                load(server, scenario, "probe.html?doc=after", "after")
+                val after = report(server, "after")
+                assertEquals(after.toString(), 0, after.getInt("workers"))
+                assertEquals(after.toString(), "[]", after.getJSONArray("caches").toString())
+            }
+        }
+    }
+
+    @Test
+    fun aWipeThatTimesOutStaysOwedAndBlocksEveryDeploymentUntilItSucceeds() {
+        HostileServer(instrumentation.context.assets, "singlestore").use { server ->
+            val name = "capybara.dataStores.test.${UUID.randomUUID()}"
+            val id = UUID.randomUUID().toString()
+            val stores = onMainValue { DataStores.create(context, name) }
+            try {
+                assertTrue(onMainValue { stores.usable(id) })
+                assertFalse("1 ms cannot finish", wipe(stores, listOf(server.originA), timeoutMs = 1))
+                assertTrue(onMainValue { stores.owedWipe() }!!.contains(server.originA))
+                assertFalse("no deployment loads while the wipe is owed", onMainValue { stores.usable(id) })
+                // A new process sees the same debt.
+                val next = onMainValue { DataStores.create(context, name) }
+                assertFalse(onMainValue { next.usable(id) })
+                assertTrue(wipe(next, emptyList()))
+                assertEquals(null, onMainValue { next.owedWipe() })
+                assertTrue(onMainValue { next.usable(id) })
+            } finally {
+                context.deleteSharedPreferences(name)
             }
         }
     }

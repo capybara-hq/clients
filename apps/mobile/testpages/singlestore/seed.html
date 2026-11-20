@@ -20,7 +20,7 @@
     });
     const cache = await caches.open("seed-cache");
     await cache.put("/seeded", new Response("x"));
-    await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.register(new URLSearchParams(location.search).get("sw") || "/sw.js");
     await navigator.serviceWorker.ready;
     await (await fetch("/cacheable-data.json")).text();
   }

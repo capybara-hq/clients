@@ -13,6 +13,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -31,22 +33,47 @@ object SingleStoreCleaner {
         "for(const k of await caches.keys())await caches.delete(k)}catch(e){}" +
         "document.title='$DONE_TITLE'})()</script>"
 
+    private fun answer(isPage: Boolean): WebResourceResponse =
+        if (isPage) {
+            WebResourceResponse("text/html", "utf-8", PAGE.byteInputStream())
+        } else {
+            WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), "".byteInputStream())
+        }
+
     /** The normalized http(s) origins among [raw], deduplicated; anything else is dropped. */
     fun origins(raw: List<String>): List<String> =
         raw.mapNotNull { value -> Origin.parse(value)?.takeIf { it.serialized == value }?.serialized }.distinct()
 
-    /** Runs on the main thread; [done] runs on it once every origin was cleaned (or timed out). */
+    /**
+     * Runs on the main thread; [done] runs on it once every origin was tried: true only when each
+     * one reported done, false when any timed out (its workers and caches may remain).
+     */
     @SuppressLint("SetJavaScriptEnabled")
-    fun clean(context: Context, origins: List<String>, done: () -> Unit) {
+    fun clean(context: Context, origins: List<String>, timeoutMs: Long = STEP_TIMEOUT_MS, done: (Boolean) -> Unit) {
         val main = Handler(Looper.getMainLooper())
         val queue = ArrayDeque(origins(origins))
+        var allCleaned = true
+        // A worker that answers navigations fetches through this client, not the WebViewClient:
+        // it gets the same local page for the clean URL and an empty 404 for everything else.
+        val workers = ServiceWorkerController.getInstance()
+        workers.setServiceWorkerClient(
+            object : ServiceWorkerClient() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse =
+                    answer(request.url.toString().substringBefore('?').endsWith(PATH))
+            },
+        )
+        fun finishAll() {
+            workers.setServiceWorkerClient(object : ServiceWorkerClient() {})
+            done(allCleaned)
+        }
         fun next() {
-            val origin = queue.removeFirstOrNull() ?: return done()
+            val origin = queue.removeFirstOrNull() ?: return finishAll()
             val view = WebView(context.applicationContext)
             var finished = false
             val finish = Runnable {
                 if (finished) return@Runnable
                 finished = true
+                if (view.title != DONE_TITLE) allCleaned = false
                 view.stopLoading()
                 view.destroy()
                 next()
@@ -66,15 +93,11 @@ object SingleStoreCleaner {
             val page = "$origin$PATH"
             view.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
-                    if (request.url.toString() == page) {
-                        WebResourceResponse("text/html", "utf-8", PAGE.byteInputStream())
-                    } else {
-                        WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), "".byteInputStream())
-                    }
+                    answer(request.url.toString() == page)
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
             }
-            main.postDelayed(finish, STEP_TIMEOUT_MS)
+            main.postDelayed(finish, timeoutMs)
             view.loadUrl(page)
         }
         next()

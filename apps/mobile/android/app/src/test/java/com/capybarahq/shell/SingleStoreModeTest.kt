@@ -96,3 +96,56 @@ class SingleStoreCleanerTest {
         assertEquals(listOf("https://a.example", "https://c.example:8443"), SingleStoreCleaner.origins(raw))
     }
 }
+
+class SingleStoreWipeTest {
+    private val a = "11111111-1111-4111-8111-111111111111"
+
+    private class Wipes(var origins: Set<String>? = null) : PendingDeletions {
+        override fun load(): Set<String> = emptySet()
+
+        override fun save(ids: Set<String>) {}
+
+        override fun loadWipe(): Set<String>? = origins
+
+        override fun saveWipe(origins: Set<String>?) {
+            this.origins = origins
+        }
+    }
+
+    private object Backend : ProfileBackend {
+        override fun create(name: String) {}
+
+        override fun delete(name: String) = false
+
+        override fun clear(name: String, done: () -> Unit) = done()
+
+        override fun clearDefault(done: () -> Unit) = done()
+
+        override fun names(): List<String> = emptyList()
+    }
+
+    private fun single(wipes: Wipes) =
+        DataStoreCore({ it == WebViewFeature.DOCUMENT_START_SCRIPT }, Backend, wipes)
+
+    @Test
+    fun noDeploymentLoadsWhileAWipeIsOwed() {
+        val wipes = Wipes()
+        val core = single(wipes)
+        assertTrue(core.usable(a))
+        core.beginWipe(setOf("https://a.example"))
+        assertTrue(!core.usable(a))
+        assertEquals(setOf("https://a.example"), core.owedWipe())
+        core.beginWipe(setOf("https://b.example"))
+        assertEquals(setOf("https://a.example", "https://b.example"), core.owedWipe())
+        core.endWipe()
+        assertTrue(core.usable(a))
+        assertEquals(null, core.owedWipe())
+    }
+
+    @Test
+    fun theOwedWipeSurvivesAProcess() {
+        val wipes = Wipes()
+        single(wipes).beginWipe(setOf("https://a.example"))
+        assertTrue(!single(wipes).usable(a))
+    }
+}

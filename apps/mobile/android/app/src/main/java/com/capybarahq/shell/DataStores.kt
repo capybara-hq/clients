@@ -43,6 +43,12 @@ interface PendingDeletions {
     fun load(): Set<String>
 
     fun save(ids: Set<String>)
+
+    /** Single store: the origins whose service workers and caches a failed wipe left; null = none. */
+    fun loadWipe(): Set<String>? = null
+
+    /** Records ([origins]) or clears (null) the owed wipe; returns once on disk. */
+    fun saveWipe(origins: Set<String>?) {}
 }
 
 /**
@@ -117,11 +123,20 @@ class DataStoreCore(
         return name
     }
 
-    /** True when [id] may load: valid, not being deleted. */
+    /** True when [id] may load: valid, not being deleted, and (single store) no wipe is owed. */
     fun usable(id: String): Boolean {
         startUp()
+        if (mode != DataStoreMode.MULTI && pending.loadWipe() != null) return false
         return UUID_PATTERN.matches(id) && id.lowercase() !in pending.load()
     }
+
+    /** Single store: the origins of a wipe that did not finish; no deployment loads until it has. */
+    fun owedWipe(): Set<String>? = pending.loadWipe()
+
+    /** Written before the wipe starts (intent first), so a kill or a timeout leaves it owed. */
+    fun beginWipe(origins: Set<String>) = pending.saveWipe((pending.loadWipe() ?: emptySet()) + origins)
+
+    fun endWipe() = pending.saveWipe(null)
 
     /**
      * Schedules the profile's deletion; [done] runs once it is durably recorded (and, for a profile
@@ -207,8 +222,42 @@ class SharedPrefsPendingDeletions(context: Context, name: String) : PendingDelet
         check(prefs.edit().putStringSet(KEY, ids.toSet()).commit()) { "pending deletions not saved" }
     }
 
+    override fun loadWipe(): Set<String>? =
+        if (prefs.contains(WIPE_KEY)) prefs.getStringSet(WIPE_KEY, emptySet())!!.toSet() else null
+
+    override fun saveWipe(origins: Set<String>?) {
+        val edit = prefs.edit()
+        if (origins == null) edit.remove(WIPE_KEY) else edit.putStringSet(WIPE_KEY, origins.toSet())
+        check(edit.commit()) { "owed wipe not saved" }
+    }
+
     companion object {
         const val KEY = "pendingDeletions"
+        const val WIPE_KEY = "owedSingleStoreWipe"
+    }
+}
+
+/** Origins the single-store profile WebView committed, so a wipe also reaches third-party ones. */
+object VisitedOrigins {
+    private const val PREFS = "capybara.visitedOrigins"
+    private const val KEY = "origins"
+    private const val MAX = 64
+    private val seen = HashSet<String>()
+
+    private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun all(context: Context): Set<String> = prefs(context).getStringSet(KEY, emptySet())!!.toSet()
+
+    fun record(context: Context, origin: String) {
+        if (!seen.add(origin)) return
+        val now = all(context)
+        if (origin in now || now.size >= MAX) return
+        prefs(context).edit().putStringSet(KEY, now + origin).apply()
+    }
+
+    fun clear(context: Context) {
+        seen.clear()
+        prefs(context).edit().remove(KEY).apply()
     }
 }
 
@@ -227,9 +276,39 @@ object DataStores {
     fun get(context: Context): DataStoreCore =
         instance ?: synchronized(this) { instance ?: create(context).also { instance = it } }
 
-    /** Single store: workers and caches first (they need the origins), then cookies and the rest. */
-    fun clearSingleStore(context: Context, core: DataStoreCore, origins: List<String>, done: () -> Unit) =
-        SingleStoreCleaner.clean(context, origins) { core.clearAll(done) }
+    /**
+     * Single store: workers and caches first (they need the origins: the given ones plus every
+     * origin the profile WebView visited, third-party ones included), then cookies and the rest.
+     * The wipe is recorded first; it is cleared only when every origin was cleaned, else [done]
+     * gets false, the wipe stays owed (no deployment loads, [resumeOwedWipe] retries at start).
+     */
+    fun clearSingleStore(
+        context: Context,
+        core: DataStoreCore,
+        origins: List<String>,
+        timeoutMs: Long = SingleStoreCleaner.STEP_TIMEOUT_MS,
+        done: (Boolean) -> Unit,
+    ) {
+        val all = (origins + VisitedOrigins.all(context)).toSet()
+        core.beginWipe(all)
+        val owed = core.owedWipe() ?: all
+        SingleStoreCleaner.clean(context, owed.toList(), timeoutMs) { ok ->
+            core.clearAll {
+                if (ok) {
+                    core.endWipe()
+                    VisitedOrigins.clear(context)
+                }
+                done(ok)
+            }
+        }
+    }
+
+    /** Cold start, single store: finishes a wipe an earlier process (or a timeout) left owed. */
+    fun resumeOwedWipe(context: Context, core: DataStoreCore) {
+        if (core.mode == DataStoreMode.SINGLE && core.owedWipe() != null) {
+            clearSingleStore(context, core, emptyList()) {}
+        }
+    }
 
     /** Debug builds only: forget the process-wide core (a device test changed the feature check). */
     fun debugReset() {
@@ -263,7 +342,10 @@ class DataStoresPlugin : Plugin() {
 
     override fun load() {
         // Deletions recorded by the last process run now, before any profile WebView exists.
-        main.post { core().startUp() }
+        main.post {
+            core().startUp()
+            DataStores.resumeOwedWipe(context, core())
+        }
     }
 
     private fun onMain(call: PluginCall, block: () -> Unit) {
@@ -296,6 +378,9 @@ class DataStoresPlugin : Plugin() {
         (activity as? MainActivity)?.profileHost?.closeAll()
         val array = call.getArray("origins")
         val origins = (0 until (array?.length() ?: 0)).mapNotNull { array?.optString(it) }
-        DataStores.clearSingleStore(context, core(), origins) { call.resolve() }
+        DataStores.clearSingleStore(context, core(), origins) { ok ->
+            // A wipe that did not finish rejects: the runtime keeps the current deployment.
+            if (ok) call.resolve() else call.reject("the shared store could not be wiped; try again")
+        }
     }
 }

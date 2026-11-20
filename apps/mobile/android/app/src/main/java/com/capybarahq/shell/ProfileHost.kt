@@ -122,6 +122,7 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         val view = (result as? ProfileWebView.Result.Ready)?.view ?: return null
         view.sink = this
         view.onSheet = { sheet(it) }
+        if (core.mode == DataStoreMode.SINGLE) view.onOrigin = { VisitedOrigins.record(activity, it) }
         view.setBackgroundColor(background ?: Color.TRANSPARENT)
         container.addView(
             view,
