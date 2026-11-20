@@ -184,7 +184,9 @@ describe("the callback", () => {
     expect(REDIRECT_URI).toBe(`${brand.scheme}://auth/callback`);
     expect(REDIRECT_URI).toBe("capybara://auth/callback");
     // The window reloads (the wiring reloads every window of the profile on its origin).
-    expect(onSignedIn).toHaveBeenCalledExactlyOnceWith(profile);
+    expect(onSignedIn).toHaveBeenCalledExactlyOnceWith(profile, expect.objectContaining({}));
+    // With the account the exchange answered (the wiring stores it).
+    expect(onSignedIn.mock.calls[0]?.[1]).toHaveProperty("login");
   });
 
   test("iss compares without a trailing slash", async () => {

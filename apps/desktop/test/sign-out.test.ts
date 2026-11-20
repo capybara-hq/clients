@@ -10,7 +10,7 @@ import {
   LOGIN_PAIR_MS,
   type SignOutDeps,
   SUPPRESS_GRACE_MS,
-  signOutOnLogin,
+  UNREACHABLE_LOGOUT_TIMEOUT_MS,
   watchLoginNavigations,
   watchLogout,
 } from "../src/main/sign-out.ts";
@@ -182,18 +182,10 @@ describe("noteLoggedOut / takeLoggedOut", () => {
 });
 
 describe("either order: the completion after the /login", () => {
-  function contents() {
-    const em = fakeEmitter();
-    return { ...em, on: em.on };
-  }
-
-  test("after will-navigate: the completion completes at once", async () => {
+  // The /login decision (session-watch.ts) calls noteLogin for a /login that ended no sign-out.
+  test("a completion within 5 s of a noted /login completes at once", async () => {
     const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    const e = { preventDefault: vi.fn() };
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    expect(e.preventDefault).not.toHaveBeenCalled();
+    h.signOut.noteLogin("p1");
     expect(h.deps.showSignedOut).not.toHaveBeenCalled();
     h.advance(LOGIN_PAIR_MS - 1);
     h.signOut.noteLoggedOut("p1");
@@ -201,15 +193,6 @@ describe("either order: the completion after the /login", () => {
     expect(h.order).toEqual(["mark", "show", "close"]);
     // No note is left for a later /login.
     expect(h.signOut.takeLoggedOut("p1")).toBe(false);
-  });
-
-  test("after did-navigate-in-page: the same", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    wc.emit("did-navigate-in-page", {}, "https://a.example.com/team/login", true);
-    h.signOut.noteLoggedOut("p1");
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
   });
 
   test("a /login older than 5 s does not pair: the completion waits for the next one", () => {
@@ -336,6 +319,52 @@ describe("complete", () => {
   });
 });
 
+describe("signOutNow (the expired page's 退出登录)", () => {
+  test("no dialog; a suppressed logout POST, the cookies cleared, then complete", async () => {
+    const h = setup();
+    await h.signOut.signOutNow("p1");
+    expect(h.deps.confirm).not.toHaveBeenCalled();
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(h.fetch.mock.calls[0]?.[0]).toBe("https://a.example.com/team/api/v1/auth/logout");
+    expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+    // Its own completion leaves no note for a later /login.
+    h.signOut.noteLoggedOut("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+  });
+
+  test("a profile no longer signed in: no POST, its windows closed through complete", async () => {
+    const h = setup({ hasProfileWindows: () => true });
+    h.deps.markSignedOut("p1");
+    h.order.length = 0;
+    await h.signOut.signOutNow("p1");
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.deps.closeProfileWindows).toHaveBeenCalledWith("p1");
+    expect(h.deps.showSignedOut).toHaveBeenCalled();
+  });
+
+  test("from the unreachable page the POST gives up after 2 s", async () => {
+    const spy = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const h = setup();
+      await h.signOut.confirmAndSignOut("p1", { unreachable: true });
+      expect(spy).toHaveBeenCalledWith(UNREACHABLE_LOGOUT_TIMEOUT_MS);
+      expect(UNREACHABLE_LOGOUT_TIMEOUT_MS).toBe(2_000);
+      expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a dead session still signs out", async () => {
+    const fetch = vi.fn(async () => {
+      throw new TypeError("network");
+    });
+    const h = setup({ fetchFor: () => fetch });
+    await h.signOut.signOutNow("p1");
+    expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+  });
+});
+
 describe("confirmAndSignOut", () => {
   test("asks, posts the logout through the partition, clears the cookies, completes", async () => {
     const h = setup();
@@ -438,40 +467,6 @@ describe("the login navigation watch", () => {
     return { ...em, on: em.on };
   }
   const event = () => ({ preventDefault: vi.fn() });
-
-  test("a /login after a logout completes the sign-out and stops the navigation", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    h.signOut.noteLoggedOut("p1");
-    const e = event();
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    expect(e.preventDefault).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
-    // Reported again (committed anyway): once only.
-    wc.emit("did-navigate", {}, "https://a.example.com/team/login");
-    expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1);
-  });
-
-  test("a client navigation (did-navigate-in-page) counts too", async () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    h.signOut.noteLoggedOut("p1");
-    wc.emit("did-navigate-in-page", {}, "https://a.example.com/team/login?returnTo=%2F", true);
-    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
-  });
-
-  test("a /login without a logout is left alone (K9 adds the expired page)", () => {
-    const h = setup();
-    const wc = contents();
-    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
-    const e = event();
-    wc.emit("will-navigate", e, "https://a.example.com/team/login");
-    wc.emit("did-navigate", {}, "https://a.example.com/team/login");
-    expect(e.preventDefault).not.toHaveBeenCalled();
-    expect(h.deps.showSignedOut).not.toHaveBeenCalled();
-  });
 
   test("subframes, other pages and other origins are ignored", () => {
     const onLogin = vi.fn();

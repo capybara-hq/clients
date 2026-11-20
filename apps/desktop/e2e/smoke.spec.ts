@@ -1,21 +1,14 @@
 // End-to-end smoke of the desktop app against a fake deployment (no network, no real sign-in, no
 // OS protocol handler, no system browser). See e2e/README.md for what this covers and what stays
 // manual. Run: pnpm e2e
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  type ElectronApplication,
-  _electron as electron,
-  expect,
-  type Page,
-  test,
-} from "@playwright/test";
+import { type ElectronApplication, expect, type Page, test } from "@playwright/test";
 import {
   type FakeDeployment,
   startFakeDeployment,
 } from "../../../packages/shell/test/fixtures/fake-deployment.ts";
+import { type Harness, launchApp } from "./harness.ts";
 
 // What the page's world sees (installed by the preload); only the parts the spec reads.
 interface PageShell {
@@ -23,8 +16,6 @@ interface PageShell {
   controls: Record<string, number> | null;
   capabilities: Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>;
 }
-const appDir = fileURLToPath(new URL("..", import.meta.url));
-
 let app: ElectronApplication;
 let userData: string;
 let fake: FakeDeployment;
@@ -33,40 +24,14 @@ let page: Page;
 
 test.describe.configure({ mode: "serial" });
 
+let harness: Harness;
+
 test.beforeAll(async () => {
   peer = await startFakeDeployment();
   fake = await startFakeDeployment({ peer: peer.base });
-  userData = mkdtempSync(join(tmpdir(), "capybara-e2e-"));
-  // The app under test never sees the developer's real device: its state directory and control
-  // socket (`$XDG_CONFIG_HOME/capybara-device`) live in the temp dir.
-  const configHome = join(userData, "config");
-  mkdirSync(configHome, { recursive: true });
-  // Electron started as Node would not open windows: ELECTRON_RUN_AS_NODE stays out.
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      CAPYBARA_E2E_USER_DATA: join(userData, "app"),
-      XDG_CONFIG_HOME: configHome,
-    }).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && entry[0] !== "ELECTRON_RUN_AS_NODE",
-    ),
-  );
-  // `--use-mock-keychain`: Chromium keeps the cookie encryption key of a persistent partition in
-  // the login Keychain ("Electron Safe Storage"); the run never reads or writes the real one, and
-  // never waits on a Keychain prompt.
-  app = await electron.launch({ args: [appDir, "--use-mock-keychain"], cwd: appDir, env });
-  // `use.trace` records nothing for `_electron.launch`: trace the app's context here and keep the
-  // trace only when a test failed (afterAll).
-  await app.context().tracing.start({ screenshots: true, snapshots: true });
-  // The system browser must not open: capture what the app would have opened.
-  await app.evaluate(({ shell }) => {
-    const opened: string[] = [];
-    (globalThis as { __opened?: string[] }).__opened = opened;
-    shell.openExternal = async (url: string) => {
-      opened.push(url);
-    };
-  });
+  harness = await launchApp();
+  app = harness.app;
+  userData = harness.userData;
 });
 
 let failed = false;
@@ -77,16 +42,14 @@ test.afterEach(() => {
 
 test.afterAll(async () => {
   try {
-    await app?.context().tracing.stop(failed ? { path: test.info().outputPath("trace.zip") } : {});
+    await harness?.close(failed, test.info().outputPath("trace.zip"));
   } finally {
-    await app?.close();
     await fake?.close();
     await peer?.close();
-    if (userData) rmSync(userData, { recursive: true, force: true });
   }
 });
 
-const openedUrls = () => app.evaluate(() => (globalThis as { __opened?: string[] }).__opened ?? []);
+const openedUrls = () => harness.openedUrls();
 
 interface ShellReport {
   type: string;
@@ -431,32 +394,103 @@ test("the web's own sign-out ends in the small window's signed-out page", async 
   expect(fake.logouts).toBe(1);
 });
 
-test("the same when the /login navigation lands before the logout completes", async () => {
-  // Sign in again from the signed-out page.
+/** The URLs of the overlays (WebContentsViews) over the open windows. */
+const overlayUrls = () =>
+  app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().flatMap((w) =>
+      w.contentView.children.map((v) => (v as Electron.WebContentsView).webContents.getURL()),
+    ),
+  );
+
+/** Signs in again from the page shown (`page`), playing the browser and the callback link. */
+async function signInFromPage(from: Page): Promise<void> {
   const opened = (await openedUrls()).length;
-  await page.locator("main .lp-btn").click();
+  await from.locator("main .lp-btn").click();
   await expect.poll(openedUrls).toHaveLength(opened + 1);
   const url = new URL((await openedUrls())[opened] as string);
-  await page.request.get(url.href);
+  await from.request.get(url.href);
   const signInState = url.searchParams.get("state") as string;
   const code = fake.issueCode(signInState);
   const link = `capybara://auth/callback?${new URLSearchParams({ code, state: signInState, iss: fake.base })}`;
   await app.evaluate(({ app: electronApp }, u) => {
     electronApp.emit("open-url", { preventDefault() {} }, u);
   }, link);
+}
+
+test("the same when the logout completes after the /login navigation", async () => {
+  // Sign in again from the signed-out page.
+  await signInFromPage(page);
   page = await windowOn(`${fake.base}/`);
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
 
-  // The logout's body (its completion on the partition) waits for the /login request, and that
-  // /login stays unanswered: the sign-out must end on the completion, not on a committed /login.
+  // The logout's body (its completion on the partition) is held: the page's fetch resolves on the
+  // headers and navigates to /login first. That /login is stopped (it never reaches the server)
+  // and the expired page covers the window until the completion ends the sign-out.
   fake.holdLogoutBody = true;
+  const before = fake.requests.length;
   await page.locator("#logout").click();
   try {
-    await expectSignedOut();
-    expect(fake.logouts).toBe(2);
-    const paths = fake.requests.map((r) => r.path);
-    expect(paths.lastIndexOf("/login")).toBeGreaterThan(paths.lastIndexOf("/api/v1/auth/logout"));
+    await expect.poll(overlayUrls).toEqual(["app://local/main-error.html"]);
   } finally {
-    fake.releaseLogin();
+    fake.releaseLogout();
   }
+  page = await expectSignedOut();
+  expect(fake.logouts).toBe(2);
+  expect(fake.requests.slice(before).map((r) => r.path)).not.toContain("/login");
+});
+
+test("an expired session: the expired page, then back to the page after signing in again", async () => {
+  await signInFromPage(page);
+  page = await windowOn(`${fake.base}/`);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+
+  // The web's session guard sends the window to /login: stopped, replaced by the local page.
+  const before = fake.requests.length;
+  await page.evaluate(() => {
+    window.location.href = "/login?returnTo=%2Fua";
+  });
+  const overlay = await windowOn("app://local/main-error.html");
+  await expect(overlay.locator("h1")).toHaveText(/^(登录已过期|Your session has expired)$/);
+  expect(fake.requests.slice(before).map((r) => r.path)).not.toContain("/login?returnTo=%2Fua");
+
+  await signInFromPage(overlay);
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page).toHaveURL(`${fake.base}/ua`);
+});
+
+test("an unreachable platform: the unreachable page, 重试, back when it answers", async () => {
+  fake.down = true;
+  try {
+    await page.goto(`${fake.base}/`);
+    const overlay = await windowOn("app://local/main-error.html");
+    await expect(overlay.locator("h1")).toHaveText(
+      /^(平台暂时连不上|Can’t reach the platform right now)$/,
+    );
+    // Still down: 重试 probes and the page stays.
+    const probes = () => fake.requests.filter((r) => r.path === "/api/v1/meta").length;
+    const seen = probes();
+    await overlay.locator("main .lp-btn").click();
+    await expect.poll(probes).toBeGreaterThan(seen);
+    await expect(overlay.locator("main .lp-btn")).toBeEnabled();
+    expect(await overlayUrls()).toEqual(["app://local/main-error.html"]);
+    fake.down = false;
+    await overlay.locator("main .lp-btn").click();
+  } finally {
+    fake.down = false;
+  }
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+});
+
+test("a client navigation to /login (history.pushState) shows the expired page too", async () => {
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  // A router's replace/push: no request, only did-navigate-in-page.
+  await page.evaluate(() => {
+    history.pushState(null, "", "/login?returnTo=%2Fua");
+  });
+  const overlay = await windowOn("app://local/main-error.html");
+  await expect(overlay.locator("h1")).toHaveText(/^(登录已过期|Your session has expired)$/);
+  await signInFromPage(overlay);
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page).toHaveURL(`${fake.base}/ua`);
 });

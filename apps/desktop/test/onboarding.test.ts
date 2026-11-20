@@ -512,6 +512,24 @@ describe("waiting", () => {
     expect(h.deps.openWindow).toHaveBeenCalledTimes(2);
   });
 
+  test("another profile's sign-out while waiting keeps this sign-in (window forward only)", async () => {
+    const h = setup();
+    await toWaiting(h);
+    const other: Profile = {
+      id: "p9",
+      base: "https://other.example.com",
+      origin: "https://other.example.com",
+      name: "Other",
+      signedIn: false,
+      account: ACCOUNT,
+    };
+    h.host.showSignedOut(other);
+    expect(h.state().page).toBe("waiting");
+    expect(h.sign.signIn.cancel).not.toHaveBeenCalled();
+    expect(h.deps.clearPartition).not.toHaveBeenCalled();
+    expect(h.deps.openWindow).toHaveBeenCalledTimes(2);
+  });
+
   test("closing the window abandons: cancel, then the partition cleared after quiesce", async () => {
     const h = setup();
     await toWaiting(h);
