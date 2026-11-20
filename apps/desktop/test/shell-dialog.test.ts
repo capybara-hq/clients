@@ -18,6 +18,7 @@ import {
   type ShellDialogOptions,
   signOutDialogOptions,
 } from "../src/main/shell-dialog.ts";
+import { type Appearance, BUILTIN_TOKENS } from "../src/shared/appearance.ts";
 import { LOCAL_ORIGIN, localPageUrl } from "../src/shared/protocol.ts";
 
 type Listener = (...args: unknown[]) => void;
@@ -97,8 +98,8 @@ function fakeWindow(options: DialogWindowOptions) {
 type FakeWindow = ReturnType<typeof fakeWindow>;
 
 const BASE = {
-  locale: "zh" as const,
-  appearance: { scheme: "dark" as const },
+  locale: "zh" as "zh" | "en",
+  appearance: { scheme: "dark" } as Appearance,
   controls: null,
   os: "macos" as const,
   appName: "Capybara",
@@ -127,7 +128,13 @@ function fakeParent(o: { visible?: boolean; minimized?: boolean } = {}) {
   };
 }
 
-function setup(o: { loadFails?: boolean; os?: "macos" | "windows" | "linux" } = {}) {
+function setup(
+  o: {
+    loadFails?: boolean;
+    os?: "macos" | "windows" | "linux";
+    pageBase?: (profileId?: string) => typeof BASE;
+  } = {},
+) {
   let clock = 1_000;
   const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
   const windows: FakeWindow[] = [];
@@ -145,7 +152,7 @@ function setup(o: { loadFails?: boolean; os?: "macos" | "windows" | "linux" } = 
       typeof p === "object" && p !== null && (p as { kind?: string }).kind === "parent"
         ? (p as ReturnType<typeof fakeParent>)
         : undefined,
-    pageBase: () => ({ ...BASE, os: o.os ?? "macos" }),
+    pageBase: (profileId) => ({ ...(o.pageBase?.(profileId) ?? BASE), os: o.os ?? "macos" }),
     workArea: () => ({ x: 0, y: 0, width: 1400, height: 900 }),
     now: () => clock,
     setTimer: (fn, ms) => {
@@ -683,5 +690,63 @@ describe("no OS message box is left", () => {
       if (/\bdialog\.show\w*\(/.test(text)) offenders.push(file);
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("the dialog's appearance (spec 6.10)", () => {
+  test("a dialog about a profile takes that profile's scheme; without one, the app's", () => {
+    const light = { ...BASE, appearance: { scheme: "light" } as Appearance };
+    const s = setup({ pageBase: (profileId) => (profileId === "p1" ? light : BASE) });
+    void s.dialogs.show(null, { ...OPTIONS, profileId: "p1" });
+    void s.dialogs.show(null, OPTIONS);
+    const [forProfile, appLevel] = s.windows as [FakeWindow, FakeWindow];
+    expect(forProfile.options).toMatchObject({ backgroundColor: BUILTIN_TOKENS.light.panel });
+    expect(appLevel.options).toMatchObject({ backgroundColor: BUILTIN_TOKENS.dark.panel });
+    const top = s.top;
+    expect(
+      s.pages.handleState({ sender: forProfile.webContents, senderFrame: top })?.appearance,
+    ).toEqual({ scheme: "light" });
+    expect(
+      s.pages.handleState({ sender: appLevel.webContents, senderFrame: top })?.appearance,
+    ).toEqual({ scheme: "dark" });
+    // The profile's pages are found by its id, so a theme change repaints the open dialog.
+    expect(s.pages.entries((e) => e.profileId === "p1")).toHaveLength(1);
+  });
+
+  test("a page's reported colors never reach a dialog (ink as transparent as the panel)", () => {
+    const hostile: Appearance = {
+      scheme: "light",
+      singleScheme: true,
+      tokens: {
+        bg: "rgba(0, 0, 0, 0)",
+        panel: "rgba(0, 0, 0, 0)",
+        ink: "rgba(0, 0, 0, 0)",
+        muted: "rgba(0, 0, 0, 0)",
+        line: "rgba(0, 0, 0, 0)",
+        accent: "rgba(0, 0, 0, 0)",
+        onAccent: "rgba(0, 0, 0, 0)",
+      },
+    };
+    const s = setup({ pageBase: () => ({ ...BASE, appearance: hostile }) });
+    void s.dialogs.show(null, { ...OPTIONS, profileId: "p1" });
+    const w = s.windows[0] as FakeWindow;
+    expect(w.options).toMatchObject({ backgroundColor: BUILTIN_TOKENS.light.panel });
+    expect(s.pages.handleState({ sender: w.webContents, senderFrame: s.top })?.appearance).toEqual({
+      scheme: "light",
+    });
+  });
+
+  test("confirmSignOut speaks the profile's language", async () => {
+    const s = setup({
+      pageBase: (profileId) => ({ ...BASE, locale: profileId === "p1" ? "en" : "zh" }),
+    });
+    void s.dialogs.confirmSignOut(null, { name: "Acme", host: "acme.example.com" }, "p1");
+    void s.dialogs.confirmSignOut(null, { name: "Acme", host: "acme.example.com" });
+    const [en, zh] = s.windows as [FakeWindow, FakeWindow];
+    const title = (w: FakeWindow) =>
+      (s.pages.handleState({ sender: w.webContents, senderFrame: s.top }) as { title?: string })
+        ?.title;
+    expect(title(en)).toBe(signOutDialogOptions("en", { name: "Acme", host: "x" }).title);
+    expect(title(zh)).toBe(signOutDialogOptions("zh", { name: "Acme", host: "x" }).title);
   });
 });

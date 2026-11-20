@@ -555,6 +555,21 @@ describe("signed out", () => {
       platform: { name: "Meta1 智能体平台", host: "capybara.meta1.top", iconUrl: ICON },
     });
     expect(h.localPages.entries()[0]?.profileId).toBe("p1");
+    expect(h.state().deviceConnected).toBe(false);
+  });
+
+  test("the device note: this machine is that deployment's device", () => {
+    let connected = true;
+    const h = setup({ deviceConnected: (id) => connected && id === "p1" });
+    h.host.showSignedOut(p1);
+    expect(h.state()).toMatchObject({ page: "signedOut", deviceConnected: true });
+    connected = false;
+    h.host.refresh();
+    expect(h.state().deviceConnected).toBe(false);
+    // Only the signed-out page carries it.
+    connected = true;
+    h.host.showFound(p1);
+    expect(h.state()).toMatchObject({ page: "found", deviceConnected: false });
   });
 
   test("在浏览器中重新登录 signs in to that profile and opens its main window", async () => {

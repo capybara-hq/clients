@@ -3,10 +3,10 @@ import {
   createChromeCapability,
   createNotifyCapability,
   createOpenExternalCapability,
-  isBackgroundColor,
   sameOriginUrl,
 } from "../src/main/capabilities.ts";
 import type { Profile } from "../src/main/profiles.ts";
+import type { Appearance } from "../src/shared/appearance.ts";
 
 const profile: Profile = {
   id: "p1",
@@ -135,33 +135,149 @@ describe("openExternal@1", () => {
   });
 });
 
+const TOKENS = {
+  bg: "rgb(16, 20, 24)",
+  panel: "#111",
+  ink: "rgba(230, 230, 227, 1)",
+  muted: "#8e8e89",
+  line: "#2a2a28",
+  accent: "#ff6a13",
+  onAccent: "#0a0a0a",
+};
+
+function chromeCtx(o: { overlay?: "ok" | "throws" } = {}) {
+  return {
+    ...ctx(),
+    window: {
+      setBackgroundColor: vi.fn(),
+      ...(o.overlay
+        ? {
+            setTitleBarOverlay: vi.fn(() => {
+              if (o.overlay === "throws") throw new Error("Titlebar overlay is not enabled");
+            }),
+          }
+        : {}),
+    },
+  };
+}
+
 describe("chrome@1", () => {
   test("setAppearance sets the window background", async () => {
-    const cap = createChromeCapability();
-    const c = ctx();
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx();
     await cap.setAppearance(c, { scheme: "dark", background: "#101418" });
     expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    expect(onReport).toHaveBeenCalledWith(profile, { scheme: "dark" });
   });
 
-  test("an invalid colour or scheme is refused", async () => {
+  test("an rgb() background is handed to Electron as #rrggbb", async () => {
     const cap = createChromeCapability();
-    const c = ctx();
+    const c = chromeCtx();
+    await cap.setAppearance(c, { scheme: "light", background: "rgba(250, 249, 246, 1)" });
+    expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#faf9f6");
+  });
+
+  test("see-through colors: the background is not applied, a token set is dropped", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx();
+    await cap.setAppearance(c, { scheme: "light", background: "rgba(250, 249, 246, 0.5)" });
+    expect(c.window.setBackgroundColor).not.toHaveBeenCalled();
+    expect(onReport).toHaveBeenLastCalledWith(profile, { scheme: "light" });
+    await cap.setAppearance(c, {
+      scheme: "dark",
+      background: "#101418",
+      tokens: { ...TOKENS, ink: "rgba(0, 0, 0, 0)" },
+      singleScheme: true,
+    });
+    // Scheme and background stay; the tokens are not stored.
+    expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    expect(onReport).toHaveBeenLastCalledWith(profile, { scheme: "dark", singleScheme: true });
+  });
+
+  test("a report equal to the stored one is not reported again", async () => {
+    let stored: Appearance | undefined;
+    const onReport = vi.fn((_p: Profile, a: Appearance) => {
+      stored = a;
+    });
+    const cap = createChromeCapability({ onReport, stored: () => stored });
+    const c = chromeCtx();
+    const input = { scheme: "dark", background: "#101418", tokens: TOKENS };
+    await cap.setAppearance(c, input);
+    await cap.setAppearance(c, { ...input, tokens: { ...TOKENS } });
+    expect(onReport).toHaveBeenCalledTimes(1);
+    // The window still follows each call.
+    expect(c.window.setBackgroundColor).toHaveBeenCalledTimes(2);
+    await cap.setAppearance(c, { ...input, singleScheme: true });
+    expect(onReport).toHaveBeenCalledTimes(2);
+  });
+
+  test("tokens and singleScheme are stored; tokens.bg wins as the background", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx({ overlay: "ok" });
+    await cap.setAppearance(c, {
+      scheme: "dark",
+      background: "#000000",
+      tokens: TOKENS,
+      singleScheme: true,
+    });
+    expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    expect(c.window.setTitleBarOverlay).toHaveBeenCalledWith({
+      color: "#101418",
+      symbolColor: "#8e8e89",
+    });
+    expect(onReport).toHaveBeenCalledWith(profile, {
+      scheme: "dark",
+      tokens: TOKENS,
+      singleScheme: true,
+    });
+  });
+
+  test("singleScheme false is accepted and not stored", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    await cap.setAppearance(chromeCtx(), {
+      scheme: "light",
+      background: "#fff",
+      singleScheme: false,
+    });
+    expect(onReport).toHaveBeenCalledWith(profile, { scheme: "light" });
+  });
+
+  test("a window without a title bar overlay still takes the call", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx({ overlay: "throws" });
+    await cap.setAppearance(c, { scheme: "dark", background: "#101418", tokens: TOKENS });
+    expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    expect(onReport).toHaveBeenCalledTimes(1);
+  });
+
+  test("an invalid colour, scheme, token set or singleScheme is refused", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx();
+    const { accent: _accent, ...sixTokens } = TOKENS;
     for (const input of [
       { scheme: "dark", background: "red; x" },
       { scheme: "dark", background: "url(x)" },
+      { scheme: "dark", background: "red" },
+      { scheme: "dark", background: "#11223344" },
       { scheme: "blue", background: "#fff" },
       { scheme: "dark" },
+      { scheme: "dark", background: "#fff", tokens: sixTokens },
+      { scheme: "dark", background: "#fff", tokens: { ...TOKENS, ink: "var(--x)" } },
+      { scheme: "dark", background: "#fff", tokens: { ...TOKENS, line: "</style>" } },
+      { scheme: "dark", background: "#fff", tokens: "x" },
+      { scheme: "dark", background: "#fff", tokens: null },
+      { scheme: "dark", background: "#fff", singleScheme: "yes" },
       null,
     ]) {
       await expect(cap.setAppearance(c, input)).rejects.toEqual({ code: "failed" });
     }
     expect(c.window.setBackgroundColor).not.toHaveBeenCalled();
-  });
-
-  test("colour forms", () => {
-    // Only #rgb and #rrggbb: Electron reads 4 and 8 digits as alpha first, CSS as alpha last.
-    for (const c of ["#fff", "#FFFFFF", "#101418"]) expect(isBackgroundColor(c)).toBe(true);
-    for (const c of ["fff", "#ggg", "#12345", "#1234", "#11223344", "rgb(1,2,3)", " #fff", ""])
-      expect(isBackgroundColor(c)).toBe(false);
+    expect(onReport).not.toHaveBeenCalled();
   });
 });

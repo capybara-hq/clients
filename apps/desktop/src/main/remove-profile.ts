@@ -18,7 +18,8 @@ export interface ProfileRemovalDeps {
   /** A live window to attach the dialogs to (`windows.dialogParent`), or undefined. */
   dialogParent(profileId: string): unknown;
   showDialog: ShowShellDialog;
-  locale: Locale;
+  /** The dialog's language: fixed, or the profile's own (spec §12). */
+  locale: Locale | ((profileId: string) => Locale);
   /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
   iconFor?: (profile: Profile) => string | undefined;
   /** device@1's `beforeRemoveProfile`: asks whether to disconnect and log the device out. */
@@ -34,9 +35,9 @@ export interface ProfileRemovalDeps {
 }
 
 export function createProfileRemoval(deps: ProfileRemovalDeps) {
-  const tr = (key: string, vars?: Record<string, string>) => t(deps.locale, key, vars);
-
   async function confirm(parent: unknown, profile: Profile): Promise<boolean> {
+    const locale = typeof deps.locale === "function" ? deps.locale(profile.id) : deps.locale;
+    const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
     const { name, host } = platformLabel(profile);
     const options: ShellDialogOptions = {
       title:
@@ -50,6 +51,7 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
       confirmId: 1,
       tone: "danger",
       platform: dialogPlatformOf(profile, deps.iconFor?.(profile)),
+      profileId: profile.id,
     };
     const { response } = await deps.showDialog(parent, options);
     return response === options.confirmId;

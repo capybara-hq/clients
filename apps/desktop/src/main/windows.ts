@@ -42,6 +42,8 @@ export interface WebContentsLike extends ContentsLike {
   send(channel: string, payload: unknown): void;
   reload(): void;
   isDestroyed(): boolean;
+  /** The main frame's URL now (sign-out pairs a logout with a window already on /login). */
+  getURL?(): string;
 }
 
 export interface WindowLike {
@@ -174,13 +176,24 @@ export interface WindowManagerDeps {
   describeEvents?: (profile: Profile) => CapabilityDescriptors;
   /** A profile window committed a main-frame navigation: what is offered may be decided again. */
   onProfileLoad?: (profile: Profile) => void;
+  /**
+   * A profile partition was prepared (once per partition, before its first window loads): the
+   * sign-out's `webRequest.onCompleted` listener goes here (sign-out.ts `watchLogout`).
+   */
+  onPartitionPrepared?: (profile: Profile, partition: string) => void;
+  /**
+   * A profile window was created, before its first load: the login navigation watch goes here
+   * (sign-out.ts `watchLoginNavigations`; K9's session watch takes it over).
+   */
+  onProfileWindow?: (profile: Profile, window: WindowLike) => void;
   /** A profile window closed: its event subscriptions can go. */
   onProfileClosed?: (webContentsId: number) => void;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
   /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
   userAgent: string;
-  backgroundColor?: () => string;
+  /** A window's ground before its page paints: the profile's appearance (desktop spec §6.10). */
+  backgroundColor?: (profile: Profile) => string;
   /** The displays' work areas, for the main window's first rectangle (`screen.getAllDisplays`). */
   displays?: () => DisplayInfo[];
   /** Remembers a main window's rectangle for its profile (spec §6.7). */
@@ -289,7 +302,10 @@ export function createWindowManager(deps: WindowManagerDeps) {
     }
   }
 
-  /** Permissions, the sign-in guard and the user agent, once per profile partition. */
+  /**
+   * Permissions, the sign-in guard, the user agent and the logout watch, once per profile
+   * partition.
+   */
   function preparePartition(profile: Profile): string {
     const partition = partitionFor(profile.id);
     if (!permissionsInstalled.has(partition)) {
@@ -298,6 +314,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       blockInWindowSignIn(ses, profile.base);
       installDesktopUserAgent(ses, profile.origin, deps.userAgent);
       permissionsInstalled.add(partition);
+      deps.onPartitionPrepared?.(profile, partition);
     }
     return partition;
   }
@@ -326,7 +343,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       title: profile.name,
       titleBarStyle: "hiddenInset",
       trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
-      ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
+      ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
       webPreferences: profileWebPreferences({ partition, preload: deps.preloadPath }),
     });
     const entry: Extract<Entry, { kind: "profile" }> = { kind: "profile", profile, window: win };
@@ -337,6 +354,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       openProfileWindow: (target) => openProfileWindow(profile, target),
     });
     win.webContents.on("did-navigate", () => deps.onProfileLoad?.(profile));
+    deps.onProfileWindow?.(profile, win);
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
     const save = deps.saveBounds;
@@ -458,7 +476,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
         // The default title bar: the page has no inset for traffic lights.
         title: profile.name,
         ...(parentAlive ? { parent } : {}),
-        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
+        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
         webPreferences: childWebPreferences({ partition: preparePartition(profile) }),
       });
       hardenProfileContents(win.webContents, {
@@ -535,6 +553,26 @@ export function createWindowManager(deps: WindowManagerDeps) {
       return lastFocused?.kind === "small" && entries().includes(lastFocused)
         ? lastFocused.window
         : undefined;
+    },
+
+    /** Whether a main window of the profile is open. */
+    hasProfileWindows(profileId: string): boolean {
+      return profileEntries(profileId).length > 0;
+    },
+
+    /** The main-frame URLs of the profile's open windows (a destroyed one is skipped). */
+    profileUrls(profileId: string): string[] {
+      const urls: string[] = [];
+      for (const e of profileEntries(profileId)) {
+        try {
+          const wc = e.window.webContents;
+          const url = wc.isDestroyed() ? undefined : wc.getURL?.();
+          if (url) urls.push(url);
+        } catch {
+          // Gone between the check and the read.
+        }
+      }
+      return urls;
     },
 
     hasWindows(): boolean {

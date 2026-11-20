@@ -112,6 +112,41 @@ describe("profile windows", () => {
     expect(created[0]?.loadURL).toHaveBeenCalledWith("https://a.example.com/team");
   });
 
+  test("the sign-out hooks: once per partition, once per profile window", () => {
+    const onPartitionPrepared = vi.fn();
+    const onProfileWindow = vi.fn();
+    const { windows, created } = setup({ onPartitionPrepared, onProfileWindow });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    windows.openSmallWindow(COLORS);
+    expect(onPartitionPrepared.mock.calls).toEqual([
+      [p1, "persist:profile-p1"],
+      [p2, "persist:profile-p2"],
+    ]);
+    expect(onProfileWindow.mock.calls).toEqual([
+      [p1, created[0]],
+      [p1, created[1]],
+      [p2, created[2]],
+    ]);
+  });
+
+  test("hasProfileWindows and profileUrls (sign-out pairs a logout with a window on /login)", () => {
+    const { windows, created } = setup();
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    Object.assign(created[0]?.webContents ?? {}, {
+      getURL: () => "https://a.example.com/team/login",
+    });
+    expect(windows.hasProfileWindows("p1")).toBe(true);
+    expect(windows.profileUrls("p1")).toEqual(["https://a.example.com/team/login"]);
+    // No getURL on the fake: nothing to report.
+    expect(windows.profileUrls("p2")).toEqual([]);
+    windows.closeProfileWindows("p1");
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+  });
+
   test("permission handlers are installed once per partition", () => {
     const { windows, sessions } = setup();
     windows.openProfileWindow(p1);

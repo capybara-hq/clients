@@ -27,6 +27,15 @@ const state = {
   lockDeployments: false,
 };
 
+/** The app menu's actions (the 「平台」 menu adds sign-out and removal). */
+const menuActions = () => ({
+  ...actions(),
+  signOut: vi.fn(),
+  removeProfile: vi.fn(),
+  setStartAtLogin: vi.fn(),
+});
+const menuProfiles = state.profiles.map((p) => ({ ...p, signedIn: true }));
+
 const labels = (items: MenuItemModel[]) =>
   items.map((i) => (i.type === "separator" ? "-" : (i.label ?? i.role)));
 
@@ -109,11 +118,17 @@ describe("the tray menu model", () => {
     expect(
       labels(
         appMenuTemplate(
-          { ...state, lockDeployments: true, productName: "Capybara", startAtLogin: false },
-          { ...a, setStartAtLogin: vi.fn() },
+          {
+            ...state,
+            profiles: menuProfiles,
+            lockDeployments: true,
+            productName: "Capybara",
+            startAtLogin: false,
+          },
+          menuActions(),
         )[1]?.submenu ?? [],
       ),
-    ).toEqual(["Example", "Other"]);
+    ).toEqual(["Example", "Other", "-", "退出登录 Other…"]);
   });
 
   test("without profiles the menu starts at the entries that remain", () => {
@@ -200,6 +215,7 @@ describe("start at login (spec 9.4)", () => {
 
   const menuState = (startAtLogin: boolean) => ({
     ...state,
+    profiles: menuProfiles,
     productName: "Capybara",
     startAtLogin,
   });
@@ -211,12 +227,7 @@ describe("start at login (spec 9.4)", () => {
     const startAtLogin = createStartAtLogin(app);
     expect(startAtLogin.enabled()).toBe(false);
     expect(app.setLoginItemSettings).not.toHaveBeenCalled();
-    const item = login(
-      appMenuTemplate(menuState(startAtLogin.enabled()), {
-        ...actions(),
-        setStartAtLogin: vi.fn(),
-      }),
-    );
+    const item = login(appMenuTemplate(menuState(startAtLogin.enabled()), menuActions()));
     expect(item).toMatchObject({ type: "checkbox", checked: false });
   });
 
@@ -229,8 +240,8 @@ describe("start at login (spec 9.4)", () => {
     const startAtLogin = createStartAtLogin(app);
     const item = login(
       appMenuTemplate(menuState(false), {
-        ...actions(),
-        setStartAtLogin: (on) => startAtLogin.set(on),
+        ...menuActions(),
+        setStartAtLogin: (on: boolean) => startAtLogin.set(on),
       }),
     );
     item?.click?.({ checked: true });
@@ -248,9 +259,16 @@ describe("start at login (spec 9.4)", () => {
   });
 
   test("the app menu carries the platform switcher and the standard menus", () => {
-    const template = appMenuTemplate(menuState(false), { ...actions(), setStartAtLogin: vi.fn() });
+    const template = appMenuTemplate(menuState(false), menuActions());
     expect(template.map((i) => i.label)).toEqual(["Capybara", "平台", "编辑", "显示", "窗口"]);
-    expect(labels(template[1]?.submenu ?? [])).toEqual(["Example", "Other", "-", "添加平台"]);
+    expect(labels(template[1]?.submenu ?? [])).toEqual([
+      "Example",
+      "Other",
+      "-",
+      "添加平台…",
+      "退出登录 Other…",
+      "移除这个平台…",
+    ]);
   });
 
   // Electron hard-codes English labels for bare roles (spec §12): every item carries a catalog
@@ -261,7 +279,7 @@ describe("start at login (spec 9.4)", () => {
     );
 
   test("every role item has a Chinese label", () => {
-    const template = appMenuTemplate(menuState(false), { ...actions(), setStartAtLogin: vi.fn() });
+    const template = appMenuTemplate(menuState(false), menuActions());
     expect(roleItems(template)).toEqual([
       ["about", "关于 Capybara"],
       ["hide", "隐藏 Capybara"],
@@ -292,13 +310,10 @@ describe("start at login (spec 9.4)", () => {
   });
 
   test("every role item has an English label", () => {
-    const template = appMenuTemplate(
-      { ...menuState(false), locale: "en" },
-      { ...actions(), setStartAtLogin: vi.fn() },
-    );
+    const template = appMenuTemplate({ ...menuState(false), locale: "en" }, menuActions());
     expect(template.map((i) => i.label)).toEqual([
       "Capybara",
-      "Platforms",
+      "Platform",
       "Edit",
       "View",
       "Window",
@@ -341,21 +356,18 @@ describe("start at login (spec 9.4)", () => {
           if (i.submenu) walk(i.submenu);
         }
       };
-      walk(
-        appMenuTemplate(
-          { ...menuState(false), locale },
-          { ...actions(), setStartAtLogin: vi.fn() },
-        ),
-      );
+      walk(appMenuTemplate({ ...menuState(false), locale }, menuActions()));
     }
   });
 
   test("with lockDeployments the app menu offers no 添加平台", () => {
-    const template = appMenuTemplate(
-      { ...menuState(false), lockDeployments: true },
-      { ...actions(), setStartAtLogin: vi.fn() },
-    );
-    expect(labels(template[1]?.submenu ?? [])).toEqual(["Example", "Other"]);
+    const template = appMenuTemplate({ ...menuState(false), lockDeployments: true }, menuActions());
+    expect(labels(template[1]?.submenu ?? [])).toEqual([
+      "Example",
+      "Other",
+      "-",
+      "退出登录 Other…",
+    ]);
   });
 });
 

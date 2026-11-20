@@ -2,7 +2,6 @@
   "platform.add": "Add a platform",
   "tray.open_window": "Open window",
   "tray.quit": "Quit",
-  "menu.platforms": "Platforms",
   "menu.start_at_login": "Start at login",
   "device.allow": "Allow",
   "device.cancel": "Cancel",
@@ -162,5 +161,6 @@
   "menu.platform.title": "Platform",
   "menu.platform.add": "Add Platform…",
   "menu.platform.signOut": "Sign Out of {platform}…",
+  "menu.platform.signOutPlain": "Sign Out…",
   "menu.platform.remove": "Remove This Platform…"
 }

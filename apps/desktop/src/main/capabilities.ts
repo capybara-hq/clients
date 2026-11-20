@@ -1,6 +1,16 @@
 // The capabilities of this task (spec §8): notify@1, openExternal@1, chrome@1. Each function gets
 // the caller's context first and validates the page's arguments itself; a refusal is
 // `{ code: "failed" }`. Electron objects come in as parameters.
+import {
+  type Appearance,
+  electronColor,
+  isColor,
+  isOpaque,
+  overlayColors,
+  sameAppearance,
+  type Tokens,
+  validTokens,
+} from "./appearance.ts";
 import type { CallContext } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
 
@@ -87,28 +97,63 @@ export function createOpenExternalCapability(deps: { openExternal(url: string): 
   };
 }
 
-/**
- * `#rgb` or `#rrggbb` only: Electron reads 4 and 8 digits as alpha first while CSS reads alpha
- * last, so those forms would paint the wrong colour.
- */
-export function isBackgroundColor(v: string): boolean {
-  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v);
-}
-
 export interface ChromeContext extends CallContext {
-  window: { setBackgroundColor(color: string): void };
+  window: {
+    setBackgroundColor(color: string): void;
+    /** Windows / Linux, a window with a title bar overlay only (Electron throws otherwise). */
+    setTitleBarOverlay?(o: { color: string; symbolColor: string }): void;
+  };
 }
 
-export function createChromeCapability() {
+export interface ChromeDeps {
+  /**
+   * The profile's report, validated: main stores it on the profile and repaints that profile's
+   * local pages and small window (desktop spec §6.10).
+   */
+  onReport?(profile: Profile, appearance: Appearance): void;
+  /** The profile's stored report: an equal one is not reported again (the web sends one per load). */
+  stored?(profileId: string): Appearance | undefined;
+}
+
+/**
+ * chrome@1 (layout spec §9.2, desktop spec §6.10): `{ scheme, background, tokens?, singleScheme? }`.
+ * Every color is checked with `isColor` (a hex or `rgb()` / `rgba()`); tokens are all seven or the
+ * call fails, never a partial set. The window background is `tokens.bg`, else `background`, handed
+ * to Electron as `#rrggbb`.
+ */
+export function createChromeCapability(deps: ChromeDeps = {}) {
   return {
     async setAppearance(ctx: ChromeContext, input: unknown): Promise<void> {
       if (!isRecord(input)) throw failed();
-      const { scheme, background } = input;
+      const { scheme, background, tokens: rawTokens, singleScheme } = input;
       if (scheme !== "light" && scheme !== "dark") throw failed();
-      if (typeof background !== "string" || !isBackgroundColor(background)) throw failed();
-      // The scheme is validated but the macOS window appearance is app-wide (nativeTheme), so
-      // only the window background follows the page.
-      ctx.window.setBackgroundColor(background);
+      if (!isColor(background)) throw failed();
+      let tokens: Tokens | undefined;
+      if (rawTokens !== undefined) {
+        tokens = validTokens(rawTokens);
+        if (!tokens) throw failed();
+        // A see-through token could hide text on the local pages: the set is dropped (the call
+        // still succeeds; the pages use the built-in colors of the scheme).
+        if (!Object.values(tokens).every(isOpaque)) tokens = undefined;
+      }
+      if (singleScheme !== undefined && typeof singleScheme !== "boolean") throw failed();
+      const appearance: Appearance = {
+        scheme,
+        ...(tokens ? { tokens } : {}),
+        ...(singleScheme === true ? { singleScheme: true } : {}),
+      };
+      // The macOS window appearance is app-wide (nativeTheme): only the window's own colors follow.
+      // A see-through background is not applied to the window (Electron drops the alpha).
+      const ground = tokens?.bg ?? background;
+      const bg = isOpaque(ground) ? electronColor(ground) : undefined;
+      if (bg) ctx.window.setBackgroundColor(bg);
+      try {
+        ctx.window.setTitleBarOverlay?.(overlayColors(appearance));
+      } catch {
+        // No overlay on this window (macOS, or a window opened without one).
+      }
+      if (sameAppearance(deps.stored?.(ctx.profile.id), appearance)) return;
+      deps.onReport?.(ctx.profile, appearance);
     },
   };
 }

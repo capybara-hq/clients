@@ -888,6 +888,34 @@ describe("cancel() and restarts", () => {
     }
   });
 
+  test("the revoke's logout runs inside aroundLogout (no sign-out note for it)", async () => {
+    const { signIn, deps, fetchCalls } = setup();
+    const inside: string[] = [];
+    let wrapping = false;
+    deps.aroundLogout = async (profileId, run) => {
+      wrapping = true;
+      try {
+        inside.push(profileId);
+        return await run();
+      } finally {
+        wrapping = false;
+      }
+    };
+    const wrapped: boolean[] = [];
+    const queue = [okResponse({ nope: true }), { ok: true, status: 204, json: async () => null }];
+    deps.fetchFor = (p) => async (url, init) => {
+      fetchCalls.push({ profileId: p.id, url, init });
+      wrapped.push(wrapping);
+      return queue.shift() as ResponseLike;
+    };
+    const { outcome } = signIn.begin(profile);
+    await signIn.handleCallback(callback({}));
+    await expect(outcome).resolves.toEqual({ ok: false, reason: "link_invalid" });
+    // The exchange is not wrapped; the logout is.
+    expect(wrapped).toEqual([false, true]);
+    expect(inside).toEqual(["p1"]);
+  });
+
   test("a failing logout or cookie clearing is logged by name and still releases the slot", async () => {
     const { signIn, deps, log } = setup();
     const queue: (() => Promise<ResponseLike>)[] = [
