@@ -136,6 +136,19 @@ select {
   app-region: drag;
 }
 
+/* The window controls (the --lp-controls-* rectangle, set from the main process) stay clear of
+   the drag band; with no rectangle the box is empty. */
+.lp-drag::after {
+  content: "";
+  position: absolute;
+  left: var(--lp-controls-x, 0);
+  top: var(--lp-controls-y, 0);
+  width: var(--lp-controls-w, 0);
+  height: var(--lp-controls-h, 0);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 button,
 input,
 select,

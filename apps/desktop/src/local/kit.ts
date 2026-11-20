@@ -3,6 +3,7 @@
 // alerts and the step list. Everything is built with createElement and textContent: no markup
 // strings, so nothing from a state (a platform name, a host) is ever parsed as HTML.
 import type { PagePlatform } from "../shared/local-page.ts";
+import { isIconDataUrl } from "./icon-url.ts";
 import type { PageContext } from "./runtime.ts";
 
 type Child = Node | string | null | undefined | false;
@@ -203,14 +204,6 @@ export function appFooter(ctx: PageContext): HTMLElement {
     ctx.t("onboarding.footer", { name: ctx.state.appName, version: ctx.state.version }),
     { mark: true },
   );
-}
-
-const DATA_IMAGE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
-const DATA_IMAGE_MAX = 1_500_000;
-
-/** True for the only icon form a page shows: a base64 PNG / JPEG / WebP data: URL. */
-export function isIconDataUrl(v: unknown): v is string {
-  return typeof v === "string" && v.length <= DATA_IMAGE_MAX && DATA_IMAGE.test(v);
 }
 
 /** The platform icon (72 px rounded, 40 px in dialogs), or the default icon when none or invalid. */

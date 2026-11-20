@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { isIconDataUrl } from "../src/local/icon-url.ts";
 import {
   applyState,
   controlsProperties,
@@ -181,5 +182,17 @@ describe("startPage", () => {
     await started;
     expect(render).toHaveBeenCalledTimes(1);
     expect(render.mock.calls[0]?.[0].state.page).toBe("found");
+  });
+});
+
+describe("isIconDataUrl", () => {
+  test("accepts base64 PNG, JPEG and WebP data URLs only", () => {
+    expect(isIconDataUrl("data:image/png;base64,iVBORw0KGgo=")).toBe(true);
+    expect(isIconDataUrl("data:image/webp;base64,AAAA")).toBe(true);
+    expect(isIconDataUrl("data:image/svg+xml;base64,AAAA")).toBe(false);
+    expect(isIconDataUrl("data:image/png;base64,AA AA")).toBe(false);
+    expect(isIconDataUrl("https://x.example/icon.png")).toBe(false);
+    expect(isIconDataUrl(`data:image/png;base64,${"A".repeat(1_500_000)}`)).toBe(false);
+    expect(isIconDataUrl(42)).toBe(false);
   });
 });
