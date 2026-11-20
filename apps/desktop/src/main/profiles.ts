@@ -29,7 +29,11 @@ export interface ProfileBounds {
   height: number;
 }
 
-export type NewProfile = Omit<Profile, "id" | "signedIn"> & { signedIn?: boolean };
+/**
+ * `id`: the id of the provisional profile whose partition already holds the first sign-in's cookies
+ * (spec §6.3); absent = a new id.
+ */
+export type NewProfile = Omit<Profile, "id" | "signedIn"> & { id?: string; signedIn?: boolean };
 /**
  * `undefined` deletes an optional field (iconHash, account, bounds, appearance); for `name` and
  * `signedIn` it means no change.
@@ -218,7 +222,7 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
       if (!n.ok || n.base !== input.base || n.origin !== input.origin) {
         throw new Error("profile address is not normalized");
       }
-      const id = deps.newId();
+      const id = input.id ?? deps.newId();
       if (!ID.test(id) || state.profiles.some((p) => p.id === id)) {
         throw new Error("profile id is not usable");
       }

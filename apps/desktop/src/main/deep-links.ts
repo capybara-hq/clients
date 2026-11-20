@@ -10,7 +10,7 @@ export interface DeepLinkHandlers {
   /** `capybara://auth/callback`: the sign-in module decides whether it matches an attempt. */
   onAuth(cb: AuthCallback): Promise<void>;
   /**
-   * `capybara://connect?url=`: opens the address page prefilled; never connects silently.
+   * `capybara://connect?url=`: opens the connect page prefilled; never connects silently.
    * Without a handler the link does nothing.
    */
   onConnect?: (address: string) => void;
@@ -41,7 +41,7 @@ export function createDeepLinkRouter(handlers: DeepLinkHandlers) {
   };
 }
 
-/** The address page takes no more than this many characters. */
+/** The connect field takes no more than this many characters. */
 const MAX_LINK_ADDRESS = 2048;
 
 export interface DeepLinkActions {
@@ -49,8 +49,8 @@ export interface DeepLinkActions {
   profiles(): readonly Profile[];
   /** Managed `lockDeployments`: false for an address that is not on the managed list. */
   isAllowedAddress(address: string): boolean;
-  /** Opens (or reuses) the address page with `prefill` in its field; the person confirms. */
-  openAddress(prefill: string): void;
+  /** Opens (or reuses) the small window's connect page with `prefill` in its field. */
+  openConnect(prefill: string): void;
   /** Focuses a window of the profile and loads `url` there. */
   showProfile(profile: Profile, url: string): void;
 }
@@ -81,10 +81,10 @@ export function profileForUrl(
 /** The `connect` and `open` handlers. Links are untrusted: nothing here saves or signs in. */
 export function createDeepLinkHandlers(actions: DeepLinkActions) {
   return {
-    /** Prefills the address page and stops there: the person presses continue. */
+    /** Prefills the connect page and stops there: the person presses continue. */
     onConnect(address: string): void {
       if (address.length > MAX_LINK_ADDRESS || !actions.isAllowedAddress(address)) return;
-      actions.openAddress(address);
+      actions.openConnect(address);
     },
     /** Only for a profile that already exists, and only to a URL on its own origin. */
     onOpen(url: string): void {

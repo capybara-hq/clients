@@ -1,8 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
 import type { Profile } from "../src/main/profiles.ts";
-import { createWindowManager, type WindowManagerDeps } from "../src/main/windows.ts";
-import { ADDRESS_URL, SHELL_CHANNELS, TRAFFIC_LIGHT_POSITION } from "../src/shared/protocol.ts";
+import {
+  createWindowManager,
+  smallWindowControls,
+  smallWindowOptions,
+  type WindowManagerDeps,
+} from "../src/main/windows.ts";
+import {
+  DESKTOP_CONTROLS,
+  localPageUrl,
+  SHELL_CHANNELS,
+  TRAFFIC_LIGHT_POSITION,
+} from "../src/shared/protocol.ts";
 import { fakeEmitter, fakeSession, fakeWebContents } from "./fakes.ts";
+
+const COLORS = { background: "#0A0A0A", symbol: "#8E8E89" };
 
 const p1: Profile = {
   id: "p1",
@@ -24,7 +36,6 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
   const sessions = new Map<string, ReturnType<typeof fakeSession>>();
   const options: Record<string, unknown>[] = [];
   const onFocusProfile = vi.fn();
-  const onAddressClosed = vi.fn();
   const openExternal = vi.fn();
   function fakeWindow(origin: string) {
     const em = fakeEmitter();
@@ -44,6 +55,10 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
       isMinimized: () => false,
       restore: vi.fn(),
       setBackgroundColor: vi.fn(),
+      bounds: { x: 0, y: 0, width: 1280, height: 800 },
+      getBounds() {
+        return { ...this.bounds };
+      },
       loadURL: vi.fn(async (_url: string) => undefined),
     };
   }
@@ -52,7 +67,7 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
       options.push(opts as unknown as Record<string, unknown>);
       const partition = (opts.webPreferences as { partition?: string }).partition ?? "";
       const origin = partition.startsWith("persist:profile-p2") ? p2.origin : p1.origin;
-      const w = fakeWindow(partition === "address" ? "app://address" : origin);
+      const w = fakeWindow(partition === "local" ? "app://local" : origin);
       created.push(w);
       return w;
     },
@@ -66,16 +81,15 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
       return s;
     },
     preloadPath: "/dist/preload/index.cjs",
-    addressPreloadPath: "/dist/preload/address.cjs",
+    localPreloadPath: "/dist/preload/local.cjs",
     platform: "macos",
     openExternal,
     describe: () => ({}),
     onFocusProfile,
-    onAddressClosed,
     userAgent: "Capybara Desktop/0.1.0 (Box)",
     ...extra,
   });
-  return { windows, created, options, sessions, onFocusProfile, onAddressClosed, openExternal };
+  return { windows, created, options, sessions, onFocusProfile, openExternal };
 }
 
 describe("profile windows", () => {
@@ -103,11 +117,11 @@ describe("profile windows", () => {
     expect(s?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
   });
 
-  test("the profile partition blocks in-window sign-in once; the address partition has no guard", () => {
+  test("the profile partition blocks in-window sign-in once; the local partition has no guard", () => {
     const { windows, sessions } = setup();
     windows.openProfileWindow(p1);
     windows.openProfileWindow(p1);
-    windows.openAddressWindow();
+    windows.openSmallWindow(COLORS);
     const s = sessions.get("persist:profile-p1");
     expect(s?.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
     expect(s?.beforeRequest("POST", "https://a.example.com/team/api/v1/auth/login")).toBe(true);
@@ -115,14 +129,14 @@ describe("profile windows", () => {
       true,
     );
     expect(s?.beforeRequest("GET", "https://a.example.com/team/chat/1")).toBe(false);
-    expect(sessions.get("address")?.webRequest.onBeforeRequest).not.toHaveBeenCalled();
+    expect(sessions.get("local")).toBeUndefined();
   });
 
   test("the profile partition sends the desktop user agent to its origin only", () => {
     const { windows, sessions } = setup();
     windows.openProfileWindow(p1);
     windows.openProfileWindow(p1);
-    windows.openAddressWindow();
+    windows.openSmallWindow(COLORS);
     const s = sessions.get("persist:profile-p1");
     expect(s?.webRequest.onBeforeSendHeaders).toHaveBeenCalledTimes(1);
     const chromium = { "User-Agent": "Mozilla/5.0" };
@@ -130,7 +144,7 @@ describe("profile windows", () => {
       "User-Agent": "Capybara Desktop/0.1.0 (Box)",
     });
     expect(s?.beforeSendHeaders("https://github.com/login", chromium)).toEqual(chromium);
-    expect(sessions.get("address")?.webRequest.onBeforeSendHeaders).not.toHaveBeenCalled();
+    expect(sessions.get("local")).toBeUndefined();
   });
 
   test("reloadProfile reloads the profile's windows on its origin and brings one forward", () => {
@@ -260,9 +274,8 @@ describe("profile windows", () => {
 
   test("a closed window is forgotten without touching its destroyed webContents", () => {
     const onProfileClosed = vi.fn();
-    const onAddressClosed = vi.fn();
-    const { windows, created } = setup({ onProfileClosed, onAddressClosed });
-    windows.openAddressWindow();
+    const { windows, created } = setup({ onProfileClosed });
+    windows.openSmallWindow(COLORS);
     windows.openProfileWindow(p1);
     const ids = created.map((w) => w.webContents.id);
     // Electron: reading `webContents` of a window that emitted `closed` throws.
@@ -275,8 +288,7 @@ describe("profile windows", () => {
     }
     expect(() => created[0]?.emit("closed")).not.toThrow();
     expect(() => created[1]?.emit("closed")).not.toThrow();
-    expect(onAddressClosed).toHaveBeenCalledWith(ids[0]);
-    expect(onProfileClosed).toHaveBeenCalledWith(ids[1]);
+    expect(onProfileClosed).toHaveBeenCalledExactlyOnceWith(ids[1]);
     expect(windows.hasWindows()).toBe(false);
   });
 
@@ -299,48 +311,127 @@ describe("profile windows", () => {
   });
 });
 
-describe("the address window", () => {
-  test("loads the app:// page with its own preload and partition", () => {
+describe("the small window", () => {
+  test("480×600 on the local onboarding page, fixed size, the local partition and preload", () => {
     const { windows, created, options } = setup();
-    windows.openAddressWindow();
+    const { window, created: isNew } = windows.openSmallWindow(COLORS);
+    expect(isNew).toBe(true);
+    expect(window).toBe(created[0]);
     expect(options[0]).toMatchObject({
+      width: 480,
+      height: 600,
+      useContentSize: true,
+      resizable: false,
+      maximizable: false,
+      fullscreenable: false,
       titleBarStyle: "hiddenInset",
-      webPreferences: { partition: "address", preload: "/dist/preload/address.cjs", sandbox: true },
+      trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+      backgroundColor: "#0A0A0A",
+      webPreferences: { partition: "local", preload: "/dist/preload/local.cjs", sandbox: true },
     });
-    expect(created[0]?.loadURL).toHaveBeenCalledWith(ADDRESS_URL);
-    expect(windows.isAddressSender(created[0]?.webContents)).toBe(true);
+    expect(options[0]).not.toHaveProperty("titleBarOverlay");
+    expect(created[0]?.loadURL).toHaveBeenCalledWith(localPageUrl("onboarding"));
+    // Not a profile window: no Shell IPC resolves to it.
     expect(windows.resolveSender(created[0]?.webContents)).toBeUndefined();
+    expect(windows.smallWindow()).toBe(created[0]);
   });
 
-  test("a second request focuses the open address window and keeps its prefill", () => {
+  test("one at a time: a second request brings the open one forward", () => {
     const { windows, created } = setup();
-    windows.openAddressWindow("a.example.com");
-    windows.openAddressWindow();
+    windows.openSmallWindow(COLORS);
+    const again = windows.openSmallWindow(COLORS);
+    expect(again.created).toBe(false);
     expect(created).toHaveLength(1);
-    expect(windows.prefillFor(created[0]?.webContents)).toBe("a.example.com");
+    expect(created[0]?.focus).toHaveBeenCalled();
   });
 
-  test("the address partition denies every permission", async () => {
-    const { windows, sessions } = setup();
-    windows.openAddressWindow();
-    const s = sessions.get("address");
-    expect(s?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
-    expect(await s?.request("notifications", "app://address/index.html")).toBe(false);
-    expect(s?.check("clipboard-sanitized-write", "app://address")).toBe(false);
-  });
-
-  test("closing the address window reports its webContents id", () => {
-    const { windows, created, onAddressClosed } = setup();
-    windows.openAddressWindow();
-    const id = created[0]?.webContents.id;
-    created[0]?.close();
-    expect(onAddressClosed).toHaveBeenCalledWith(id);
-  });
-
-  test("a profile window is not an address sender", () => {
+  test("a closed small window is forgotten; closeSmallWindow closes it", () => {
     const { windows, created } = setup();
+    windows.openSmallWindow(COLORS);
+    windows.closeSmallWindow();
+    expect(created[0]?.close).toHaveBeenCalled();
+    expect(windows.smallWindow()).toBeUndefined();
+    expect(windows.hasWindows()).toBe(false);
+  });
+
+  test("it stays on app://local", () => {
+    const { windows, created } = setup();
+    windows.openSmallWindow(COLORS);
+    const away = { url: "https://evil.example.com/", preventDefault: vi.fn() };
+    created[0]?.webContents.emit("will-navigate", away, away.url);
+    expect(away.preventDefault).toHaveBeenCalled();
+  });
+
+  test("focusLast and dialogParent include it", () => {
+    const { windows, created } = setup();
+    windows.openSmallWindow(COLORS);
+    expect(windows.focusLast(() => false)).toBe(true);
+    expect(windows.dialogParent("p1")).toBe(created[0]);
+  });
+
+  test("Windows and Linux: a hidden title bar with the caption overlay in the appearance's colors", () => {
+    for (const platform of ["windows", "linux"] as const) {
+      const o = smallWindowOptions(platform, COLORS, { title: "Capybara", preload: "/l.cjs" });
+      expect(o).toMatchObject({
+        titleBarStyle: "hidden",
+        titleBarOverlay: { color: "#0A0A0A", symbolColor: "#8E8E89", height: 32 },
+        resizable: false,
+        maximizable: false,
+        fullscreenable: false,
+      });
+      expect(o).not.toHaveProperty("trafficLightPosition");
+      expect(smallWindowControls(platform)).toEqual({ x: 342, y: 0, width: 138, height: 32 });
+    }
+    expect(smallWindowControls("macos")).toEqual(DESKTOP_CONTROLS);
+  });
+});
+
+describe("the main window's rectangle", () => {
+  const displays = () => [
+    { workArea: { x: 0, y: 25, width: 1440, height: 875 }, primary: true },
+    { workArea: { x: 1440, y: 0, width: 1920, height: 1080 } },
+  ];
+
+  test("first opening: 1280×800 centered on the primary display, minimum 480×400", () => {
+    const { windows, options } = setup({ displays });
     windows.openProfileWindow(p1);
-    expect(windows.isAddressSender(created[0]?.webContents)).toBe(false);
+    expect(options[0]).toMatchObject({
+      x: 80,
+      y: 63,
+      width: 1280,
+      height: 800,
+      minWidth: 480,
+      minHeight: 400,
+    });
+  });
+
+  test("a saved rectangle on a display is reused; one off every display is centered", () => {
+    const { windows, options } = setup({ displays });
+    windows.openProfileWindow({ ...p1, bounds: { x: 1500, y: 100, width: 900, height: 700 } });
+    windows.openProfileWindow({ ...p1, bounds: { x: 9000, y: 9000, width: 900, height: 700 } });
+    expect(options[0]).toMatchObject({ x: 1500, y: 100, width: 900, height: 700 });
+    expect(options[1]).toMatchObject({ x: 80, y: 63, width: 1280, height: 800 });
+  });
+
+  test("moves and resizes are saved for the profile (debounced), and on close", () => {
+    const saveBounds = vi.fn();
+    const timers: (() => void)[] = [];
+    const { windows, created } = setup({
+      displays,
+      saveBounds,
+      boundsScheduler: { set: (fn) => timers.push(fn), clear: () => undefined },
+    });
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.bounds = { x: 10, y: 20, width: 1000, height: 700 };
+    win.emit("resize");
+    expect(saveBounds).not.toHaveBeenCalled();
+    timers.at(-1)?.();
+    expect(saveBounds).toHaveBeenLastCalledWith("p1", { x: 10, y: 20, width: 1000, height: 700 });
+    win.bounds = { x: 30, y: 40, width: 1000, height: 700 };
+    win.emit("close");
+    expect(saveBounds).toHaveBeenLastCalledWith("p1", { x: 30, y: 40, width: 1000, height: 700 });
   });
 });
 

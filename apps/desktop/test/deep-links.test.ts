@@ -191,7 +191,7 @@ describe("connect and open (spec 6.4)", () => {
     const actions = {
       profiles: () => [a, team, wide] as readonly Profile[],
       isAllowedAddress: () => true,
-      openAddress: vi.fn(),
+      openConnect: vi.fn(),
       showProfile: vi.fn(),
       ...over,
     };
@@ -204,26 +204,26 @@ describe("connect and open (spec 6.4)", () => {
     return { actions, router };
   }
 
-  test("connect prefills the address page and does nothing else", () => {
+  test("connect prefills the connect page and does nothing else", () => {
     const { actions, router } = setup();
     router.routeDeepLink("capybara://connect?url=new.example.com");
-    expect(actions.openAddress).toHaveBeenCalledExactlyOnceWith("new.example.com");
-    // Never a saved profile, never a window of a profile: only the address page.
+    expect(actions.openConnect).toHaveBeenCalledExactlyOnceWith("new.example.com");
+    // Never a saved profile, never a window of a profile: only the connect page.
     expect(actions.showProfile).not.toHaveBeenCalled();
   });
 
   test("connect to an address the lock does not allow is ignored", () => {
     const { actions, router } = setup({ isAllowedAddress: (addr) => addr === "ok.example.com" });
     router.routeDeepLink("capybara://connect?url=evil.example.com");
-    expect(actions.openAddress).not.toHaveBeenCalled();
+    expect(actions.openConnect).not.toHaveBeenCalled();
     router.routeDeepLink("capybara://connect?url=ok.example.com");
-    expect(actions.openAddress).toHaveBeenCalledWith("ok.example.com");
+    expect(actions.openConnect).toHaveBeenCalledWith("ok.example.com");
   });
 
   test("an absurdly long connect address is ignored", () => {
     const { actions, router } = setup();
     router.routeDeepLink(`capybara://connect?url=${"a".repeat(3000)}.example.com`);
-    expect(actions.openAddress).not.toHaveBeenCalled();
+    expect(actions.openConnect).not.toHaveBeenCalled();
   });
 
   test("open focuses the profile of the URL's own origin and navigates to that URL", () => {
@@ -271,6 +271,6 @@ describe("connect and open (spec 6.4)", () => {
     const { actions, router } = setup({ profiles: () => [] });
     router.routeDeepLink(`capybara://open?url=${encodeURIComponent("https://a.example.com/")}`);
     expect(actions.showProfile).not.toHaveBeenCalled();
-    expect(actions.openAddress).not.toHaveBeenCalled();
+    expect(actions.openConnect).not.toHaveBeenCalled();
   });
 });

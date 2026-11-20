@@ -3,7 +3,6 @@
 // from the profile's own origin (no redirect), accepted only as a PNG of at most 1 MB, and cached
 // by the hash in its URL (`?v=`). Electron objects and the network come in as parameters.
 import { fetchMeta } from "@capybara-hq/shell";
-import { readCapped } from "./address.ts";
 import type { Profile } from "./profiles.ts";
 
 export const DOCK_ICON_MAX_BYTES = 1024 * 1024;
@@ -31,6 +30,25 @@ export interface DockIconDeps {
   log?: (message: string, err?: unknown) => void;
 }
 
+/** Reads a body; null when it is larger than `limit` bytes (the rest is not read). */
+export async function readCapped(res: Response, limit: number): Promise<Uint8Array | null> {
+  if (!res.body) return null;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function fetchPng(url: URL, fetchFn: typeof fetch): Promise<Uint8Array | null> {
   try {
     const res = await fetchFn(url.href, {
@@ -44,6 +62,60 @@ async function fetchPng(url: URL, fetchFn: typeof fetch): Promise<Uint8Array | n
   } catch {
     return null;
   }
+}
+
+/**
+ * The meta icon's URL resolved against the deployment's base, only on its own origin; with the
+ * cache hash from its `?v=` when that looks like one. Null for anything else.
+ */
+export function platformIconUrl(
+  profile: { base: string; origin: string },
+  icon: string | null | undefined,
+): { url: URL; hash: string | null } | null {
+  if (!icon) return null;
+  let url: URL;
+  try {
+    url = new URL(icon, `${profile.base}/`);
+  } catch {
+    return null;
+  }
+  if (url.origin !== profile.origin) return null;
+  const v = url.searchParams.get("v");
+  return { url, hash: v !== null && HASH.test(v) ? v : null };
+}
+
+/**
+ * The platform icon for the local pages, by the Dock's rules: from the deployment's own origin,
+ * never redirected, a PNG of at most 1 MB, cached by its hash (the cache is read first). Null when
+ * the platform has no icon or it does not pass.
+ */
+export async function fetchPlatformIcon(
+  profile: { base: string; origin: string },
+  icon: string | null | undefined,
+  deps: Pick<DockIconDeps, "fetch" | "readCache" | "writeCache" | "log">,
+): Promise<{ png: Uint8Array; hash: string | null } | null> {
+  const target = platformIconUrl(profile, icon);
+  if (!target) return null;
+  const { url, hash } = target;
+  if (hash) {
+    const cached = deps.readCache(hash);
+    if (isPng(cached)) return { png: cached, hash };
+  }
+  const png = await fetchPng(url, deps.fetch);
+  if (!png) return null;
+  if (hash) {
+    try {
+      deps.writeCache(hash, png);
+    } catch (err) {
+      deps.log?.("could not cache the platform icon", err);
+    }
+  }
+  return { png, hash };
+}
+
+/** A PNG as the data: URL the local pages accept. */
+export function pngDataUrl(png: Uint8Array): string {
+  return `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
 }
 
 export function createDockIcon(deps: DockIconDeps) {
@@ -80,31 +152,8 @@ export function createDockIcon(deps: DockIconDeps) {
         return apply(isPng(last) ? last : null);
       }
       if (!meta.icon) return apply(null);
-
-      let url: URL;
-      try {
-        url = new URL(meta.icon, `${profile.base}/`);
-      } catch {
-        return apply(null);
-      }
-      // The icon comes from the profile's own origin only.
-      if (url.origin !== profile.origin) return apply(null);
-
-      const v = url.searchParams.get("v");
-      const hash = v !== null && HASH.test(v) ? v : null;
-      if (hash) {
-        const cached = deps.readCache(hash);
-        if (isPng(cached)) return apply(cached);
-      }
-      const png = await fetchPng(url, deps.fetch);
-      if (png && hash) {
-        try {
-          deps.writeCache(hash, png);
-        } catch (err) {
-          deps.log?.("could not cache the Dock icon", err);
-        }
-      }
-      return apply(png);
+      const icon = await fetchPlatformIcon(profile, meta.icon, deps);
+      return apply(icon?.png ?? null);
     },
   };
 }

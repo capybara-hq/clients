@@ -412,6 +412,7 @@ describe("the main side announces fullscreen", () => {
       isMinimized: () => false,
       restore: vi.fn(),
       setBackgroundColor: vi.fn(),
+      getBounds: () => ({ x: 0, y: 0, width: 1280, height: 800 }),
       loadURL: vi.fn(async () => undefined),
     };
   }
@@ -422,7 +423,7 @@ describe("the main side announces fullscreen", () => {
       createWindow: () => win,
       sessionFor: () => fakeSession(),
       preloadPath: "/p.cjs",
-      addressPreloadPath: "/a.cjs",
+      localPreloadPath: "/l.cjs",
       platform: "macos",
       openExternal: vi.fn(),
       describe: () => ({ "notify@1": ["notify"] }),
@@ -457,7 +458,7 @@ describe("the main side announces fullscreen", () => {
       createWindow: () => win,
       sessionFor: () => fakeSession(),
       preloadPath: "/p.cjs",
-      addressPreloadPath: "/a.cjs",
+      localPreloadPath: "/l.cjs",
       platform: "macos",
       openExternal: vi.fn(),
       describe: () => ({}),

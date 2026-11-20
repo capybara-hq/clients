@@ -1,7 +1,7 @@
 // Builds the app into dist/: the main process and the preloads as single CommonJS bundles (a
-// sandboxed preload cannot require local files), the address page's static files, and the local
-// pages: each src/local/pages/<name>.ts bundled for the browser into dist/local/<name>.js (one
-// IIFE per page, kit and runtime included), next to its html (and css, if any) and base.css.
+// sandboxed preload cannot require local files), and the local pages: each
+// src/local/pages/<name>.ts bundled for the browser into dist/local/<name>.js (one IIFE per page,
+// kit and runtime included), next to its html (and css, if any) and base.css.
 // Run: pnpm --filter @capybara-hq/desktop build
 import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -58,17 +58,12 @@ await build({
   ...common,
   entryPoints: {
     "preload/index": "src/preload/index.ts",
-    "preload/address": "src/preload/address.ts",
     "preload/local": "src/preload/local.ts",
   },
   platform: "browser",
   target: "chrome130",
 });
 
-await mkdir(`${dist}/address-page`, { recursive: true });
-for (const file of ["index.html", "address.css", "address.js"]) {
-  await copyFile(`${root}src/address-page/${file}`, `${dist}/address-page/${file}`);
-}
 // Flat names only: app://local serves `/<name>.(html|css|js)` and nothing nested.
 const LOCAL_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.(ts|html|css)$/;
 const pagesDir = `${root}src/local/pages`;

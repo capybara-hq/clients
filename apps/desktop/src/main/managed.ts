@@ -5,7 +5,6 @@
 // Values come from outside the app: every field is validated on its own and a malformed one is
 // ignored (the others still apply); a missing or unreadable file reads as `{}`.
 import { normalizeAddress } from "@capybara-hq/shell";
-import type { Discovery } from "./address.ts";
 import type { NewProfile } from "./profiles.ts";
 
 export interface ManagedConfig {
@@ -146,8 +145,8 @@ export function isAddressAllowed(managed: ManagedConfig, input: string): boolean
 export interface EnsureProfilesDeps {
   /** Whether a profile for `base` is saved already. */
   has(base: string): boolean;
-  /** The address page's discovery (the network call). */
-  discover(base: string): Promise<Discovery>;
+  /** Discovery of the deployment (the network call): what would be saved for it. */
+  discover(base: string): Promise<{ ok: true; candidate: NewProfile } | { ok: false }>;
   add(candidate: NewProfile): unknown;
 }
 
@@ -167,7 +166,7 @@ export async function ensureManagedProfiles(
     try {
       const found = await deps.discover(base);
       // The discovered address must be the managed one: nothing else is saved on its behalf.
-      if (found.result.ok && found.candidate && found.candidate.base === base) {
+      if (found.ok && found.candidate.base === base) {
         deps.add(found.candidate);
         added += 1;
       }

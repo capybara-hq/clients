@@ -63,6 +63,29 @@ describe("profiles", () => {
     expect(store.list()).toHaveLength(1);
   });
 
+  test("a provisional profile is saved under its own id (its partition holds the cookies)", () => {
+    const { store } = setup();
+    const p = store.add({ ...example, id: "prov-1", signedIn: true });
+    expect(p).toMatchObject({ id: "prov-1", signedIn: true });
+    expect(store.get("prov-1")?.base).toBe(example.base);
+    expect(() =>
+      store.add({
+        ...example,
+        base: "https://z.example.com",
+        origin: "https://z.example.com",
+        id: "prov-1",
+      }),
+    ).toThrow();
+    expect(() =>
+      store.add({
+        ...example,
+        base: "https://y.example.com",
+        origin: "https://y.example.com",
+        id: "../x",
+      }),
+    ).toThrow();
+  });
+
   test("partition per profile", () => {
     expect(partitionFor("p1")).toBe("persist:profile-p1");
   });

@@ -1,0 +1,63 @@
+/*
+ * The small window's pages (desktop spec §6.1; boards Main, Found, Waiting, Errors, ErrorsSignIn,
+ * SignedOut, FoundWindows). The kit's base.css carries the components; this file only the spacing
+ * the boards give each page.
+ */
+
+/* Connect: the field and the button form one column; the button sits 10 px lower (4 px under an
+   error, whose message keeps a two-line height so the button does not jump). */
+.ob-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+
+.ob-form > .lp-btn {
+  margin-top: 10px;
+}
+
+.ob-form .lp-alert {
+  min-height: 42px;
+}
+
+.ob-form .lp-field:has(.lp-alert) + .lp-btn {
+  margin-top: 4px;
+}
+
+/* Found: the board's 24 px rhythm (the other icon pages use the kit's 22 px). */
+.ob-found .lp-content {
+  gap: 24px;
+}
+
+.ob-found.ob-error .lp-content {
+  gap: 22px;
+}
+
+.ob-error .lp-alert--box {
+  min-height: 68px;
+}
+
+/* The host line's 换一个地址 is body text, not mono. */
+.lp-host .lp-link {
+  font-size: 12px;
+  color: var(--cb-muted);
+}
+
+/* Waiting: the two secondary buttons over the bare 取消. */
+.ob-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Windows and Linux: the caption buttons sit top right, the preference bar bottom right, so the
+   app footer moves to the bottom left (board FoundWindows). */
+:root[data-os="windows"] .lp-footer:has(svg),
+:root[data-os="linux"] .lp-footer:has(svg) {
+  left: 16px;
+  right: auto;
+  justify-content: flex-start;
+}

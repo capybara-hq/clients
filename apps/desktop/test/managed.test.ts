@@ -211,7 +211,7 @@ describe("isAddressAllowed", () => {
 
 describe("ensureManagedProfiles", () => {
   const found = (base: string) => ({
-    result: { ok: true as const, name: "N", host: "h", icon: null },
+    ok: true as const,
     candidate: { base, origin: new URL(base).origin, name: "N" },
   });
 
@@ -236,7 +236,7 @@ describe("ensureManagedProfiles", () => {
         has: () => false,
         discover: async (base) => {
           if (base.includes("down")) throw new Error("offline");
-          if (base.includes("old")) return { result: { ok: false, error: "too_old" } };
+          if (base.includes("old")) return { ok: false as const };
           return found(base);
         },
         add,

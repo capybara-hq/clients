@@ -13,12 +13,7 @@ describe("app://local", () => {
     if (v === undefined) throw new Error("ENOENT");
     return Buffer.from(v);
   });
-  const handle = createAppProtocolHandler({
-    host: "local",
-    dir: "/dist/address-page",
-    localDir: "/dist/local",
-    readFile,
-  });
+  const handle = createAppProtocolHandler({ localDir: "/dist/local", readFile });
 
   test("serves flat page files with types and the local CSP", async () => {
     for (const [url, type] of [
@@ -58,21 +53,5 @@ describe("app://local", () => {
     }
     for (const call of readFile.mock.calls)
       expect(String(call[0])).toMatch(/^\/dist\/local\/[a-z0-9-]+\.(html|css|js)$/);
-  });
-
-  test("each partition serves only its own host", async () => {
-    const address = createAppProtocolHandler({
-      host: "address",
-      dir: "/dist/address-page",
-      localDir: "/dist/local",
-      readFile,
-    });
-    expect((await handle({ url: "app://address/" })).status).toBe(404);
-    expect((await address({ url: localPageUrl("onboarding") })).status).toBe(404);
-  });
-
-  test("without a local directory app://local is 404", async () => {
-    const h = createAppProtocolHandler({ host: "local", dir: "/dist/address-page", readFile });
-    expect((await h({ url: localPageUrl("onboarding") })).status).toBe(404);
   });
 });

@@ -99,33 +99,54 @@ interface ShellReport {
 const shellReport = async (p: Page): Promise<ShellReport> =>
   JSON.parse((await p.locator("#shell").textContent()) ?? "{}") as ShellReport;
 
-test("the address page: app://address origin, discovery through meta, open", async () => {
+test("the small window: connect, found, sign-in in the browser, the main window", async () => {
   page = await app.firstWindow();
-  await expect(page).toHaveURL("app://address/index.html");
+  await expect(page).toHaveURL("app://local/onboarding.html");
 
-  // Carried check (a): the address page's frame origin, as main sees it.
+  // Carried check (a): the small window's frame origin, as main sees it.
   const origins = await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows().map((w) => w.webContents.mainFrame.origin),
   );
-  expect(origins).toEqual(["app://address"]);
+  expect(origins).toEqual(["app://local"]);
 
   await page.locator("#address").fill(fake.base);
-  await page.locator("#continue").click();
-  // The IPC answered, so main accepted the sender frame (senderFrame.origin is app://address).
-  await expect(page.locator("#found")).toBeVisible();
-  await expect(page.locator("#name")).toHaveText("Fake Deployment");
-  await expect(page.locator("#icon")).toHaveAttribute("src", /^data:image\/png;base64,/);
+  await page.locator("#address").press("Enter");
+  // The action answered, so main accepted the sender frame (app://local, registered).
+  await expect(page.locator("h1")).toContainText("Fake Deployment");
+  await expect(page.locator("img.lp-icon")).toHaveAttribute("src", /^data:image\/png;base64,/);
+  expect(fake.requests.some((r) => r.path === "/api/v1/meta")).toBe(true);
 
+  // 在浏览器中登录: the authorize URL goes to the system browser (captured), the page waits.
+  await page.locator("main .lp-btn").click();
+  await expect.poll(openedUrls).toHaveLength(1);
+  await expect(page.locator(".lp-steps")).toBeVisible();
+  const url = new URL((await openedUrls())[0] as string);
+  expect(`${url.origin}${url.pathname}`).toBe(`${fake.base}/apps/authorize`);
+  const signInState = url.searchParams.get("state") as string;
+  // The test plays the browser and the callback deep link.
+  await page.request.get(url.href);
+  const code = fake.issueCode(signInState);
+  const link = `capybara://auth/callback?${new URLSearchParams({ code, state: signInState, iss: fake.base })}`;
   const next = app.waitForEvent("window");
-  await page.locator("#open").click();
+  await app.evaluate(({ app: electronApp }, u) => {
+    electronApp.emit("open-url", { preventDefault() {} }, u);
+  }, link);
   page = await next;
   await expect(page).toHaveURL(`${fake.base}/`);
-  expect(fake.requests.some((r) => r.path === "/api/v1/meta")).toBe(true);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  // The small window closed once the profile was saved.
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()),
+      ),
+    )
+    .toEqual([`${fake.base}/`]);
 });
 
 test("the deployment page sees capybaraShell with its capabilities", async () => {
   // Carried check (b): executeInMainWorld installed the object on the origin's top frame.
-  await expect(page.locator("#auth")).toHaveText("signed-out");
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
   const report = await shellReport(page);
   expect(report).toMatchObject({ type: "object", kind: "desktop", platform: "macos", version: 1 });
   expect(report.capabilities).toEqual(
@@ -168,6 +189,7 @@ test("the iframes (same origin and /plugin-ui) do not see capybaraShell", async 
 });
 
 test("a call without a user activation is refused", async () => {
+  const opened = (await openedUrls()).length;
   // Playwright's evaluate carries a user gesture; wait on the condition until the transient
   // activation has expired, then call.
   const code = await page.evaluate(async () => {
@@ -192,7 +214,7 @@ test("a call without a user activation is refused", async () => {
       );
   });
   expect(code).toBe("no_activation");
-  expect(await openedUrls()).toEqual([]);
+  expect(await openedUrls()).toHaveLength(opened);
 });
 
 test("the in-window password login route is blocked", async () => {
@@ -212,9 +234,10 @@ test("the desktop user agent goes to the profile's origin only", async () => {
 let state = "";
 
 test("signIn: user activation opens the authorize URL in the system browser", async () => {
+  // The small window's sign-in opened the first one.
   await page.locator("#signin").click();
-  await expect.poll(openedUrls).toHaveLength(1);
-  const url = new URL((await openedUrls())[0] as string);
+  await expect.poll(openedUrls).toHaveLength(2);
+  const url = new URL((await openedUrls())[1] as string);
   expect(`${url.origin}${url.pathname}`).toBe(`${fake.base}/apps/authorize`);
   const q = Object.fromEntries(url.searchParams);
   expect(q).toMatchObject({
@@ -238,9 +261,10 @@ test("the callback deep link exchanges the code; the cookie lands in the profile
     electronApp.emit("open-url", { preventDefault() {} }, url);
   }, link);
 
-  // The exchange succeeded: the window reloads and the server saw the cookie.
+  // The exchange succeeded (the second, after the small window's): the window reloads and the
+  // server saw the cookie.
+  await expect.poll(() => fake.accepted).toBe(2);
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
-  expect(fake.accepted).toBe(1);
   expect(fake.refused).toEqual([]);
 
   const profiles = JSON.parse(readFileSync(join(userData, "app", "profiles.json"), "utf8")) as {
@@ -275,14 +299,15 @@ test("a replayed callback does nothing", async () => {
   // the fake. The replay was emitted synchronously before it (the router looks the state up
   // synchronously and a miss sends nothing), and the fake records requests in arrival order, so
   // once the sentinel has been answered any token call the replay caused would already be in the
-  // log. The count must still be 1. It does not prove anything about a replay that is delayed.
+  // log. The count must still be 2 (the small window's and the page's sign-in). It does not prove
+  // anything about a replay that is delayed.
   await page.evaluate(() => fetch("/sentinel").then((r) => r.text()));
   const seen = fake.requests.map((r) => r.path);
   expect(seen.lastIndexOf("/sentinel")).toBeGreaterThan(-1);
-  expect(seen.filter((p) => p === "/api/v1/app-auth/token")).toHaveLength(1);
+  expect(seen.filter((p) => p === "/api/v1/app-auth/token")).toHaveLength(2);
   await page.reload();
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
-  expect(fake.accepted).toBe(1);
+  expect(fake.accepted).toBe(2);
 });
 
 test("a contextBridge subscription returns a working unsubscribe", async () => {
