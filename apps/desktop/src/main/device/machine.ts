@@ -6,7 +6,7 @@ import type {
   KeepAwakeMode,
   ThisMachineStatus,
 } from "@capybara-hq/plugin-sdk";
-import { normalizeAddress } from "@capybara-hq/shell";
+import { isRecord, normalizeAddress } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
 import { isLiveStatus, type LiveStatus } from "./control.ts";
@@ -32,10 +32,6 @@ export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-busy", 
 
 export const isKeepAwakeMode = (v: unknown): v is KeepAwakeMode =>
   KEEP_AWAKE_MODES.includes(v as KeepAwakeMode);
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 /** Runs a read command and answers its first JSON line `parse` accepts; throws failed otherwise. */
 async function readJson<T>(

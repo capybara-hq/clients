@@ -7,7 +7,8 @@
 // display name and login (or email) are kept, validated as short strings. Nothing here writes a
 // token anywhere, and a page learns only the outcome.
 import { randomBytes } from "node:crypto";
-import { type AuthCallback, checkCallback, createPkce, SIGN_IN_TTL_MS } from "@capybara-hq/shell";
+import { type AuthCallback, checkCallback, SIGN_IN_TTL_MS } from "@capybara-hq/shell";
+import { createPkce } from "@capybara-hq/shell/pkce-node";
 import { brand } from "../../brand.ts";
 import type { CallContext } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";

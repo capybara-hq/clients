@@ -1,4 +1,5 @@
 import { normalizeAddress } from "./address.js";
+import { isRecord } from "./validate.js";
 
 /** Versioned icon URLs of `GET /api/v1/meta`; null for the default icon. Relative: resolve against the base. */
 export interface MetaIcons {
@@ -40,10 +41,6 @@ export type DiscoveryError =
 export type DiscoveryResult =
   | { ok: true; base: string; meta: Meta }
   | { ok: false; error: DiscoveryError };
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 const nullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
 
@@ -109,7 +106,13 @@ async function readCapped(res: Response, limit: number): Promise<string | null> 
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 /** True when a fetch error (or its cause chain) carries a certificate failure code. */

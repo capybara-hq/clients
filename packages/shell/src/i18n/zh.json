@@ -164,5 +164,14 @@
   "menu.platform.add": "添加平台…",
   "menu.platform.signOut": "退出登录 {platform}…",
   "menu.platform.signOutPlain": "退出登录…",
-  "menu.platform.remove": "移除这个平台…"
+  "menu.platform.remove": "移除这个平台…",
+  "profile.switcher.title": "平台",
+  "profile.switcher.add": "添加平台",
+  "profile.switch_confirm.message": "切换平台会退出当前平台的登录",
+  "profile.switch_confirm.confirm": "切换",
+  "profile.switch_confirm.cancel": "取消",
+  "error.title": "无法打开这个平台",
+  "error.retry": "重试",
+  "error.switch_platform": "切换平台",
+  "address.error.sign_in_unavailable_mobile": "该平台尚未设置公开访问地址（http.publicUrl），无法在手机端登录。请联系超级管理员。"
 }
