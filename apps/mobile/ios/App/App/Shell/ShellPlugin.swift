@@ -14,7 +14,10 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "reply", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pushState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "event", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "httpGet", returnType: CAPPluginReturnPromise),
     ]
+
+    private let http = HttpGetter()
 
     private final class WeakView {
         weak var view: ProfileWebView?
@@ -41,6 +44,26 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             self.view(call)?.reply(callId: callId, result: result)
             call.resolve()
+        }
+    }
+
+    /// One GET for the address page: no redirects, a timeout and a body cap (HttpGet.swift).
+    @objc func httpGet(_ call: CAPPluginCall) {
+        guard let url = call.getString("url") else {
+            call.reject("httpGet needs url")
+            return
+        }
+        http.get(url) { result in
+            switch result {
+            case .success(let r):
+                call.resolve(["status": r.status, "body": r.body, "truncated": r.truncated])
+            case .failure(.certInvalid):
+                call.reject("CERT_INVALID")
+            case .failure(.invalidUrl):
+                call.reject("invalid url")
+            case .failure(.unreachable):
+                call.reject("unreachable")
+            }
         }
     }
 

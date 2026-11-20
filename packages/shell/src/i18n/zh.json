@@ -173,5 +173,20 @@
   "error.title": "无法打开这个平台",
   "error.retry": "重试",
   "error.switch_platform": "切换平台",
-  "address.error.sign_in_unavailable_mobile": "该平台尚未设置公开访问地址（http.publicUrl），无法在手机端登录。请联系超级管理员。"
+  "address.error.sign_in_unavailable_mobile": "该平台尚未设置公开访问地址（http.publicUrl），无法在手机端登录。请联系超级管理员。",
+  "address.title": "连接你的平台",
+  "address.lead": "输入你所在组织提供的平台地址，登录在浏览器中完成。",
+  "address.label": "平台地址",
+  "address.placeholder": "capybara.example.com",
+  "address.continue": "继续",
+  "address.checking": "正在连接…",
+  "address.found.signin": "登录",
+  "address.found.change": "换一个地址",
+  "address.error.invalid": "这不是有效的地址。",
+  "address.error.insecure": "只能连接 https 地址（本机的 localhost 除外）。",
+  "address.error.unreachable": "连接不上 {host}。请检查地址是否有误，以及网络或 VPN 是否已连接。",
+  "address.error.not_capybara": "这个地址不是 Capybara 平台。请确认它是你所在组织提供的地址。",
+  "address.error.too_old": "该平台的版本过低，不支持手机端登录。请联系平台管理员升级。",
+  "address.error.cert_invalid": "证书无效，无法安全地连接 {host}。请联系平台管理员。",
+  "address.error.locked": "你的管理员不允许使用这个平台。"
 }
