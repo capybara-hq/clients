@@ -8,6 +8,7 @@
 //                                    with `holdLogoutBody`, a 200 whose body waits for
 //                                    `releaseLogout()`
 //   GET  /login                      the web's sign-in page (the end of the web's sign-out)
+//   GET  /protected                  200 with a session, else a 302 to /login?returnTo=%2Fprotected
 //   GET  /                           prints the Shell environment the page sees, signed in or out
 //   GET  /frame, /plugin-ui/x/frame  iframes that report whether they see window.capybaraShell
 //   GET  /ua, /hop?to=<url>          the user agent the server saw; a redirect to another origin
@@ -153,6 +154,8 @@ export async function startFakeDeployment(
     metaStatus?: number;
     /** Meta raw body (not JSON), e.g. html. */
     metaRaw?: string;
+    /** Every token exchange is refused with this error code (HTTP 400) after the checks pass. */
+    tokenError?: string;
   } = {},
 ): Promise<FakeDeployment> {
   const peer = options.peer ?? "";
@@ -212,6 +215,7 @@ export async function startFakeDeployment(
     }
     if (body.redirectUri !== "capybara://auth/callback") return refuse("redirect_uri");
     const entry = typeof body.code === "string" ? codes.get(body.code) : undefined;
+    if (options.tokenError) return refuse(options.tokenError);
     if (!entry) return refuse("unknown_code");
     if (entry.used) return refuse("code_used");
     entry.used = true;
@@ -299,6 +303,15 @@ export async function startFakeDeployment(
     if (url.pathname === "/login") {
       return send(res, 200, html(`<h1 id="login-page">login</h1>`), {
         "content-type": "text/html",
+      });
+    }
+    if (url.pathname === "/protected") {
+      if (!signedIn) {
+        return send(res, 302, "", { location: "/login?returnTo=%2Fprotected" });
+      }
+      return send(res, 200, html(`<h1 id="auth">protected:${FAKE_ACCOUNT.displayName}</h1>`), {
+        "content-type": "text/html",
+        "cache-control": "no-store",
       });
     }
     if (url.pathname === "/ua") {
