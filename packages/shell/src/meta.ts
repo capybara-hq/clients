@@ -119,7 +119,7 @@ function isCertError(err: unknown): boolean {
     const text = `${typeof o.message === "string" ? o.message : ""} ${
       typeof o.code === "string" ? o.code : ""
     }`;
-    if (/CERT_|ERR_CERT|SELF_SIGNED|UNABLE_TO_VERIFY|CERT_HAS_EXPIRED/i.test(text)) return true;
+    if (/CERT_|SELF_SIGNED|UNABLE_TO_VERIFY/.test(text)) return true;
     e = o.cause;
   }
   return false;
@@ -176,6 +176,10 @@ export async function fetchMeta(
 /**
  * Discovery for onboarding: normalizes what a person typed, then asks the deployment. A
  * deployment with `appSignIn: false` is returned as is (see `appSignInBlocked`).
+ *
+ * An address that does not parse comes back as `not_capybara` here: this function has no
+ * `invalid` result. A host that wants to show `invalid` for typos calls `normalizeAddress` first
+ * and only passes a normalized address on.
  */
 export async function discover(
   input: string,

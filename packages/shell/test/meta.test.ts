@@ -168,7 +168,7 @@ describe("discover", () => {
       ok: true,
     });
   });
-  test("an unparseable address is not_capybara", async () => {
+  test("an unparseable address is not_capybara (the host calls normalizeAddress first for invalid)", async () => {
     expect(await discover("", fake(() => json(good)).fn)).toEqual({
       ok: false,
       error: "not_capybara",
