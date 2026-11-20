@@ -278,7 +278,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
             ? [texts.outsideSandboxRisk]
             : []),
         ];
-        if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown))) return "cancelled";
+        if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown, ctx.profile)))
+          return "cancelled";
         // The ceiling may have narrowed while the dialog was open: --yes must not widen a field
         // the person did not see named. Known limit: with --yes the program does not decide again,
         // so a narrowing landing between this read and the write is not caught; closing that needs
@@ -304,7 +305,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       }
       const raised = mode as Exclude<KeepAwakeMode, "off">;
       return ctx.confirm(async () => {
-        if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised))) return "cancelled";
+        if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised, ctx.profile)))
+          return "cancelled";
         // Lowered while the dialog was open: the raise would be larger than the one confirmed.
         if (rank(await readKeepAwake(cli)) < rank(cur)) throw failed();
         await run(cli, ["keep-awake", raised, "--yes"]);

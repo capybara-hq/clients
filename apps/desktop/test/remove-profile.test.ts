@@ -1,8 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
-import type { MessageBoxOptions } from "../src/main/device/dialogs.ts";
 import { createConfirmGate } from "../src/main/ipc.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import { createProfileRemoval, type ProfileRemovalDeps } from "../src/main/remove-profile.ts";
+import type { ShellDialogOptions } from "../src/main/shell-dialog.ts";
 
 const p1: Profile = {
   id: "p1",
@@ -12,9 +12,9 @@ const p1: Profile = {
   name: "Example",
 };
 
-function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [0]) {
+function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [1]) {
   const order: string[] = [];
-  const boxes: { parent: unknown; options: MessageBoxOptions }[] = [];
+  const boxes: { parent: unknown; options: ShellDialogOptions }[] = [];
   const parent = { id: "window" };
   const gate = createConfirmGate();
   const deps: ProfileRemovalDeps = {
@@ -22,10 +22,10 @@ function setup(over: Partial<ProfileRemovalDeps> = {}, answers: number[] = [0]) 
     isRemovable: () => true,
     gate,
     dialogParent: () => parent,
-    showMessageBox: async (box, options) => {
+    showDialog: async (box, options) => {
       boxes.push({ parent: box, options });
       order.push("confirm");
-      return { response: answers.shift() ?? 1 };
+      return { response: answers.shift() ?? 0 };
     },
     locale: "zh",
     beforeRemoveDevice: vi.fn(async () => {
@@ -65,13 +65,14 @@ describe("removing a platform (spec 6.3)", () => {
     await removal.remove("p1");
     expect(boxes[0]?.parent).toBe(parent);
     expect(boxes[0]?.options).toEqual({
-      type: "warning",
-      message: "要移除 Example（a.example.com）吗？",
+      title: "要移除 Example（a.example.com）吗？",
       detail: expect.stringContaining("本地数据"),
-      buttons: ["移除", "取消"],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
+      buttons: ["取消", "移除"],
+      defaultId: 0,
+      cancelId: 0,
+      confirmId: 1,
+      tone: "danger",
+      platform: { name: "Example", host: "a.example.com" },
     });
   });
 
@@ -79,12 +80,12 @@ describe("removing a platform (spec 6.3)", () => {
     const unnamed = { ...p1, name: "a.example.com" };
     const { removal, boxes } = setup({ getProfile: () => unnamed, locale: "en" });
     await removal.remove("p1");
-    expect(boxes[0]?.options.message).toBe("Remove a.example.com?");
-    expect(boxes[0]?.options.buttons).toEqual(["Remove", "Cancel"]);
+    expect(boxes[0]?.options.title).toBe("Remove a.example.com?");
+    expect(boxes[0]?.options.buttons).toEqual(["Cancel", "Remove"]);
   });
 
   test("cancel (the default button) does nothing", async () => {
-    const { removal, deps, order } = setup({}, [1]);
+    const { removal, deps, order } = setup({}, [0]);
     await removal.remove("p1");
     expect(order).toEqual(["confirm"]);
     expect(deps.beforeRemoveDevice).not.toHaveBeenCalled();
@@ -122,7 +123,7 @@ describe("removing a platform (spec 6.3)", () => {
   test("one dialog at a time per platform: a second removal while one asks is dropped", async () => {
     let answer: (r: { response: number }) => void = () => {};
     const { removal, deps, gate } = setup({
-      showMessageBox: () =>
+      showDialog: () =>
         new Promise((resolve) => {
           answer = resolve;
         }),
@@ -131,7 +132,7 @@ describe("removing a platform (spec 6.3)", () => {
     await removal.remove("p1");
     // A device dialog from the tray for the same platform is refused while this one is open.
     expect(gate.isConfirmingCallAllowed("p1", true)).toBe("busy");
-    answer({ response: 0 });
+    answer({ response: 1 });
     await first;
     expect(deps.removeProfile).toHaveBeenCalledTimes(1);
     // The slot is released afterwards.
