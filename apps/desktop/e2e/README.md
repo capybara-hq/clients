@@ -2,9 +2,13 @@
 
 ## The automated smoke (`pnpm e2e`)
 
-`smoke.spec.ts` launches the real Electron app through Playwright's `_electron` (no browser is
-downloaded) against `packages/shell/test/fixtures/fake-deployment.ts`, a dependency-free fake
-deployment. It needs no network and no real sign-in. Run it from the repository root:
+`smoke.spec.ts` (the shell, security and sign-out/expiry/unreachable specs, one launched app) and
+`onboarding.spec.ts` (a fresh first launch through the onboarding, its own app) launch the real
+Electron app through Playwright's `_electron` (no browser is downloaded; `harness.ts` is the shared
+launcher) against `packages/shell/test/fixtures/fake-deployment.ts`, a dependency-free fake
+deployment. Its switches: `meta` / `features` / `metaStatus` / `metaRaw` (meta shapes, including
+`appRedirectUris`), `tokenError` (every token exchange refused with that kernel code), `down` (503),
+`holdLogoutBody`, and `GET /protected` (a 302 to `/login?returnTo=%2Fprotected` without a session). It needs no network and no real sign-in. Run it from the repository root:
 
 ```bash
 pnpm e2e
@@ -28,6 +32,18 @@ so the app's own router handles it. No launchd, Keychain or login item is touche
 
 What it covers:
 
+- First launch (`onboarding.spec.ts`): the small window is 480×600 and not resizable, on connect, with
+  no profile saved. An address that is not a Capybara platform shows `not_capybara` inline and saves
+  nothing. A platform whose `appRedirectUris` lacks the app's redirect URI: found (name, host), then
+  `not_allowed` before the browser opens. A refused token exchange (`auth.account_disabled`) shows
+  the error and saves nothing. An `access_denied` callback shows the cancelled error, its button
+  signs in again, and the callback then closes the small window and opens the main window on `/`.
+- An expired session (cookie removed from the partition, reload of a protected page): the expired
+  overlay, no `/login` request reaches the server, and signing in again returns to the page.
+- The web's logout and `/login` end in the signed-out small window. Its 「移除这个平台」 opens a shell
+  dialog as a window of its own (not an overlay); cancel closes it and keeps the profile. The
+  theme toggle on that local page writes `cb-theme` into the profile's partition, not the default
+  session.
 - The small window's frame origin is `app://local` (read in main), and the local page registry
   accepts its actions, so connect -> meta discovery -> icon -> 在浏览器中登录 -> callback -> the main
   window on `/` works, and the small window closes.
