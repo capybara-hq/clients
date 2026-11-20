@@ -5,9 +5,11 @@
 // untrusted input, parsed here strictly: an https deployment address with no userinfo,
 // normalized by the shell's `normalizeAddress`, and a real boolean.
 //
-// A lock hides the other profiles (they are never loaded or offered, and adding them is refused)
-// but never deletes a data store: lifting the lock shows them again, still signed in. A lock that
-// arrives while the app runs re-evaluates the current profile at once and opens the preset.
+// A lock hides the other profiles (they are never loaded or offered, their WebViews are torn
+// down, and adding them is refused) but never deletes a data store: lifting the lock shows them
+// again, still signed in, except in Android's single-store mode (Decision 9), where switching to
+// the preset clears the one shared store, so they come back signed out. A lock that arrives while
+// the app runs re-evaluates the current profile at once (profile-access.ts `reconcile`).
 import { isRecord, normalizeAddress } from "@capybara-hq/shell";
 import type { Brand } from "../../brand.ts";
 import type { Profile, ProfileStore } from "./profiles.ts";
@@ -118,13 +120,22 @@ export interface ManagedConfigNative {
 
 export function managedSourceFrom(native: ManagedConfigNative): ManagedSource {
   const configOf = (e: unknown) => (isRecord(e) ? e.config : undefined);
+  // A read waits until every listener is registered natively: Capacitor drops a `change` sent
+  // before that, so reading afterwards is what closes the gap.
+  let listening: Promise<unknown> = Promise.resolve();
   return {
-    read: async () => configOf(await native.get()),
+    read: async () => {
+      await listening;
+      return configOf(await native.get());
+    },
     onChange(listener) {
       let removed = false;
       const handle = native.addListener("change", (e) => {
         if (!removed) listener(configOf(e));
       });
+      // A missing plugin rejects here; that is no managed config, never an unhandled rejection.
+      handle.catch(() => {});
+      listening = Promise.all([listening, handle.catch(() => undefined)]);
       return () => {
         removed = true;
         handle.then((h) => h.remove()).catch(() => {});
@@ -149,33 +160,61 @@ export interface ManagedPolicyDeps {
   brand: Pick<Brand, "presetUrl" | "lockToPreset">;
   source: ManagedSource;
   profiles: ProfileStore;
-  /** Shows a profile: called when a lock that arrived at runtime moved the current profile. */
-  open(profile: Profile): Promise<void> | void;
+  /**
+   * Runs after every change, whether its enforcement succeeded or not: takes a profile that is
+   * no longer visible off screen and shows what should be (profile-access.ts `reconcile`).
+   */
+  changed(): Promise<void> | void;
+  /** A diagnostic line for an MDM admin (a lock that locks nothing, a failed read). */
+  log?(message: string): void;
 }
 
 /**
- * Reads the managed values once (a failed read is no managed config: there is nothing to
- * enforce), then follows changes. The start-up lock is enforced by `startRoute`; a change is
- * enforced here, one after another, and opens the preset when it locks.
+ * Subscribes, then reads the managed values (a failed read is no managed config: there is
+ * nothing to enforce), then follows changes. A change that arrives while the read is pending
+ * wins over it. The start-up lock is enforced by `startRoute`; a change is enforced here, one
+ * after another, then `changed` runs.
  */
 export async function createManagedPolicy(deps: ManagedPolicyDeps): Promise<ManagedPolicy> {
-  let values = parseManaged(await deps.source.read().catch(() => undefined));
+  let values: ManagedValues = {};
+  let changes = 0;
   let chain: Promise<void> = Promise.resolve();
   const policy = () => effectivePreset(deps.brand, values);
+  const log = deps.log ?? (() => {});
+
+  const take = (raw: unknown) => {
+    values = parseManaged(raw);
+    if (isRecord(raw) && raw.lockToPreset === true && !policy().locked) {
+      log("managed lockToPreset is set but there is no valid https presetUrl: nothing is locked");
+    }
+  };
 
   const stop = deps.source.onChange((raw) => {
-    values = parseManaged(raw);
+    changes++;
+    take(raw);
     const next = policy();
     chain = chain.then(async () => {
       try {
-        const enforced = await enforcePolicy(next, deps.profiles);
-        if (enforced?.moved) await deps.open(enforced.profile);
+        await enforcePolicy(next, deps.profiles);
       } catch {
         // The profile store refused (prefs or native down): the policy still hides the others,
-        // and the next change or launch tries again.
+        // `changed` takes a hidden profile off screen, and the next change or launch tries again.
       }
+      try {
+        await deps.changed();
+      } catch {}
     });
   });
+
+  const before = changes;
+  let raw: unknown;
+  try {
+    raw = await deps.source.read();
+  } catch {
+    log("managed configuration could not be read: none applied");
+    raw = undefined;
+  }
+  if (changes === before) take(raw);
 
   return {
     values: () => ({ ...values }),

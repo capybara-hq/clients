@@ -241,6 +241,35 @@ describe("remove", () => {
     expect(later.store.list().map((p) => p.id)).toEqual([b.id]);
   });
 
+  test("an orphan id a live profile uses again is never deleted (fixed ids in test mode)", async () => {
+    const values = new Map<string, string>();
+    let fail = true;
+    const fixed = "00000000-0000-4000-8000-0000000000aa";
+    const calls: string[] = [];
+    const store = createProfileStore({
+      prefs: { get: (k) => values.get(k) ?? null, set: async (k, v) => void values.set(k, v) },
+      stores: {
+        mode: async () => "multi",
+        create: async (id) => void calls.push(`create:${id}`),
+        remove: async (id) => {
+          calls.push(`remove:${id}`);
+          if (fail) throw new Error("native down");
+        },
+        clearAll: async () => {},
+      },
+      confirm: async () => true,
+      newId: () => fixed,
+      now: () => 1,
+    });
+    const a = await store.add(A);
+    await store.remove(a.id);
+    fail = false;
+    await store.add(A);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([]);
+    await store.sweep();
+    expect(calls.filter((c) => c.startsWith("remove:"))).toEqual([`remove:${fixed}`]);
+  });
+
   test("sweep with no orphans touches nothing", async () => {
     const values = new Map<string, string>();
     const { store, calls } = setupWith({ values });

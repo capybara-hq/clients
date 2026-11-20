@@ -7,5 +7,5 @@
     <string name="restriction_preset_url_title">平台地址</string>
     <string name="restriction_preset_url_description">应用打开的 Capybara 平台的 https 地址。</string>
     <string name="restriction_lock_title">仅限此平台</string>
-    <string name="restriction_lock_description">隐藏其他平台，并禁止添加其他平台。需要设置平台地址。</string>
+    <string name="restriction_lock_description">隐藏其他平台，并禁止添加其他平台。需要在此处或应用构建中设置平台地址。</string>
 </resources>

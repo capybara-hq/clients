@@ -325,6 +325,14 @@ final class ProfileWebView: WKWebView {
 
     // MARK: Document lifecycle
 
+    /// ProfileHost.close: no load continues and the document ends (owed calls answered "gone",
+    /// the runtime hears `ended`). No about:blank load: every navigation goes through the gate's
+    /// delegate; the WebView is released right after, which ends its page.
+    func close() {
+        stopLoading()
+        documentEnded()
+    }
+
     fileprivate func documentEnded() {
         let ended = pushes.docId
         pushes.end()

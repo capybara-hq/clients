@@ -444,6 +444,17 @@ class ProfileWebView private constructor(
         sink?.onDocumentEnded(this, ended)
     }
 
+    /**
+     * ProfileHost.close: no load continues, the document ends (owed calls answered, the runtime
+     * hears `ended`) and the page is replaced by about:blank before the caller destroys the view.
+     * `loadUrl` from native is not a page navigation, so the gate's routing does not apply.
+     */
+    fun close() {
+        stopLoading()
+        endDocument()
+        loadUrl("about:blank")
+    }
+
     /** No expiry callback outlives the WebView (each would retain it for up to the lifetime). */
     override fun destroy() {
         pending.clear()

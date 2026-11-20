@@ -8,12 +8,12 @@
 // Start: `startRoute` picks the profile to open or the address page (a debug build launched by a
 // UI test opens the test's loopback origin instead, or the address page over an empty in-memory
 // profile list). Managed configuration (src/runtime/managed.ts) decides which profiles are
-// visible: under a lock only the preset's, everywhere the runtime offers or loads a profile (the
-// error page's switcher, switching, the registry, the address page's add). A lock that arrives
-// while the app runs opens the preset. The address page discovers and adds a deployment through
-// this document (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser
-// sign-in for it (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment
-// too old for app sign-in gets the too-old state and no signIn@1.
+// visible; the gates that follow from it (listing, switching, adding, what stays on screen and
+// alive natively) live in src/runtime/profile-access.ts, and this file only wires them. The
+// address page discovers and adds a deployment through this document
+// (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser sign-in for it
+// (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment too old for
+// app sign-in gets the too-old state and no signIn@1.
 import { registerPlugin } from "@capacitor/core";
 import { Haptics } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
@@ -49,6 +49,7 @@ import {
   type ManagedPolicy,
   managedSourceFrom,
 } from "../runtime/managed.ts";
+import { createProfileAccess, type ProfileAccess } from "../runtime/profile-access.ts";
 import {
   createProfileStore,
   DATA_STORES_PLUGIN,
@@ -140,8 +141,8 @@ async function main(): Promise<void> {
   let list: () => LoaderProfile[];
   let profiles: ProfileStore | null = null;
   let managed: ManagedPolicy | null = null;
-  // A lock that arrives at runtime shows the preset (set once the frames and the loader exist).
-  let showLocked: (profile: LoaderProfile) => void = () => {};
+  // The lock gates; made once the loader exists (policy changes before that wait in `start`).
+  let access: ProfileAccess | null = null;
   let switchTo: (id: string) => Promise<LoaderProfile | null>;
   let start: Promise<"address" | { profileId: string }>;
   if (options.testOrigin && options.testBase && !options.testAddress) {
@@ -168,21 +169,16 @@ async function main(): Promise<void> {
     });
     profiles = store;
     removeBlockRulesOnRemoval(store, plugin);
-    // Orphaned stores of earlier removals whose native deletion failed.
-    void store.sweep().catch(() => {});
     const policy = await createManagedPolicy({
       brand,
       source: managedSourceFrom(registerPlugin<ManagedConfigNative>(MANAGED_CONFIG_PLUGIN)),
       profiles: store,
-      open: (profile) => showLocked(profile),
+      changed: () => access?.reconcile(),
+      log: (message) => console.warn(`[managed] ${message}`),
     });
     managed = policy;
-    // Hidden profiles are never offered, switched to or loaded; their stores stay.
-    list = () => policy.visible();
-    switchTo = async (id) => {
-      if (!policy.visible().some((p) => p.id === id)) return null;
-      return (await store.setCurrent(id)) === "switched" ? store.current() : null;
-    };
+    list = () => access?.list() ?? policy.visible();
+    switchTo = async (id) => (access ? access.switchTo(id) : null);
     start = startRoute(brand, policy.values(), store);
   }
 
@@ -257,10 +253,8 @@ async function main(): Promise<void> {
       return policy?.locked ? policy.presetUrl : null;
     },
     add: async (found) => {
-      if (!profiles) throw new Error("no profile store");
-      // The lock may have arrived after discovery answered.
-      if (managed && !managed.canAdd(found.base)) throw new Error("locked to the preset");
-      return profiles.add(found);
+      if (!access) throw new Error("no profile store");
+      return access.add(found);
     },
     // The person tapped Sign in: the deployment opens under the browser sign-in, which signs it
     // in (or leaves the web's own sign-in page with signIn@1 when they cancel).
@@ -312,17 +306,33 @@ async function main(): Promise<void> {
     profiles: () => list(),
   });
 
-  // Opening hides the error state and any framed page (the loader's errorView.hide).
-  showLocked = (profile) => void loader?.open(profile);
-
-  const route = await start;
-  const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
-  if (first) {
-    await openShown(first);
-  } else {
+  const toAddress = () => {
     splash.failed();
     showAddress();
+  };
+  if (profiles && managed) {
+    access = createProfileAccess({
+      store: profiles,
+      policy: managed,
+      loader,
+      showAddress: toAddress,
+    });
   }
+
+  const route = await start;
+  if (access) {
+    // Changes received during start are applied first; a hidden route falls back.
+    const first = await access.start(route);
+    if (first?.open) await loader.open(first.profile);
+    else if (!first) toAddress();
+  } else {
+    const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
+    if (first) await loader.open(first);
+    else toAddress();
+  }
+  // Orphaned stores of earlier removals whose native deletion failed; after the first screen, so
+  // a slow native removal never holds up the launch.
+  void profiles?.sweep().catch(() => {});
 }
 
 main().catch(() => {

@@ -43,10 +43,15 @@ export interface ErrorView {
 }
 
 export interface Loader {
+  /** Opens a profile; refused (nothing happens) when it is not in `profiles()`. */
   open(profile: LoaderProfile): Promise<void>;
+  /** The id of the profile on screen (or failed on the error page), or null. */
+  shown(): string | null;
+  /** Tears the profile's native WebView down; forgets it when it is the shown one. */
+  close(profileId: string): Promise<void>;
   /** `chrome@1.ready()` from a profile: drops the splash when it is the profile shown. */
   ready(profileId: string): void;
-  /** The error page's retry: opens the shown profile again. */
+  /** The error page's retry: opens the shown profile again, unless it is no longer allowed. */
   retry(): Promise<void>;
   /**
    * The profile's deployment is too old for app sign-in (`SignInSupport`): its capabilities are
@@ -64,7 +69,10 @@ export interface LoaderDeps<P extends LoaderProfile> {
   appearance: AppearanceStore;
   splash: Splash;
   errorView: ErrorView;
-  /** Every profile, for the error page's switcher. */
+  /**
+   * Every profile the person may use (under a managed lock only the preset's): the error page's
+   * switcher, and the only profiles `open` and `retry` load.
+   */
   profiles(): LoaderProfile[];
 }
 
@@ -122,7 +130,10 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
 
   const stops = [deps.host.onLoad(onLoad), deps.host.onDocument(onDocument)];
 
+  const allowed = (id: string) => deps.profiles().some((p) => p.id === id);
+
   const open = async (profile: P) => {
+    if (!allowed(profile.id)) return;
     shown = profile;
     deps.errorView.hide();
     const stored = await deps.appearance.load(profile.id);
@@ -146,6 +157,11 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
 
   return {
     open: (profile) => open(profile as P),
+    shown: () => shown?.id ?? null,
+    async close(profileId) {
+      if (shown?.id === profileId) shown = null;
+      await deps.host.close(profileId).catch(() => {});
+    },
     ready(profileId) {
       if (shown?.id === profileId) deps.splash.ready();
     },

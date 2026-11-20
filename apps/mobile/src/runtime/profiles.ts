@@ -174,8 +174,16 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
 
   const copy = (p: Profile): Profile => ({ ...p });
 
-  /** Schedules an orphan's deletion; it stays recorded (for `sweep`) until that resolves. */
+  /**
+   * Schedules an orphan's deletion; it stays recorded (for `sweep`) until that resolves. An id a
+   * live profile uses again is only forgotten, never deleted (real ids are fresh UUIDs; the
+   * address UI test's are fixed).
+   */
   async function dropOrphan(id: string): Promise<void> {
+    if (state.profiles.some((p) => p.dataStoreId === id)) {
+      await save({ ...state, orphans: state.orphans.filter((o) => o !== id) }).catch(() => {});
+      return;
+    }
     try {
       await stores.remove(id);
     } catch {
@@ -216,6 +224,8 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
             ...state,
             profiles: [...state.profiles, profile],
             currentId: state.currentId ?? profile.id,
+            // A store id in use again is no orphan (only possible with fixed test ids).
+            orphans: state.orphans.filter((o) => o !== profile.dataStoreId),
           });
         } catch (err) {
           await stores.remove(profile.dataStoreId).catch(() => undefined);

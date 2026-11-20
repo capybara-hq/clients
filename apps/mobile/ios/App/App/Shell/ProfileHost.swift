@@ -35,7 +35,8 @@ final class ProfileHost {
     private var background: UIColor?
     private let container = UIView()
 
-    init(controller: CAPBridgeViewController) {
+    /// `controller` nil (tests): the container is never attached to a window.
+    init(controller: CAPBridgeViewController?) {
         self.controller = controller
         sheet = { _ in }
         sheet = { [weak self] url in
@@ -90,6 +91,23 @@ final class ProfileHost {
         view.isHidden = true
         if shown == profileId { container.isHidden = true }
     }
+
+    /// Tears the profile's WebView down: a profile hidden by a managed lock or removed. The view
+    /// leaves the container and the host's map; with no other owner it is released, so its data
+    /// store is no longer in use and a scheduled deletion can run. A later `open` makes a new one.
+    func close(_ profileId: String) {
+        guard let view = views.removeValue(forKey: profileId) else { return }
+        view.close()
+        view.removeFromSuperview()
+        if shown == profileId {
+            shown = nil
+            container.isHidden = true
+        }
+        DataStores.shared.webViewReleased()
+    }
+
+    /// The profile's live WebView, if any (tests).
+    func view(for profileId: String) -> ProfileWebView? { views[profileId] }
 
     func setAppearance(_ profileId: String, background: UIColor, lightContent: Bool) {
         self.background = background

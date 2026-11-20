@@ -220,7 +220,8 @@ class DataStoreCore(
             true
         } catch (e: RuntimeException) {
             // In use (IllegalStateException) or any other failure: cleared now, deleted at the
-            // next cold start.
+            // next cold start. `clear` may throw for the same cause; the plugin call then
+            // rejects and the TypeScript store keeps the id as an orphan for its next sweep.
             false
         }
         if (deleted) {

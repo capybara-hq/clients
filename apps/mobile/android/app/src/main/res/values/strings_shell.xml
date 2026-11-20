@@ -8,5 +8,5 @@
     <string name="restriction_preset_url_title">Platform address</string>
     <string name="restriction_preset_url_description">The https address of the Capybara platform the app opens.</string>
     <string name="restriction_lock_title">Only this platform</string>
-    <string name="restriction_lock_description">Hide other platforms and refuse adding them. Needs a platform address.</string>
+    <string name="restriction_lock_description">Hide other platforms and refuse adding them. Needs a platform address, here or in the app build.</string>
 </resources>

@@ -98,6 +98,12 @@ export interface ProfileHostPort {
   open(req: OpenProfileRequest): Promise<void>;
   /** Hides the profile's WebView so the local error state shows instead of its page. */
   showError(profileId: string): Promise<void>;
+  /**
+   * Tears the profile's WebView down (stops loading, ends its document, removes and releases it,
+   * so its data store is no longer in use): a profile hidden by a lock or removed. A later `open`
+   * makes a fresh one. Nothing happens when it has no WebView.
+   */
+  close(profileId: string): Promise<void>;
   /** The background behind the profile's WebView and the status bar style. */
   setAppearance(
     profileId: string,
@@ -114,6 +120,7 @@ export interface ProfileHostPlugin {
   ): Promise<{ remove(): Promise<void> }>;
   open(options: OpenProfileRequest): Promise<void>;
   showError(options: { profileId: string }): Promise<void>;
+  close(options: { profileId: string }): Promise<void>;
   setAppearance(options: {
     profileId: string;
     background: string;
@@ -162,6 +169,7 @@ export function createProfileHostPort(plugin: ProfileHostPlugin): ProfileHostPor
   return {
     open: (req) => plugin.open(req),
     showError: (profileId) => plugin.showError({ profileId }),
+    close: (profileId) => plugin.close({ profileId }),
     setAppearance: (profileId, look) => plugin.setAppearance({ profileId, ...look }),
     onLoad: (listener) => listen(plugin, "load", isLoadEvent, listener),
     onDocument: (listener) => listen(plugin, "document", isDocumentEvent, listener),

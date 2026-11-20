@@ -2,7 +2,7 @@
 // It lives on Capacitor's bridge, which only the app's local pages reach; profile WebViews never
 // see it. Gated calls from profile WebViews become `call` events for the runtime; the runtime's
 // `reply`, `pushState` and `event` go back to the profile's WebView. It also carries the
-// `ProfileHostPort` (Task 16): `open`, `showError`, `setAppearance`, and the `load` and
+// `ProfileHostPort` (Task 16): `open`, `showError`, `close`, `setAppearance`, and the `load` and
 // `document` events (the document events let the runtime cancel a dead document's calls and
 // push the current state to a new one).
 
@@ -22,6 +22,7 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "httpGet", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showError", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setAppearance", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "launchOptions", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openExternal", returnType: CAPPluginReturnPromise),
@@ -152,6 +153,14 @@ extension ShellPlugin {
         guard let profileId = call.getString("profileId") else { return call.reject("showError needs profileId") }
         DispatchQueue.main.async {
             self.profileHost()?.showError(profileId)
+            call.resolve()
+        }
+    }
+
+    @objc func close(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("close needs profileId") }
+        DispatchQueue.main.async {
+            self.profileHost()?.close(profileId)
             call.resolve()
         }
     }

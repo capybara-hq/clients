@@ -13,7 +13,6 @@ import {
   createProfileStore,
   type DataStorePort,
   type PrefsPort,
-  type Profile,
 } from "../../src/runtime/profiles.ts";
 
 const A = "https://a.example";
@@ -201,14 +200,17 @@ async function setup(managed: unknown, mode: "multi" | "single" = "multi") {
   });
   const b = await profiles.add({ base: B, name: "B", iconUrl: null });
   const { source, emit, listening } = fakeSource(managed);
-  const opened: Profile[] = [];
+  // What `changed` saw: the current profile after each change was applied.
+  const changed: (string | null)[] = [];
+  const logs: string[] = [];
   const policy = await createManagedPolicy({
     brand: { ...officialBrand, presetUrl: null, lockToPreset: false },
     source,
     profiles,
-    open: async (p) => void opened.push(p),
+    changed: () => void changed.push(profiles.current()?.base ?? null),
+    log: (m) => void logs.push(m),
   });
-  return { profiles, policy, emit, listening, calls, opened, b, asked };
+  return { profiles, policy, emit, listening, calls, changed, b, asked, logs, stores };
 }
 
 describe("createManagedPolicy", () => {
@@ -221,15 +223,35 @@ describe("createManagedPolicy", () => {
     expect(calls.some((c) => c.startsWith("remove:"))).toBe(false);
   });
 
-  test("a change to a lock moves the current profile to A and opens it", async () => {
-    const { policy, profiles, emit, opened, calls } = await setup({});
+  test("a change to a lock moves the current profile to A, then runs changed", async () => {
+    const { policy, profiles, emit, changed, calls } = await setup({});
     expect(policy.visible().map((p) => p.base)).toEqual([B]);
     emit({ presetUrl: "a.example", lockToPreset: true });
     await policy.settled();
     expect(profiles.current()?.base).toBe(A);
     expect(policy.visible().map((p) => p.base)).toEqual([A]);
-    expect(opened.map((p) => p.base)).toEqual([A]);
+    expect(changed).toEqual([A]);
     expect(calls.some((c) => c.startsWith("remove:"))).toBe(false);
+  });
+
+  test("changed runs even when the enforcement fails", async () => {
+    const { policy, profiles, emit, changed, stores } = await setup({});
+    stores.create = async () => {
+      throw new Error("native down");
+    };
+    emit({ presetUrl: A, lockToPreset: true });
+    await policy.settled();
+    expect(profiles.current()?.base).toBe(B);
+    expect(changed).toEqual([B]);
+    expect(policy.visible()).toEqual([]);
+  });
+
+  test("a lock without a usable preset is logged", async () => {
+    const { policy, emit, logs } = await setup({});
+    emit({ presetUrl: "http://x.example", lockToPreset: true });
+    await policy.settled();
+    expect(policy.policy().locked).toBe(false);
+    expect(logs.join("\n")).toMatch(/lockToPreset/);
   });
 
   test("lifting the lock shows B again, its store intact", async () => {
@@ -260,11 +282,11 @@ describe("createManagedPolicy", () => {
   });
 
   test("an unlocked managed preset changes nothing about the current profile", async () => {
-    const { policy, profiles, emit, opened } = await setup({});
+    const { policy, profiles, emit, changed } = await setup({});
     emit({ presetUrl: A });
     await policy.settled();
     expect(profiles.current()?.base).toBe(B);
-    expect(opened).toEqual([]);
+    expect(changed).toEqual([B]);
   });
 
   test("a malformed change event reads as no managed config", async () => {
@@ -276,45 +298,43 @@ describe("createManagedPolicy", () => {
 
   test("a source that fails to read starts with no managed config", async () => {
     const { profiles } = await setup({});
+    const logs: string[] = [];
     const policy = await createManagedPolicy({
       brand: officialBrand,
       source: { read: () => Promise.reject(new Error("no plugin")), onChange: () => () => {} },
       profiles,
-      open: async () => {},
+      changed: async () => {},
+      log: (m) => void logs.push(m),
     });
     expect(policy.policy()).toEqual({ presetUrl: null, locked: false });
+    expect(logs).toHaveLength(1);
   });
 
-  test("a lock with no profile at all adds the preset and opens it", async () => {
-    const values = new Map<string, string>();
-    const { stores } = fakeStores();
-    const profiles = createProfileStore({
-      prefs: { get: (k) => values.get(k) ?? null, set: async (k, v) => void values.set(k, v) },
-      stores,
-      confirm: async () => true,
-      newId: () => "00000000-0000-4000-8000-000000000001",
-      now: () => 1,
-    });
-    const { source, emit } = fakeSource({});
-    const opened: string[] = [];
+  test("subscribes before reading; a change during the read wins over it", async () => {
+    const { profiles } = await setup({});
+    const order: string[] = [];
+    let listener: ((raw: unknown) => void) | null = null;
     const policy = await createManagedPolicy({
       brand: officialBrand,
-      source,
+      source: {
+        onChange: (l) => {
+          order.push("subscribe");
+          listener = l;
+          return () => {};
+        },
+        read: async () => {
+          order.push("read");
+          (listener as ((raw: unknown) => void) | null)?.({ presetUrl: A, lockToPreset: true });
+          return {};
+        },
+      },
       profiles,
-      open: (p) => void opened.push(p.base),
+      changed: async () => {},
     });
-    emit({ presetUrl: A, lockToPreset: true });
     await policy.settled();
-    expect(opened).toEqual([A]);
-  });
-
-  test("the same lock again does not reopen the preset", async () => {
-    const { policy, emit, opened } = await setup({});
-    emit({ presetUrl: A, lockToPreset: true });
-    await policy.settled();
-    emit({ presetUrl: A, lockToPreset: true });
-    await policy.settled();
-    expect(opened.map((p) => p.base)).toEqual([A]);
+    expect(order).toEqual(["subscribe", "read"]);
+    expect(policy.policy()).toEqual({ presetUrl: A, locked: true });
+    expect(profiles.current()?.base).toBe(A);
   });
 
   test("stop unsubscribes from changes", async () => {
@@ -326,6 +346,43 @@ describe("createManagedPolicy", () => {
 });
 
 describe("managedSourceFrom", () => {
+  test("a read waits until the change listener is registered natively", async () => {
+    const order: string[] = [];
+    let register: (() => void) | null = null;
+    const native: ManagedConfigNative = {
+      get: async () => {
+        order.push("get");
+        return { config: {} };
+      },
+      addListener: () =>
+        new Promise((resolve) => {
+          register = () => {
+            order.push("registered");
+            resolve({ remove: async () => {} });
+          };
+        }),
+    };
+    const source = managedSourceFrom(native);
+    source.onChange(() => {});
+    const read = source.read();
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    (register as (() => void) | null)?.();
+    await read;
+    expect(order).toEqual(["registered", "get"]);
+  });
+
+  test("a listener registration that rejects is handled (no plugin)", async () => {
+    const native: ManagedConfigNative = {
+      get: async () => ({ config: { lockToPreset: true } }),
+      addListener: () => Promise.reject(new Error("plugin not implemented")),
+    };
+    const source = managedSourceFrom(native);
+    const stop = source.onChange(() => {});
+    expect(await source.read()).toEqual({ lockToPreset: true });
+    stop();
+  });
+
   test("reads the native config and forwards change events' config", async () => {
     let handler: ((e: unknown) => void) | null = null;
     let removed = false;

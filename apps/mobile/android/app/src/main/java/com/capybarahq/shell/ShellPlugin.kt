@@ -2,7 +2,7 @@
 // It lives on Capacitor's bridge, which only the app's local pages reach; profile WebViews never
 // see it. Gated calls from profile WebViews become `call` events for the runtime; the runtime's
 // `reply`, `pushState` and `event` go back to the profile's WebView. It also carries the
-// `ProfileHostPort` (Task 16): `open`, `showError`, `setAppearance`, and the `load` and
+// `ProfileHostPort` (Task 16): `open`, `showError`, `close`, `setAppearance`, and the `load` and
 // `document` events (the document events let the runtime cancel a dead document's calls and
 // push the current state to a new one).
 
@@ -62,6 +62,15 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
             DataStores.openWhenWipeSettled(
                 context, DataStores.get(context), open = { h.open(spec) },
             ) { error -> if (error == null) call.resolve() else call.reject(error) }
+        }
+    }
+
+    @PluginMethod
+    fun close(call: PluginCall) {
+        val profileId = call.getString("profileId") ?: return call.reject("close needs profileId")
+        main.post {
+            host?.close(profileId)
+            call.resolve()
         }
     }
 

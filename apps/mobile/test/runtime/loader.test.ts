@@ -38,6 +38,9 @@ function fakeHost() {
     showError: vi.fn(async (profileId: string) => {
       order.push(`showError ${profileId}`);
     }),
+    close: vi.fn(async (profileId: string) => {
+      order.push(`close ${profileId}`);
+    }),
     setAppearance: vi.fn(async (profileId: string, _look: unknown) => {
       order.push(`setAppearance ${profileId}`);
     }),
@@ -62,7 +65,10 @@ function fakeHost() {
   };
 }
 
-function setup(stored: Record<string, string> = {}) {
+function setup(
+  stored: Record<string, string> = {},
+  allowed: () => LoaderProfile[] = () => [p1, p2],
+) {
   const native = fakeHost();
   const pushState = vi.fn(async () => {});
   const calls: HostPort = {
@@ -90,10 +96,39 @@ function setup(stored: Record<string, string> = {}) {
     appearance,
     splash,
     errorView,
-    profiles: () => [p1, p2],
+    profiles: allowed,
   });
   return { native, pushState, registry, endDocument, splash, errorView, loader };
 }
+
+describe("loader: only allowed profiles", () => {
+  test("open refuses a profile that is not in profiles() (hidden by a lock)", async () => {
+    const { native, loader } = setup({}, () => [p1]);
+    await loader.open(p2);
+    expect(native.host.open).not.toHaveBeenCalled();
+    expect(loader.shown()).toBeNull();
+  });
+
+  test("retry refuses a shown profile that became hidden", async () => {
+    let allowed = [p1, p2];
+    const { native, loader } = setup({}, () => allowed);
+    await loader.open(p2);
+    expect(loader.shown()).toBe("p2");
+    allowed = [p1];
+    await loader.retry();
+    expect(native.host.open).toHaveBeenCalledTimes(1);
+  });
+
+  test("close tears the profile's WebView down and forgets it when shown", async () => {
+    const { native, loader } = setup();
+    await loader.open(p1);
+    await loader.close("p1");
+    expect(native.host.close).toHaveBeenCalledWith("p1");
+    expect(loader.shown()).toBeNull();
+    await loader.close("p2");
+    expect(native.host.close).toHaveBeenCalledWith("p2");
+  });
+});
 
 describe("loader", () => {
   test("opens the profile with its capabilities as the initial state", async () => {

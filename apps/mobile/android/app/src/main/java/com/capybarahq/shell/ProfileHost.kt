@@ -80,6 +80,27 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         if (shown == profileId) container.visibility = View.GONE
     }
 
+    /**
+     * Tears the profile's WebView down: a profile hidden by a managed lock or removed. Its page
+     * ends, the view leaves the container and is destroyed; a later [open] makes a new one.
+     * (Android still keeps a profile used in this process from deletion until the next cold
+     * start; DataStoreCore handles that.)
+     */
+    fun close(profileId: String) {
+        specs.remove(profileId)
+        val view = views.remove(profileId) ?: return
+        view.close()
+        container.removeView(view)
+        view.destroy()
+        if (shown == profileId) {
+            shown = null
+            container.visibility = View.GONE
+        }
+    }
+
+    /** The profile's live WebView, if any (tests). */
+    fun view(profileId: String): ProfileWebView? = views[profileId]
+
     fun setAppearance(profileId: String, background: Int, lightContent: Boolean) {
         this.background = background
         container.setBackgroundColor(background)
