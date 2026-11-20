@@ -24,8 +24,9 @@ export interface CapabilityImpl<P extends ProfileRef = ProfileRef> {
   events?: readonly string[];
   /**
    * Need a user activation and the per-profile dialog gate (`busy`). A confirming function holds
-   * the profile's slot until it settles, so it must settle (reject with `cancelled`) when its
-   * document ends or its dialog is dismissed; native also expires an unanswered call.
+   * the profile's slot until it settles. When the profile's document ends (`endDocument`) the
+   * registry answers `cancelled`, frees the slot and aborts `ctx.signal`, so the function should
+   * close its dialog then; it must also settle when its dialog is dismissed.
    */
   confirming?: readonly string[];
 }
@@ -38,6 +39,13 @@ export interface CapabilityRegistry<P extends ProfileRef = ProfileRef> {
   };
   dispatch(msg: ShellCallMessage): Promise<ShellCallResult>;
   emit(profileId: string, key: string, event: string, payload: unknown): void;
+  /**
+   * The profile's document ended (a navigation committed, the web process died, the WebView
+   * went away): every call still running for that profile answers `cancelled` and its signal
+   * aborts. A WebView holds one document at a time, and the doc id a call carries is
+   * page-asserted, so this ends all of the profile's calls rather than trusting that id.
+   */
+  endDocument(profileId: string): void;
 }
 
 /** The part of the profile store the registry reads (Task 14's `ProfileStore` satisfies it). */
@@ -66,6 +74,7 @@ export function createRegistry<P extends ProfileRef>(deps: {
 }): CapabilityRegistry<P> {
   const registry = new Map<string, Registered<P>>();
   const gate = createDialogGate();
+  const running = new Map<string, Set<AbortController>>();
 
   const profileById = (id: string) => deps.profiles.list().find((p) => p.id === id);
   const offered = (key: string, profile: P) => {
@@ -106,26 +115,53 @@ export function createRegistry<P extends ProfileRef>(deps: {
       if (!entry || !Object.hasOwn(entry.impl.functions, msg.fn)) return FAILED;
       const fn = entry.impl.functions[msg.fn];
       if (typeof fn !== "function") return FAILED;
-      const ctx: CallContext<P> = {
-        profile,
-        origin: msg.origin,
-        docId: msg.docId,
-        activation: msg.activation,
-      };
       const confirming = entry.impl.confirming?.includes(msg.fn) ?? false;
       if (confirming) {
         const decision = gate.enter(profile.id, msg.activation);
         if (decision !== "ok") return { ok: false, code: decision };
       }
+      const controller = new AbortController();
+      let calls = running.get(profile.id);
+      if (!calls) {
+        calls = new Set();
+        running.set(profile.id, calls);
+      }
+      calls.add(controller);
+      const ctx: CallContext<P> = {
+        profile,
+        origin: msg.origin,
+        docId: msg.docId,
+        activation: msg.activation,
+        signal: controller.signal,
+      };
+      const ended = new Promise<ShellCallResult>((resolve) => {
+        controller.signal.addEventListener("abort", () =>
+          resolve({ ok: false, code: "cancelled" }),
+        );
+      });
+      const run = (async (): Promise<ShellCallResult> => {
+        try {
+          const value = await fn(ctx, ...msg.args);
+          // JSON drops an undefined property: the page would see `{ ok: true }` and fail it.
+          return { ok: true, value: value === undefined ? null : value };
+        } catch (err) {
+          return { ok: false, code: toCode(err) };
+        }
+      })();
       try {
-        const value = await fn(ctx, ...msg.args);
-        // JSON drops an undefined property: the page would see `{ ok: true }` and fail it.
-        return { ok: true, value: value === undefined ? null : value };
-      } catch (err) {
-        return { ok: false, code: toCode(err) };
+        return await Promise.race([run, ended]);
       } finally {
+        calls.delete(controller);
+        if (calls.size === 0 && running.get(profile.id) === calls) running.delete(profile.id);
         if (confirming) gate.release(profile.id);
       }
+    },
+
+    endDocument(profileId) {
+      const calls = running.get(profileId);
+      if (!calls) return;
+      running.delete(profileId);
+      for (const controller of calls) controller.abort();
     },
 
     emit(profileId, key, event, payload) {

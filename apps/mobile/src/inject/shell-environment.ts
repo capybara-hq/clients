@@ -43,6 +43,8 @@ export interface NativeTransport {
    * transport bounds how often it asks in a row.
    */
   onRestart?(listener: () => void): void;
+  /** The document came back from the back/forward cache: the restart budget starts again. */
+  restored?(): void;
 }
 
 export interface InjectDeps {
@@ -165,7 +167,10 @@ export function bootShellEnvironment(deps: InjectDeps): boolean {
     transport.hello(docId);
   };
   transport.onRestart?.(rehello);
-  deps.onRestore?.(rehello);
+  deps.onRestore?.(() => {
+    transport.restored?.();
+    rehello();
+  });
   return true;
 }
 
@@ -181,8 +186,9 @@ interface IosHandler {
  * document, and the script posts the next one. WebKit binds a reply to the document that posted,
  * so a push never reaches another document (the same property as Android's reply proxy). A
  * rejected listen (the document ended, a bfcache restore, or a drop) ends that loop and asks the
- * script for a fresh hello, at most `MAX_RESTARTS` times in a row (a listen that native answers
- * resets the count), so a document native keeps rejecting stops asking.
+ * script for a fresh hello, at most `MAX_RESTARTS` times in a row (a listen that native answers,
+ * or a restore from the back/forward cache, resets the count), so a document native keeps
+ * rejecting stops asking.
  */
 const MAX_RESTARTS = 3;
 
@@ -234,6 +240,9 @@ export function iosTransport(win: Record<string, unknown>): NativeTransport | nu
     },
     onRestart(listener) {
       restart = listener;
+    },
+    restored() {
+      restarts = 0;
     },
   };
 }

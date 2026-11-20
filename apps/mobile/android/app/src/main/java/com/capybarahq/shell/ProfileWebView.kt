@@ -4,7 +4,15 @@
 // of the profile origin (the script itself keeps to the top frame) and owns the one gated endpoint
 // (ShellMessageListener). Accepted posts go to its `sink` (the ShellPlugin, which forwards them to
 // the TypeScript runtime); replies and pushes go back through the posting document's reply proxy.
-// Popups never get a WebView (multiple windows off).
+//
+// Navigation (Task 16, R14): every main-frame navigation, server redirects included, passes
+// `NavigationPolicy` in `shouldOverrideUrlLoading`; another origin goes to the browser sheet
+// (`onSheet`) and never loads here. Popups never get a WebView: multiple windows are off, so a
+// `window.open` or `target=_blank` navigates this WebView and meets the same policy (a foreign
+// URL goes to the sheet; a same-origin one stays here, which is the profile's own trust), and
+// `onCreateWindow` makes nothing. Load results go to the sink: a main-frame failure before a
+// commit (`didFailProvisional`, a TLS error never proceeds), a finished load, a dead render
+// process (R11: the host recreates the WebView and shows the error state).
 //
 // R9: without DOCUMENT_START_SCRIPT and WEB_MESSAGE_LISTENER (and MULTI_PROFILE for a named
 // profile) no profile WebView is made and no remote origin loads: `create` answers Unsupported.
@@ -14,11 +22,17 @@ package com.capybarahq.shell
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.util.Log
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.JavaScriptReplyProxy
@@ -31,6 +45,9 @@ import java.lang.ref.WeakReference
 
 /** R9: the WebView features a profile WebView cannot do without. */
 object ProfileWebViewSupport {
+    /** Without these the app shows its native unsupported state and loads no remote origin. */
+    val GATE = listOf(WebViewFeature.DOCUMENT_START_SCRIPT, WebViewFeature.WEB_MESSAGE_LISTENER)
+
     val REQUIRED = listOf(
         WebViewFeature.DOCUMENT_START_SCRIPT,
         WebViewFeature.WEB_MESSAGE_LISTENER,
@@ -39,6 +56,9 @@ object ProfileWebViewSupport {
 
     /** The required features `isSupported` lacks; empty when a profile WebView can be made. */
     fun missing(isSupported: (String) -> Boolean): List<String> = REQUIRED.filterNot(isSupported)
+
+    /** The gate features `isSupported` lacks: empty when the app may run at all. */
+    fun missingGate(isSupported: (String) -> Boolean): List<String> = GATE.filterNot(isSupported)
 }
 
 /** One gated call, as the runtime receives it (`ShellCallMessage` in src/runtime/protocol.ts). */
@@ -69,16 +89,27 @@ class ProfileWebView private constructor(
     context: Context,
     val profileId: String,
     val profileOrigin: Origin,
+    /** The deployment address (origin plus path prefix): the sign-in routes are under it. */
+    val base: String,
     pendingLifetimeMs: Long,
 ) : WebView(context), ShellMessageListenerDelegate {
 
-    /** Receives what the gate let through. Held weakly. */
+    /** Receives what the gate let through and what the WebView's loads did. Held weakly. */
     interface Sink {
         /** A new document of the profile origin is current (its script said hello). */
         fun onDocument(view: ProfileWebView, docId: String)
 
         /** Answer with `view.reply(callId, result)`. */
         fun onCall(view: ProfileWebView, call: ShellCall)
+
+        /** The document that said hello ended (a new one committed, or the process died). */
+        fun onDocumentEnded(view: ProfileWebView, docId: String) {}
+
+        /** A main-frame load event (`LoadEvent` in src/runtime/host-port.ts, without profileId). */
+        fun onLoad(view: ProfileWebView, event: JSONObject) {}
+
+        /** The render process died: the host drops this WebView (destroyed) and makes a new one. */
+        fun onGone(view: ProfileWebView) {}
     }
 
     /** Observes gate decisions (accept, drop, popup), for logs and the hostile-page test. */
@@ -104,6 +135,17 @@ class ProfileWebView private constructor(
         }
     var monitor: Monitor? = null
 
+    /** Where a navigation that leaves the profile goes: the browser sheet (BrowserSheet.kt). */
+    var onSheet: ((String) -> Unit)? = null
+
+    /** A connector OAuth leave-and-return under way (NavigationPolicy). */
+    private var oauthReturn: OauthReturn? = null
+    /** Set by a main-frame failure until the next main-frame start, so its error page is ignored. */
+    private var mainFrameFailed = false
+    /** The origin the main frame is loading (a certificate error there is a main-frame failure). */
+    private var mainTarget: Origin? = null
+    private var gone = false
+
     private var current: JavaScriptReplyProxy? = null
     private var currentDocId: String? = null
     private val main = Handler(Looper.getMainLooper())
@@ -120,6 +162,7 @@ class ProfileWebView private constructor(
                 main.removeCallbacks(task)
             }
         },
+        assertThread = { check(Looper.myLooper() == Looper.getMainLooper()) { "PendingCalls off the main thread" } },
     )
 
     companion object {
@@ -156,6 +199,7 @@ class ProfileWebView private constructor(
             script: String,
             isSupported: (String) -> Boolean = WebViewFeature::isFeatureSupported,
             pendingLifetimeMs: Long = DEFAULT_PENDING_LIFETIME_MS,
+            base: String = profileOrigin,
         ): Result {
             val missing = ProfileWebViewSupport.missing(isSupported)
             if (missing.isNotEmpty()) return Result.Unsupported(missing)
@@ -163,17 +207,18 @@ class ProfileWebView private constructor(
             val origin = Origin.parse(profileOrigin)
             if (origin == null || origin.serialized != profileOrigin) return Result.Refused("bad_origin")
 
-            val view = ProfileWebView(context, profileId, origin, pendingLifetimeMs)
+            val view = ProfileWebView(context, profileId, origin, base, pendingLifetimeMs)
             ProfileStore.getInstance().getOrCreateProfile(profileName)
             WebViewCompat.setProfile(view, profileName)
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
-            // R14: no popup windows; window.open answers null and onCreateWindow makes nothing.
+            // R14: no popup windows. With multiple windows off a window.open or target=_blank
+            // navigates this WebView, so the policy client below decides it like any navigation.
             view.settings.setSupportMultipleWindows(false)
             view.settings.javaScriptCanOpenWindowsAutomatically = false
-            // Navigations stay in this WebView (without a client Android hands them to a browser);
-            // Task 16 sets the navigation policy client.
-            view.webViewClient = WebViewClient()
+            view.settings.allowFileAccess = false
+            view.settings.allowContentAccess = false
+            view.webViewClient = view.PolicyClient()
             view.webChromeClient = object : WebChromeClient() {
                 override fun onCreateWindow(
                     webView: WebView,
@@ -181,7 +226,13 @@ class ProfileWebView private constructor(
                     isUserGesture: Boolean,
                     resultMsg: Message?,
                 ): Boolean {
+                    // Never called while multiple windows are off; if a WebView ever does, the
+                    // tapped link (when there is one) goes to the sheet and no window is made.
                     view.report(mapOf("event" to "popup-window"))
+                    val hit = webView.hitTestResult
+                    if (hit.type == HitTestResult.SRC_ANCHOR_TYPE) {
+                        hit.extra?.let { view.route(it, isMainFrame = true, targetBlank = true) }
+                    }
                     return false
                 }
             }
@@ -232,11 +283,7 @@ class ProfileWebView private constructor(
         when (post) {
             is ShellPost.Hello -> {
                 report(mapOf("event" to "accept", "kind" to "hello", "origin" to origin.serialized))
-                if (post.docId != currentDocId) {
-                    // A new document: the old one's calls can no longer be answered (their reply
-                    // proxies belong to a document that is gone).
-                    pending.clear()
-                }
+                if (post.docId != currentDocId) endDocument()
                 current = reply
                 currentDocId = post.docId
                 sink?.onDocument(this, post.docId)
@@ -265,12 +312,114 @@ class ProfileWebView private constructor(
         }
     }
 
+    /**
+     * The current document ended: its owed calls are answered `failed` through their own reply
+     * proxies (never dropped silently), pushes stop, and the runtime hears about it (M3).
+     */
+    private fun endDocument() {
+        pending.failAll()
+        current = null
+        val ended = currentDocId ?: return
+        currentDocId = null
+        sink?.onDocumentEnded(this, ended)
+    }
+
     /** No expiry callback outlives the WebView (each would retain it for up to the lifetime). */
     override fun destroy() {
         pending.clear()
         current = null
         currentDocId = null
+        onSheet = null
         super.destroy()
+    }
+
+    // ---- Navigation and loading ----
+
+    /** Loads the deployment's base address. */
+    fun loadBase() {
+        mainFrameFailed = false
+        mainTarget = profileOrigin
+        loadUrl(base)
+    }
+
+    /** Applies the policy; true when the navigation must not proceed here. */
+    internal fun route(url: String, isMainFrame: Boolean, targetBlank: Boolean): Boolean {
+        val now = System.currentTimeMillis()
+        val decision = NavigationPolicy.decide(
+            url, profileOrigin.serialized, base, isMainFrame, targetBlank, OauthReturn.isPending(oauthReturn, now),
+        )
+        if (isMainFrame && !targetBlank) {
+            oauthReturn = OauthReturn.next(oauthReturn, url, decision, profileOrigin, now)
+            if (decision == NavigationDecision.ALLOW) {
+                mainTarget = NavUrl.parse(url)?.origin
+                mainFrameFailed = false
+            }
+        }
+        report(mapOf("event" to "navigation", "url" to url, "decision" to decision.wire, "isMainFrame" to isMainFrame))
+        return when (decision) {
+            NavigationDecision.ALLOW -> false
+            NavigationDecision.SHEET -> {
+                onSheet?.invoke(url)
+                true
+            }
+            NavigationDecision.BLOCK -> true
+        }
+    }
+
+    private fun emitLoad(event: JSONObject) {
+        report(mapOf("event" to "load", "detail" to event.toString()))
+        sink?.onLoad(this, event)
+    }
+
+    /** The policy client: every navigation the WebView asks about, and the main frame's results. */
+    inner class PolicyClient : WebViewClient() {
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+            route(request.url.toString(), request.isForMainFrame, targetBlank = false)
+
+        override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            // A new main-frame document: the one that said hello is gone.
+            endDocument()
+        }
+
+        override fun onPageFinished(view: WebView, url: String?) {
+            if (mainFrameFailed || gone) return
+            emitLoad(JSONObject().put("type", "didFinish"))
+        }
+
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            if (!request.isForMainFrame || mainFrameFailed) return
+            mainFrameFailed = true
+            val code = error.description?.toString()?.removePrefix("net::")?.takeIf { it.isNotBlank() }
+                ?: "ERROR_${error.errorCode}"
+            val tls = error.errorCode == ERROR_FAILED_SSL_HANDSHAKE || code.contains("CERT") || code.contains("SSL")
+            emitLoad(JSONObject().put("type", "didFailProvisional").put("code", code).put("tls", tls))
+        }
+
+        /** Never proceeds past a certificate error (spec §4.4: no proceed option). */
+        override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+            handler.cancel()
+            val target = NavUrl.parse(error.url ?: "")?.origin
+            if (mainFrameFailed || target == null || target != mainTarget) return
+            mainFrameFailed = true
+            val code = when (error.primaryError) {
+                SslError.SSL_EXPIRED -> "ERR_CERT_DATE_INVALID"
+                SslError.SSL_IDMISMATCH -> "ERR_CERT_COMMON_NAME_INVALID"
+                SslError.SSL_UNTRUSTED -> "ERR_CERT_AUTHORITY_INVALID"
+                SslError.SSL_NOTYETVALID -> "ERR_CERT_DATE_INVALID"
+                else -> "ERR_CERT_INVALID"
+            }
+            emitLoad(JSONObject().put("type", "didFailProvisional").put("code", code).put("tls", true))
+        }
+
+        /** R11: the render process died; the host recreates the WebView and shows the error state. */
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            if (gone) return true
+            gone = true
+            endDocument()
+            emitLoad(JSONObject().put("type", "processGone"))
+            sink?.onGone(this@ProfileWebView)
+            return true
+        }
     }
 
     override fun dropped(reason: String, callId: String?, isMainFrame: Boolean, origin: String) {

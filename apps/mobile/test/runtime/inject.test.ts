@@ -100,10 +100,12 @@ describe("a restored or restarted document", () => {
     let restart: (() => void) | undefined;
     let restore: (() => void) | undefined;
     const ids = ["doc-1", "doc-2", "doc-3"];
+    const restored = vi.fn();
     const transport = Object.assign(fakeTransport(), {
       onRestart(l: () => void) {
         restart = l;
       },
+      restored,
     });
     const { target } = boot({
       transport,
@@ -115,6 +117,8 @@ describe("a restored or restarted document", () => {
     restart?.();
     restore?.();
     expect(transport.hello.mock.calls.map(([d]) => d)).toEqual(["doc-1", "doc-2", "doc-3"]);
+    // Only the bfcache restore resets the transport's restart budget.
+    expect(restored).toHaveBeenCalledTimes(1);
     const haptics = (target.capybaraShell as CapybaraShell).capabilities["haptics@1"] as Record<
       string,
       (...a: unknown[]) => Promise<unknown>
@@ -344,6 +348,31 @@ describe("the iOS transport", () => {
       "doc-2",
       "doc-3",
     ]);
+  });
+
+  test("a bfcache restore resets the restart budget", async () => {
+    const posted: { type: string; docId: string }[] = [];
+    const { win } = fakeWebkit((m) => {
+      posted.push(m as { type: string; docId: string });
+      if ((m as { type: string }).type === "hello") return Promise.resolve(true);
+      return Promise.reject(new Error("gone"));
+    });
+    const t = iosTransport(win);
+    let n = 0;
+    t?.onRestart?.(() => {
+      n += 1;
+      t.hello(`doc-${n}`);
+    });
+    t?.hello("doc-0");
+    await vi.waitFor(() => expect(posted.filter((p) => p.type === "listen")).toHaveLength(4));
+    await new Promise((r) => setImmediate(r));
+    expect(n).toBe(3);
+    // The page came back from the back/forward cache: a fresh hello gets a fresh budget.
+    t?.restored?.();
+    t?.hello("doc-r");
+    await vi.waitFor(() => expect(posted.filter((p) => p.type === "listen")).toHaveLength(8));
+    await new Promise((r) => setImmediate(r));
+    expect(n).toBe(6);
   });
 
   test("a superseded document id's listen stops without restarting", async () => {

@@ -188,5 +188,9 @@
   "address.error.not_capybara": "这个地址不是 Capybara 平台。请确认它是你所在组织提供的地址。",
   "address.error.too_old": "该平台的版本过低，不支持手机端登录。请联系平台管理员升级。",
   "address.error.cert_invalid": "证书无效，无法安全地连接 {host}。请联系平台管理员。",
-  "address.error.locked": "你的管理员不允许使用这个平台。"
+  "address.error.locked": "你的管理员不允许使用这个平台。",
+  "error.lead.unreachable": "无法连接 {host}。请检查网络或 VPN 后重试。",
+  "error.lead.tls": "与 {host} 的连接不安全：它的证书或 TLS 设置无效。请联系平台管理员。",
+  "error.lead.crashed": "{host} 的页面意外停止了。请重试。",
+  "error.code": "错误：{code}"
 }
