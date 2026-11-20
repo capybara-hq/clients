@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  blockInWindowSignIn,
-  isInWindowSignIn,
-  type WebRequestSession,
-} from "../src/main/request-guard.ts";
+import { blockInWindowSignIn, type WebRequestSession } from "../src/main/request-guard.ts";
 
 const BASE = "https://capybara.example.com/team";
 
@@ -39,6 +35,8 @@ function fakeWebRequestSession() {
   };
 }
 
+// The spellings of the routes (case, escapes, doubled slashes, base prefix) are the shared vectors
+// of packages/shell/test/sign-in-guard.test.ts.
 describe("blockInWindowSignIn", () => {
   test("cancels the password sign-in and every SSO start under the base", () => {
     const s = fakeWebRequestSession();
@@ -71,68 +69,5 @@ describe("blockInWindowSignIn", () => {
     ]) {
       expect(s.request(method as string, url as string), `${method} ${url}`).toBe(false);
     }
-  });
-});
-
-describe("isInWindowSignIn", () => {
-  test("matches on the parsed path: case, a trailing slash, doubled slashes and dot segments", () => {
-    for (const [method, url] of [
-      ["post", `${BASE}/api/v1/auth/login`],
-      ["POST", `${BASE}/api/v1/auth/login/`],
-      ["POST", `${BASE}/API/V1/Auth/Login`],
-      ["POST", `${BASE}//api//v1/auth/login`],
-      ["POST", `${BASE}/x/../api/v1/auth/login`],
-      ["POST", `${BASE}/api/v1/auth/%2e%2e/auth/login`],
-      ["GET", `${BASE}/api/v1/auth/sso/a/b/start`],
-      ["GET", `${BASE}/api/v1/auth/sso/a/start/`],
-      ["HEAD", `${BASE}/api/v1/auth/sso/a/start`],
-    ]) {
-      expect(isInWindowSignIn(method as string, url as string, BASE), `${method} ${url}`).toBe(
-        true,
-      );
-    }
-  });
-
-  test("a deployment at the origin root", () => {
-    const root = "https://capybara.example.com";
-    expect(isInWindowSignIn("POST", `${root}/api/v1/auth/login`, root)).toBe(true);
-    expect(isInWindowSignIn("POST", `${root}/team/api/v1/auth/login`, root)).toBe(false);
-    expect(isInWindowSignIn("GET", `${root}/api/v1/auth/sso//start`, root)).toBe(false);
-  });
-});
-
-describe("percent-encoded paths", () => {
-  test("encoded segments are decoded before matching", () => {
-    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/%6cogin`, BASE)).toBe(true);
-    expect(isInWindowSignIn("POST", `${BASE}/%61pi/v1/auth/login`, BASE)).toBe(true);
-    expect(isInWindowSignIn("GET", `${BASE}/api/v1/auth/sso/x/%73tart`, BASE)).toBe(true);
-    expect(isInWindowSignIn("GET", `${BASE}/api/v1/auth/sso/%4Cark/start`, BASE)).toBe(true);
-  });
-
-  test("an encoded slash or backslash cannot hide the route (block when in doubt)", () => {
-    for (const [method, path] of [
-      ["POST", "/api/v1/auth%2Flogin"],
-      ["POST", "/api%2fv1%2fauth%2flogin"],
-      ["GET", "/api/v1/auth/sso/x%2Fstart"],
-      ["GET", "/api/v1/auth/sso%2Fx/start"],
-      ["POST", "/api\\v1\\auth\\login"],
-      ["POST", "/api/v1/x/..%2Fauth/login"],
-      ["POST", "/api/v1/auth/%2e%2e%2fauth/login"],
-    ]) {
-      expect(isInWindowSignIn(method as string, `${BASE}${path}`, BASE), path).toBe(true);
-    }
-  });
-
-  test("a malformed escape does not throw and does not unblock the rest", () => {
-    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/login%zz`, BASE)).toBe(false);
-    expect(isInWindowSignIn("POST", `${BASE}/%zz/../api/v1/auth/login`, BASE)).toBe(true);
-  });
-
-  test("encoded look-alikes of other routes still pass", () => {
-    expect(isInWindowSignIn("POST", `${BASE}/api/v1/auth/%6cogout`, BASE)).toBe(false);
-    expect(isInWindowSignIn("GET", `${BASE}/files/a%2Fb`, BASE)).toBe(false);
-    expect(isInWindowSignIn("POST", "https://capybara.example.com/api/v1/auth/%6cogin", BASE)).toBe(
-      false,
-    );
   });
 });

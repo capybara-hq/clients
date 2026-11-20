@@ -1,9 +1,9 @@
+import { sameOriginUrl } from "@capybara-hq/shell";
 import { describe, expect, test, vi } from "vitest";
 import {
   createChromeCapability,
   createNotifyCapability,
   createOpenExternalCapability,
-  sameOriginUrl,
 } from "../src/main/capabilities.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import type { Appearance } from "../src/shared/appearance.ts";

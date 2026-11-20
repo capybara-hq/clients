@@ -162,5 +162,14 @@
   "menu.platform.add": "Add Platform…",
   "menu.platform.signOut": "Sign Out of {platform}…",
   "menu.platform.signOutPlain": "Sign Out…",
-  "menu.platform.remove": "Remove This Platform…"
+  "menu.platform.remove": "Remove This Platform…",
+  "profile.switcher.title": "Platforms",
+  "profile.switcher.add": "Add a platform",
+  "profile.switch_confirm.message": "Switching platforms signs you out of the current platform",
+  "profile.switch_confirm.confirm": "Switch",
+  "profile.switch_confirm.cancel": "Cancel",
+  "error.title": "Cannot open this platform",
+  "error.retry": "Retry",
+  "error.switch_platform": "Switch platform",
+  "address.error.sign_in_unavailable_mobile": "This platform has no public address set (http.publicUrl), so the mobile app cannot sign in. Ask your super admin to set it."
 }

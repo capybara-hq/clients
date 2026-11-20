@@ -1,11 +1,8 @@
 import type { CapybaraShell } from "@capybara-hq/plugin-sdk";
+import { installShellEnvironment, type ShellBridge } from "@capybara-hq/shell";
 import { describe, expect, test, vi } from "vitest";
 import { createWindowManager } from "../src/main/windows.ts";
-import {
-  bootShellPreload,
-  installShellEnvironment,
-  type ShellBridge,
-} from "../src/preload/shell-environment.ts";
+import { bootShellPreload } from "../src/preload/shell-environment.ts";
 import {
   chromeState,
   SHELL_CHANNELS,
@@ -45,7 +42,7 @@ function fakeBridge() {
 function install(fn: typeof installShellEnvironment = installShellEnvironment) {
   const bridge = fakeBridge();
   const target: { capybaraShell?: CapybaraShell } = {};
-  fn(init, bridge, target);
+  fn({ ...init, kind: "desktop" }, bridge, target);
   return { bridge, target, shell: target.capybaraShell as CapybaraShell };
 }
 
@@ -138,6 +135,7 @@ describe("the Shell environment object", () => {
     installShellEnvironment(
       {
         ...init,
+        kind: "desktop",
         capabilities: { ...init.capabilities, "device@1": ["status"] },
         events: { "device@1": ["onStatus"] },
       },
@@ -251,7 +249,7 @@ describe("the preload", () => {
     expect(deps.ipcRenderer.sendSync).toHaveBeenCalledWith(SHELL_CHANNELS.init);
     const script = deps.contextBridge.executeInMainWorld.mock.calls[0]?.[0];
     expect(script?.func).toBe(installShellEnvironment);
-    expect(script?.args[0]).toEqual(init);
+    expect(script?.args[0]).toEqual({ ...init, kind: "desktop" });
   });
 
   test("does nothing in a sub-frame (no IPC at all)", () => {

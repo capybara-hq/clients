@@ -1,6 +1,7 @@
 // The capabilities of this task (spec §8): notify@1, openExternal@1, chrome@1. Each function gets
 // the caller's context first and validates the page's arguments itself; a refusal is
 // `{ code: "failed" }`. Electron objects come in as parameters.
+import { isRecord, sameOriginUrl } from "@capybara-hq/shell";
 import {
   type Appearance,
   electronColor,
@@ -15,24 +16,6 @@ import type { CallContext } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
 
 const failed = () => ({ code: "failed" as const });
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/**
- * Resolves an absolute path (`/…`) on `origin`; null when it is not one or would leave the origin
- * (`//host`, `/\host`, which browsers read as another host).
- */
-export function sameOriginUrl(path: string, origin: string): string | null {
-  if (!path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return null;
-  try {
-    const u = new URL(path, origin);
-    return u.origin === origin ? u.href : null;
-  } catch {
-    return null;
-  }
-}
 
 export const NOTIFY_LIMITS = { title: 1000, body: 4000 } as const;
 

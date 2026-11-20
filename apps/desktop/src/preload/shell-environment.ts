@@ -1,6 +1,8 @@
 // The Shell environment in the deployment window (mobile spec §9.1, §9.4). The preload runs in the
 // isolated world of every document the window loads; it asks main for the environment, re-checks
 // the frame and the origin itself, and installs `window.capybaraShell` in the page's world.
+// The subpath, not the package index: the sandboxed preload bundle must not reach `node:crypto`.
+import { installShellEnvironment, type ShellBridge } from "@capybara-hq/shell/install-shell";
 import {
   type CapabilityDescriptors,
   DOC_ID_PATTERN,
@@ -10,120 +12,6 @@ import {
   type ShellInit,
   type ShellState,
 } from "../shared/protocol.ts";
-
-/** What the page's world gets from the isolated world: three functions, nothing generic. */
-export interface ShellBridge {
-  call(key: string, fn: string, args: unknown[]): Promise<ShellCallResult>;
-  onChange(listener: (state: ShellState) => void): void;
-  /** Subscribes to one event of a capability; answers how to unsubscribe. */
-  subscribe(key: string, event: string, listener: (payload: unknown) => void): () => void;
-}
-
-/**
- * Runs in the page's world through `contextBridge.executeInMainWorld`, which passes it as source
- * text: it must stay self-contained (no imports, no outer variables). `target` exists for tests;
- * in the page it is `globalThis`.
- *
- * The object is frozen and defined non-writable and non-configurable; `insets`, `controls` and
- * `capabilities` are getters so a `change` listener reads the new values.
- */
-export function installShellEnvironment(
-  init: ShellInit,
-  bridge: ShellBridge,
-  target?: object,
-): void {
-  const host = target === undefined ? globalThis : target;
-  const listeners = new Set<() => void>();
-
-  const freezeInsets = (i: ShellInit["insets"]) =>
-    Object.freeze({ top: i.top, right: i.right, bottom: i.bottom, left: i.left });
-  const freezeControls = (c: ShellInit["controls"]) =>
-    c === null ? null : Object.freeze({ x: c.x, y: c.y, width: c.width, height: c.height });
-  const buildCapabilities = (
-    descriptors: CapabilityDescriptors,
-    events: CapabilityDescriptors | undefined,
-  ) => {
-    const out: Record<string, object> = {};
-    const keys = new Set([...Object.keys(descriptors), ...Object.keys(events ?? {})]);
-    for (const key of keys) {
-      const fns: Record<string, (...args: never[]) => unknown> = {};
-      for (const name of descriptors[key] ?? []) {
-        fns[name] = (...args: unknown[]) =>
-          bridge.call(key, name, args).then((r) => {
-            if (r.ok) return r.value;
-            const err = new Error(`capybaraShell ${key}.${name}: ${r.code}`) as Error & {
-              code: string;
-            };
-            err.code = r.code;
-            throw err;
-          });
-      }
-      for (const name of events?.[key] ?? []) {
-        fns[name] = (listener: (payload: unknown) => void) => {
-          if (typeof listener !== "function") return () => {};
-          return bridge.subscribe(key, name, (payload) => {
-            try {
-              listener(payload);
-            } catch (err) {
-              console.error(err);
-            }
-          });
-        };
-      }
-      out[key] = Object.freeze(fns);
-    }
-    return Object.freeze(out);
-  };
-
-  let insets = freezeInsets(init.insets);
-  let controls = freezeControls(init.controls);
-  let capabilities = buildCapabilities(init.capabilities, init.events);
-
-  const shell = Object.freeze({
-    version: 1 as const,
-    kind: "desktop" as const,
-    platform: init.platform,
-    shellVersion: init.shellVersion,
-    get insets() {
-      return insets;
-    },
-    get controls() {
-      return controls;
-    },
-    get capabilities() {
-      return capabilities;
-    },
-    on(event: "change", listener: () => void): () => void {
-      if (event !== "change" || typeof listener !== "function") return () => {};
-      // A wrapper per subscription, so subscribing the same function twice needs two unsubscribes.
-      const entry = () => listener();
-      listeners.add(entry);
-      return () => {
-        listeners.delete(entry);
-      };
-    },
-  });
-
-  bridge.onChange((state) => {
-    insets = freezeInsets(state.insets);
-    controls = freezeControls(state.controls);
-    capabilities = buildCapabilities(state.capabilities, state.events);
-    for (const listener of [...listeners]) {
-      try {
-        listener();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  });
-
-  Object.defineProperty(host, "capybaraShell", {
-    value: shell,
-    enumerable: true,
-    configurable: false,
-    writable: false,
-  });
-}
 
 function isShellInit(v: unknown): v is ShellInit {
   if (typeof v !== "object" || v === null) return false;
@@ -253,6 +141,9 @@ export function bootShellPreload(deps: ShellPreloadDeps): boolean {
       };
     },
   };
-  deps.contextBridge.executeInMainWorld({ func: installShellEnvironment, args: [init, bridge] });
+  deps.contextBridge.executeInMainWorld({
+    func: installShellEnvironment,
+    args: [{ ...init, kind: "desktop" as const }, bridge],
+  });
   return true;
 }

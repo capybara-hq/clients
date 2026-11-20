@@ -4,7 +4,7 @@
 //
 // Values come from outside the app: every field is validated on its own and a malformed one is
 // ignored (the others still apply); a missing or unreadable file reads as `{}`.
-import { normalizeAddress } from "@capybara-hq/shell";
+import { isRecord, normalizeAddress } from "@capybara-hq/shell";
 import type { NewProfile } from "./profiles.ts";
 
 export interface ManagedConfig {
@@ -17,10 +17,6 @@ export interface ManagedConfig {
   updateFeed?: string;
   /** false hides 「连接本机」. */
   connectThisMachine?: boolean;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 interface ParsedLevel {

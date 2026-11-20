@@ -1,7 +1,7 @@
 // Profiles: one per deployment, each with its own session partition (spec §6.3). Stored as JSON in
 // userData with atomic writes; a corrupt file reads as empty and never stops the app.
 import { dirname } from "node:path";
-import { normalizeAddress } from "@capybara-hq/shell";
+import { isRecord, normalizeAddress } from "@capybara-hq/shell";
 import { type Appearance, validAppearance } from "../shared/appearance.ts";
 
 export interface Profile {
@@ -99,10 +99,6 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function partitionFor(id: string): string {
   return `persist:profile-${id}`;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function parseBounds(v: unknown): ProfileBounds | undefined {

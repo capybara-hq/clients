@@ -1,5 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
-import { appSignInBlocked, discover, fetchMeta, META_TIMEOUT_MS, type Meta } from "../src/meta.ts";
+import {
+  appSignInBlocked,
+  discover,
+  fetchMeta,
+  META_MAX_BYTES,
+  META_TIMEOUT_MS,
+  type Meta,
+} from "../src/meta.ts";
 import { startFakeDeployment } from "./fixtures/fake-deployment.ts";
 
 const good = {
@@ -276,5 +283,43 @@ describe("appSignInBlocked", () => {
     expect(appSignInBlocked(m, "capybara://auth/callback")).toBeNull();
     expect(appSignInBlocked(m, "capybara://x")).toBe("not_allowed");
     expect(appSignInBlocked(meta({ appRedirectUris: [] }), "capybara://x")).toBe("not_allowed");
+  });
+});
+
+describe("fetchMeta without Node globals", () => {
+  test("reads a web ReadableStream body with no Buffer in scope", async () => {
+    vi.stubGlobal("Buffer", undefined);
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify({ ...good, name: "Acme 智能体" }));
+      const half = Math.floor(bytes.length / 2);
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          // Split inside a multi-byte character's neighbourhood: chunks join before decoding.
+          c.enqueue(bytes.slice(0, half));
+          c.enqueue(bytes.slice(half));
+          c.close();
+        },
+      });
+      const f = fake(() => new Response(stream, { status: 200 }));
+      expect(await fetchMeta("https://x.example", f.fn)).toMatchObject({ name: "Acme 智能体" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("an oversized streamed body is not_capybara", async () => {
+    vi.stubGlobal("Buffer", undefined);
+    try {
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(META_MAX_BYTES + 1));
+          c.close();
+        },
+      });
+      const f = fake(() => new Response(stream, { status: 200 }));
+      expect(await fetchMeta("https://x.example", f.fn)).toEqual({ error: "not_capybara" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
