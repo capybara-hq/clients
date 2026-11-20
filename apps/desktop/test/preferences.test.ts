@@ -8,6 +8,7 @@ import {
   installPreferenceActions,
   type PreferencesFs,
   preferenceCookie,
+  provisionalToFollow,
 } from "../src/main/preferences.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import { LOCAL_ORIGIN } from "../src/shared/protocol.ts";
@@ -34,12 +35,18 @@ type Listener = (event: unknown, cookie: { name: string }, cause: string, remove
 function fakeJar() {
   const cookies = new Map<string, CookieDetails>();
   const listeners: Listener[] = [];
-  return {
+  const jarParent = (name: string) => jar.parent.filter((c) => c.name === name);
+  const jar = {
     cookies,
     listeners,
-    get: vi.fn(async (filter: { url: string; name: string }) =>
-      [...cookies.values()].filter((c) => c.url === filter.url && c.name === filter.name),
-    ),
+    /** Cookies of a parent domain, returned for every URL under it (like Chromium). */
+    parent: [] as { name: string; value: string; domain: string; hostOnly: boolean }[],
+    get: vi.fn(async (filter: { url: string; name: string }) => [
+      ...jarParent(filter.name),
+      ...[...cookies.values()]
+        .filter((c) => c.url === filter.url && c.name === filter.name)
+        .map((c) => ({ ...c, domain: new URL(c.url).hostname, hostOnly: true })),
+    ]),
     set: vi.fn(async (d: CookieDetails) => {
       cookies.set(`${d.url} ${d.name}`, d);
       for (const l of listeners) l({}, { name: d.name }, "explicit", false);
@@ -61,7 +68,11 @@ function fakeJar() {
       });
       for (const l of listeners) l({}, { name }, "explicit", false);
     },
+    emit(name: string) {
+      for (const l of listeners) l({}, { name }, "explicit", false);
+    },
   };
+  return jar;
 }
 
 function fakeFs(initial?: string) {
@@ -154,6 +165,7 @@ describe("the preference cookies (spec 6.10)", () => {
 
   test("setTheme / setLocale write the profile's cookies and update what pages read", async () => {
     const s = setup();
+    await s.prefs.watch(httpsProfile);
     await s.prefs.setTheme(httpsProfile, "light");
     await s.prefs.setLocale(httpsProfile, "zh");
     expect([...s.jar("p1").cookies.values()].map((c) => [c.name, c.value, c.secure])).toEqual([
@@ -280,6 +292,8 @@ describe("the menus' language (spec 12)", () => {
     expect(s.prefs.menuLocale(undefined, [])).toBe("zh");
     await s.prefs.setLocale(undefined, "en");
     expect(s.prefs.menuLocale(undefined, [])).toBe("en");
+    await s.prefs.watch(httpsProfile);
+    await s.prefs.watch(httpProfile);
     await s.prefs.setLocale(httpsProfile, "zh");
     await s.prefs.setLocale(httpProfile, "en");
     // The last used profile, else the first one.
@@ -380,5 +394,96 @@ describe("the local pages' prefs actions", () => {
     expect(a.s.jar("p1").set).not.toHaveBeenCalled();
     // The language still changes.
     expect(await act("prefs.setLocale", { locale: "en" })).toEqual({ ok: true, value: true });
+  });
+});
+
+describe("review fixes", () => {
+  test("a removed profile keeps no cache entry and reports nothing after a change event", async () => {
+    const s = setup();
+    await s.prefs.watch(httpsProfile);
+    await s.prefs.setLocale(httpsProfile, "zh");
+    s.onChange.mockClear();
+    s.prefs.forget("p1");
+    // The partition's clearing during removal raises change events.
+    s.jar("p1").cookies.clear();
+    s.jar("p1").emit("NEXT_LOCALE");
+    await settle();
+    expect(s.onChange).not.toHaveBeenCalled();
+    expect(s.prefs.locale(httpsProfile)).toBe("en");
+    // A write that finishes after the removal puts nothing back either.
+    await s.prefs.setTheme(httpsProfile, "dark");
+    expect(s.prefs.theme(httpsProfile)).toBeUndefined();
+    expect(s.onChange).not.toHaveBeenCalled();
+  });
+
+  test("only the newest load writes the cache", async () => {
+    const s = setup();
+    await s.prefs.watch(httpsProfile);
+    const jar = s.jar("p1");
+    // The first load is held at its first read; a second one starts and finishes.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const original = jar.get.getMockImplementation();
+    jar.get.mockImplementationOnce(async (f) => {
+      const result = await (original as NonNullable<typeof original>)(f);
+      await held;
+      return result;
+    });
+    const first = s.prefs.watch(httpsProfile);
+    jar.webWrites("https://capybara.example.com/", "cb-theme", "light");
+    await settle();
+    expect(s.prefs.theme(httpsProfile)).toBe("light");
+    release();
+    await first;
+    // The older load read no cookie; it does not undo the newer value.
+    expect(s.prefs.theme(httpsProfile)).toBe("light");
+  });
+
+  test("seeds of one profile run one after another", async () => {
+    const s = setup({ file: '{"theme":"light"}' });
+    const jar = s.jar("p1");
+    const order: string[] = [];
+    jar.set.mockImplementation(async (d: CookieDetails) => {
+      order.push(`set ${d.value}`);
+      jar.cookies.set(`${d.url} ${d.name}`, d);
+    });
+    const first = s.prefs.seed(httpsProfile, { overwrite: true });
+    await s.prefs.setTheme(undefined, "dark");
+    const second = s.prefs.seed(httpsProfile, { overwrite: true });
+    await Promise.all([first, second]);
+    // The later seed's value is the last one written, whatever the timing.
+    expect(order.at(-1)).toBe("set dark");
+    expect(await s.prefs.readTheme(httpsProfile)).toBe("dark");
+  });
+
+  test("the host-only cookie wins over a parent domain's", async () => {
+    const s = setup();
+    const jar = s.jar("p1");
+    jar.parent.push({ name: "cb-theme", value: "dark", domain: ".example.com", hostOnly: false });
+    expect(await s.prefs.readTheme(httpsProfile)).toBe("dark");
+    jar.webWrites("https://capybara.example.com/", "cb-theme", "light");
+    expect(await s.prefs.readTheme(httpsProfile)).toBe("light");
+  });
+
+  test("menuLocale: a last-used profile that is not offered gives way to the offered one", async () => {
+    const s = setup();
+    await s.prefs.watch(httpsProfile);
+    await s.prefs.watch(httpProfile);
+    await s.prefs.setLocale(httpsProfile, "zh");
+    await s.prefs.setLocale(httpProfile, "en");
+    expect(s.prefs.menuLocale(httpsProfile, [httpProfile])).toBe("en");
+  });
+
+  test("an app-level choice reaches only the matching provisional profile", () => {
+    const begun = { id: "prov", origin: "https://a.example.com" };
+    expect(provisionalToFollow({ provisional: true, profileId: "prov" }, begun)).toBe(begun);
+    expect(provisionalToFollow({ provisional: true, profileId: "other" }, begun)).toBeUndefined();
+    expect(provisionalToFollow({ provisional: false, profileId: "prov" }, begun)).toBeUndefined();
+    expect(provisionalToFollow(undefined, begun)).toBeUndefined();
+    expect(
+      provisionalToFollow({ provisional: true, profileId: "prov" }, undefined),
+    ).toBeUndefined();
   });
 });

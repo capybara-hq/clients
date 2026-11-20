@@ -191,3 +191,25 @@ describe("the other confirmations", () => {
     expect(shown[0]?.options.detail).toContain("Acme 平台");
   });
 });
+
+describe("the dialogs' language (spec 12)", () => {
+  test("each dialog in the language of the profile it is about; none: the app's", async () => {
+    const shown: ShellDialogOptions[] = [];
+    const dialogs = createDeviceDialogs({
+      showDialog: async (_parent, options) => {
+        shown.push(options);
+        return { response: options.cancelId };
+      },
+      // The app (and every other profile) speaks zh; this profile speaks en.
+      locale: (profileId) => (profileId === named.id ? "en" : "zh"),
+      platform: "darwin",
+    });
+    await dialogs.confirmConnect(null, named);
+    await dialogs.confirmRemoveDevice(null, named);
+    await dialogs.confirmDisconnectOther(null, "https://other.example.com");
+    expect(shown[0]?.buttons).toEqual(["Cancel", "Allow"]);
+    expect(shown[0]?.profileId).toBe(named.id);
+    expect(shown[1]?.title).not.toMatch(/[一-鿿]/);
+    expect(shown[2]?.buttons[0]).toBe("取消");
+  });
+});

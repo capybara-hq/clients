@@ -43,7 +43,10 @@ export interface CookieDetails {
 
 /** The part of Electron's `session.cookies` used here. */
 export interface CookieJarLike {
-  get(filter: { url: string; name: string }): Promise<{ name: string; value: string }[]>;
+  get(filter: {
+    url: string;
+    name: string;
+  }): Promise<{ name: string; value: string; domain?: string; hostOnly?: boolean }[]>;
   set(details: CookieDetails): Promise<void>;
   on?(
     event: "changed",
@@ -125,6 +128,10 @@ export function createPreferences(deps: PreferencesDeps) {
   const watched = new Set<string>();
   /** Partitions with a change listener: one each, kept across forget (a partition lives on). */
   const listening = new Set<string>();
+  /** The newest load per profile: only it writes the cache. */
+  const loads = new Map<string, number>();
+  /** The tail of each profile's seed chain. */
+  const seeding = new Map<string, Promise<void>>();
 
   function saveApp(): void {
     const tmp = `${deps.file}.tmp`;
@@ -139,18 +146,44 @@ export function createPreferences(deps: PreferencesDeps) {
   ): Promise<string | undefined> {
     const valid = name === THEME_COOKIE ? isTheme : isLocale;
     try {
-      const found = await deps.cookiesFor(profile).get({ url: `${profile.origin}/`, name });
-      return found.find((c) => c.name === name && valid(c.value))?.value;
+      const found = (
+        await deps.cookiesFor(profile).get({ url: `${profile.origin}/`, name })
+      ).filter((c) => c.name === name && valid(c.value));
+      // The web writes a host-only cookie; one set for a parent domain only counts without it.
+      const host = new URL(profile.origin).hostname;
+      const own = found.find((c) => c.hostOnly === true || c.domain === host);
+      return (own ?? found[0])?.value;
     } catch (err) {
       log(`could not read ${name}`, err);
       return undefined;
     }
   }
 
+  /** Starts a new generation of the profile's cached values: older loads stop counting. */
+  function bump(profileId: string): number {
+    const seq = (loads.get(profileId) ?? 0) + 1;
+    loads.set(profileId, seq);
+    return seq;
+  }
+
+  /** Runs `fn` after the profile's earlier seeds: one seed at a time per partition. */
+  function serial(profileId: string, fn: () => Promise<void>): Promise<void> {
+    const next = (seeding.get(profileId) ?? Promise.resolve()).then(fn, fn);
+    const tail = next.catch(() => undefined);
+    seeding.set(profileId, tail);
+    void tail.then(() => {
+      if (seeding.get(profileId) === tail) seeding.delete(profileId);
+    });
+    return next;
+  }
+
   /** Re-reads both cookies of `profile` into the cache; reports a change. */
   async function load(profile: PrefsProfile): Promise<void> {
+    const seq = bump(profile.id);
     const theme = await readCookie(profile, THEME_COOKIE);
     const locale = await readCookie(profile, LOCALE_COOKIE);
+    // A newer load or write has the last word; a forgotten profile keeps no entry.
+    if (loads.get(profile.id) !== seq || !watched.has(profile.id)) return;
     const next = {
       ...(isTheme(theme) ? { theme } : {}),
       ...(isLocale(locale) ? { locale } : {}),
@@ -166,6 +199,23 @@ export function createPreferences(deps: PreferencesDeps) {
     value: string,
   ): Promise<void> {
     await deps.cookiesFor(profile).set(preferenceCookie(profile.origin, name, value, now()));
+  }
+
+  async function seedNow(profile: PrefsProfile, o: { overwrite?: boolean }): Promise<void> {
+    const pairs: [typeof THEME_COOKIE | typeof LOCALE_COOKIE, string | undefined][] = [
+      [THEME_COOKIE, app.theme],
+      [LOCALE_COOKIE, app.locale],
+    ];
+    for (const [name, value] of pairs) {
+      if (value === undefined) continue;
+      try {
+        if (!o.overwrite && (await readCookie(profile, name)) !== undefined) continue;
+        await writeCookie(profile, name, value);
+      } catch (err) {
+        log(`could not seed ${name}`, err);
+      }
+    }
+    if (watched.has(profile.id)) await load(profile);
   }
 
   function locale(profile?: PrefsProfile): Locale {
@@ -216,6 +266,7 @@ export function createPreferences(deps: PreferencesDeps) {
     forget(profileId: string): void {
       watched.delete(profileId);
       cache.delete(profileId);
+      bump(profileId);
     },
 
     /** Sets the theme of `profile` (its cookie) or, without one, the app's choice. */
@@ -228,6 +279,8 @@ export function createPreferences(deps: PreferencesDeps) {
         return;
       }
       await writeCookie(profile, THEME_COOKIE, theme);
+      if (!watched.has(profile.id)) return;
+      bump(profile.id);
       cache.set(profile.id, { ...cache.get(profile.id), theme });
       deps.onChange?.(profile.id);
     },
@@ -242,6 +295,8 @@ export function createPreferences(deps: PreferencesDeps) {
         return;
       }
       await writeCookie(profile, LOCALE_COOKIE, locale);
+      if (!watched.has(profile.id)) return;
+      bump(profile.id);
       cache.set(profile.id, { ...cache.get(profile.id), locale });
       deps.onChange?.(profile.id);
     },
@@ -250,21 +305,8 @@ export function createPreferences(deps: PreferencesDeps) {
      * Seeds a new profile's partition with the app's choices; a cookie the partition holds already
      * stays. `overwrite`: the app's choice wins (a provisional profile whose pages are app level).
      */
-    async seed(profile: PrefsProfile, o: { overwrite?: boolean } = {}): Promise<void> {
-      const pairs: [typeof THEME_COOKIE | typeof LOCALE_COOKIE, string | undefined][] = [
-        [THEME_COOKIE, app.theme],
-        [LOCALE_COOKIE, app.locale],
-      ];
-      for (const [name, value] of pairs) {
-        if (value === undefined) continue;
-        try {
-          if (!o.overwrite && (await readCookie(profile, name)) !== undefined) continue;
-          await writeCookie(profile, name, value);
-        } catch (err) {
-          log(`could not seed ${name}`, err);
-        }
-      }
-      if (watched.has(profile.id)) await load(profile);
+    seed(profile: PrefsProfile, o: { overwrite?: boolean } = {}): Promise<void> {
+      return serial(profile.id, () => seedNow(profile, o));
     },
 
     /** The app's own choices (before any profile). */
@@ -284,16 +326,30 @@ export function createPreferences(deps: PreferencesDeps) {
     locale,
 
     /**
-     * The menus' language (spec §12): of the current profile (the last used, else the first one)
-     * once a profile exists, else the app's choice, else the OS.
+     * The menus' language (spec §12): of the current profile once a profile exists (the last used
+     * when it is among `profiles`, the offered ones, else the first of them), else the app's
+     * choice, else the OS.
      */
     menuLocale(lastUsed: PrefsProfile | undefined, profiles: readonly PrefsProfile[]): Locale {
-      return locale(lastUsed ?? profiles[0]);
+      const current =
+        lastUsed && profiles.some((p) => p.id === lastUsed.id) ? lastUsed : profiles[0];
+      return locale(current);
     },
   };
 }
 
 export type Preferences = ReturnType<typeof createPreferences>;
+
+/**
+ * The provisional profile whose partition follows an app-level choice: the one whose sign-in began
+ * last, while the small window still shows it as provisional; undefined otherwise.
+ */
+export function provisionalToFollow<P extends PrefsProfile>(
+  current: { provisional: boolean; profileId?: string } | undefined,
+  begun: P | undefined,
+): P | undefined {
+  return current?.provisional && begun && current.profileId === begun.id ? begun : undefined;
+}
 
 export interface PreferenceActionDeps {
   localPages: Pick<LocalPages, "handle">;

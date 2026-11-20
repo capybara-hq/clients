@@ -5,6 +5,7 @@ import {
   backgroundOf,
   electronColor,
   isColor,
+  isOpaque,
   overlayColors,
   resolveAppearance,
   type Tokens,
@@ -149,5 +150,16 @@ describe("electronColor", () => {
       color: BUILTIN_TOKENS.light.bg,
       symbolColor: BUILTIN_TOKENS.light.muted,
     });
+  });
+});
+
+describe("isOpaque", () => {
+  test("hex, rgb() and rgba() with alpha 1 only", () => {
+    for (const v of ["#fff", "#101418", "rgb(1, 2, 3)", "rgba(1, 2, 3, 1)", "rgba(1,2,3,1.0)"]) {
+      expect(isOpaque(v), v).toBe(true);
+    }
+    for (const v of ["rgba(1, 2, 3, 0.99)", "rgba(1,2,3,0)", "rgba(1,2,3,.5)", "red"]) {
+      expect(isOpaque(v), v).toBe(false);
+    }
   });
 });

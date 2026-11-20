@@ -6,6 +6,7 @@ import {
   sameOriginUrl,
 } from "../src/main/capabilities.ts";
 import type { Profile } from "../src/main/profiles.ts";
+import type { Appearance } from "../src/shared/appearance.ts";
 
 const profile: Profile = {
   id: "p1",
@@ -137,7 +138,7 @@ describe("openExternal@1", () => {
 const TOKENS = {
   bg: "rgb(16, 20, 24)",
   panel: "#111",
-  ink: "rgba(230, 230, 227, 0.9)",
+  ink: "rgba(230, 230, 227, 1)",
   muted: "#8e8e89",
   line: "#2a2a28",
   accent: "#ff6a13",
@@ -170,11 +171,46 @@ describe("chrome@1", () => {
     expect(onReport).toHaveBeenCalledWith(profile, { scheme: "dark" });
   });
 
-  test("an rgb() background is handed to Electron as #rrggbb, the alpha dropped", async () => {
+  test("an rgb() background is handed to Electron as #rrggbb", async () => {
     const cap = createChromeCapability();
     const c = chromeCtx();
-    await cap.setAppearance(c, { scheme: "light", background: "rgba(250, 249, 246, 0.5)" });
+    await cap.setAppearance(c, { scheme: "light", background: "rgba(250, 249, 246, 1)" });
     expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#faf9f6");
+  });
+
+  test("see-through colors: the background is not applied, a token set is dropped", async () => {
+    const onReport = vi.fn();
+    const cap = createChromeCapability({ onReport });
+    const c = chromeCtx();
+    await cap.setAppearance(c, { scheme: "light", background: "rgba(250, 249, 246, 0.5)" });
+    expect(c.window.setBackgroundColor).not.toHaveBeenCalled();
+    expect(onReport).toHaveBeenLastCalledWith(profile, { scheme: "light" });
+    await cap.setAppearance(c, {
+      scheme: "dark",
+      background: "#101418",
+      tokens: { ...TOKENS, ink: "rgba(0, 0, 0, 0)" },
+      singleScheme: true,
+    });
+    // Scheme and background stay; the tokens are not stored.
+    expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    expect(onReport).toHaveBeenLastCalledWith(profile, { scheme: "dark", singleScheme: true });
+  });
+
+  test("a report equal to the stored one is not reported again", async () => {
+    let stored: Appearance | undefined;
+    const onReport = vi.fn((_p: Profile, a: Appearance) => {
+      stored = a;
+    });
+    const cap = createChromeCapability({ onReport, stored: () => stored });
+    const c = chromeCtx();
+    const input = { scheme: "dark", background: "#101418", tokens: TOKENS };
+    await cap.setAppearance(c, input);
+    await cap.setAppearance(c, { ...input, tokens: { ...TOKENS } });
+    expect(onReport).toHaveBeenCalledTimes(1);
+    // The window still follows each call.
+    expect(c.window.setBackgroundColor).toHaveBeenCalledTimes(2);
+    await cap.setAppearance(c, { ...input, singleScheme: true });
+    expect(onReport).toHaveBeenCalledTimes(2);
   });
 
   test("tokens and singleScheme are stored; tokens.bg wins as the background", async () => {

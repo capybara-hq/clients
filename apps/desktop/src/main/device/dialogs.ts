@@ -64,14 +64,21 @@ export function dialogPlatformOf(
 
 export function createDeviceDialogs(deps: {
   showDialog: ShowShellDialog;
-  locale: Locale;
+  /**
+   * The dialogs' language: fixed, or per profile (the profile's own language, spec §12; no id =
+   * the app level).
+   */
+  locale: Locale | ((profileId?: string) => Locale);
   /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
   iconFor?: (profile: Profile) => string | undefined;
   /** `process.platform`: the keep-awake limits differ on Linux (the lid switch, spec §9.7). */
   platform: string;
 }): DeviceDialogs {
-  // `deps.locale` is read at each call: main passes a getter that follows the chosen language.
-  const tr = (key: string, vars?: Record<string, string>) => t(deps.locale, key, vars);
+  /** The catalog in the language of the profile a dialog is about, read at each call. */
+  const trOf =
+    (profile?: Profile) =>
+    (key: string, vars?: Record<string, string>): string =>
+      t(typeof deps.locale === "function" ? deps.locale(profile?.id) : deps.locale, key, vars);
 
   /** Asks; true only for the confirming (last) button. */
   async function ask(
@@ -85,6 +92,7 @@ export function createDeviceDialogs(deps: {
       profile?: Profile | undefined;
     },
   ): Promise<boolean> {
+    const tr = trOf(o.profile);
     const options: ShellDialogOptions = {
       title: o.message,
       detail: o.detail,
@@ -107,36 +115,44 @@ export function createDeviceDialogs(deps: {
   /** A message key with `{name}` and `{host}`, or its `_host` variant when there is no name. */
   const named = (key: string, profile: Profile) => {
     const { name, host } = platformLabel(profile);
+    const tr = trOf(profile);
     return name === null ? tr(`${key}_host`, { host }) : tr(key, { name, host });
   };
 
   return {
-    confirmConnect: (parent, profile) =>
-      ask(parent, {
+    confirmConnect: (parent, profile) => {
+      const tr = trOf(profile);
+      return ask(parent, {
         message: named("device.connect.message", profile),
         detail: tr("device.connect.detail"),
         confirm: tr("device.allow"),
         profile,
-      }),
+      });
+    },
 
-    confirmDisconnectOther: (parent, origin) =>
-      ask(parent, {
+    confirmDisconnectOther: (parent, origin) => {
+      const tr = trOf();
+      return ask(parent, {
         tone: "danger",
         message: tr("device.disconnect_other.message", { origin }),
         detail: tr("device.disconnect_other.detail"),
         confirm: tr("device.disconnect_other.confirm"),
-      }),
+      });
+    },
 
-    confirmResume: (parent, profile) =>
-      ask(parent, {
+    confirmResume: (parent, profile) => {
+      const tr = trOf(profile);
+      return ask(parent, {
         message: named("device.resume.message", profile),
         detail: tr("device.resume.detail"),
         confirm: tr("device.resume.confirm"),
         profile,
-      }),
+      });
+    },
 
-    confirmWidenCeiling: (parent, widened, texts, profile) =>
-      ask(parent, {
+    confirmWidenCeiling: (parent, widened, texts, profile) => {
+      const tr = trOf(profile);
+      return ask(parent, {
         profile,
         message: tr("device.ceiling.message"),
         detail: [
@@ -148,19 +164,23 @@ export function createDeviceDialogs(deps: {
           ...texts,
         ].join("\n\n"),
         confirm: tr("device.ceiling.confirm"),
-      }),
+      });
+    },
 
-    confirmRaiseKeepAwake: (parent, mode, profile) =>
-      ask(parent, {
+    confirmRaiseKeepAwake: (parent, mode, profile) => {
+      const tr = trOf(profile);
+      return ask(parent, {
         profile,
         message: tr("device.keep_awake.message"),
         detail: `${tr(`device.keep_awake.detail.${mode}`)}\n\n${tr(
           deps.platform === "linux" ? "device.keep_awake.limits_linux" : "device.keep_awake.limits",
         )}`,
         confirm: tr("device.keep_awake.confirm"),
-      }),
+      });
+    },
 
     confirmRemoveDevice: (parent, profile) => {
+      const tr = trOf(profile);
       const { name, host } = platformLabel(profile);
       return ask(parent, {
         message: tr("device.remove.message"),

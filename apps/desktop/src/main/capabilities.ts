@@ -5,7 +5,9 @@ import {
   type Appearance,
   electronColor,
   isColor,
+  isOpaque,
   overlayColors,
+  sameAppearance,
   type Tokens,
   validTokens,
 } from "./appearance.ts";
@@ -109,6 +111,8 @@ export interface ChromeDeps {
    * local pages and small window (desktop spec §6.10).
    */
   onReport?(profile: Profile, appearance: Appearance): void;
+  /** The profile's stored report: an equal one is not reported again (the web sends one per load). */
+  stored?(profileId: string): Appearance | undefined;
 }
 
 /**
@@ -128,6 +132,9 @@ export function createChromeCapability(deps: ChromeDeps = {}) {
       if (rawTokens !== undefined) {
         tokens = validTokens(rawTokens);
         if (!tokens) throw failed();
+        // A see-through token could hide text on the local pages: the set is dropped (the call
+        // still succeeds; the pages use the built-in colors of the scheme).
+        if (!Object.values(tokens).every(isOpaque)) tokens = undefined;
       }
       if (singleScheme !== undefined && typeof singleScheme !== "boolean") throw failed();
       const appearance: Appearance = {
@@ -136,13 +143,16 @@ export function createChromeCapability(deps: ChromeDeps = {}) {
         ...(singleScheme === true ? { singleScheme: true } : {}),
       };
       // The macOS window appearance is app-wide (nativeTheme): only the window's own colors follow.
-      const bg = electronColor(tokens?.bg ?? background);
+      // A see-through background is not applied to the window (Electron drops the alpha).
+      const ground = tokens?.bg ?? background;
+      const bg = isOpaque(ground) ? electronColor(ground) : undefined;
       if (bg) ctx.window.setBackgroundColor(bg);
       try {
         ctx.window.setTitleBarOverlay?.(overlayColors(appearance));
       } catch {
         // No overlay on this window (macOS, or a window opened without one).
       }
+      if (sameAppearance(deps.stored?.(ctx.profile.id), appearance)) return;
       deps.onReport?.(ctx.profile, appearance);
     },
   };
