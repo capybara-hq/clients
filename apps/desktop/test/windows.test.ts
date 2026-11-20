@@ -68,6 +68,9 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
       const partition = (opts.webPreferences as { partition?: string }).partition ?? "";
       const origin = partition.startsWith("persist:profile-p2") ? p2.origin : p1.origin;
       const w = fakeWindow(partition === "local" ? "app://local" : origin);
+      if (typeof opts.x === "number" && typeof opts.y === "number") {
+        w.bounds = { x: opts.x, y: opts.y, width: opts.width, height: opts.height };
+      }
       created.push(w);
       return w;
     },
@@ -408,9 +411,24 @@ describe("the main window's rectangle", () => {
   test("a saved rectangle on a display is reused; one off every display is centered", () => {
     const { windows, options } = setup({ displays });
     windows.openProfileWindow({ ...p1, bounds: { x: 1500, y: 100, width: 900, height: 700 } });
-    windows.openProfileWindow({ ...p1, bounds: { x: 9000, y: 9000, width: 900, height: 700 } });
+    windows.openProfileWindow({ ...p2, bounds: { x: 9000, y: 9000, width: 900, height: 700 } });
     expect(options[0]).toMatchObject({ x: 1500, y: 100, width: 900, height: 700 });
     expect(options[1]).toMatchObject({ x: 80, y: 63, width: 1280, height: 800 });
+  });
+
+  test("a further window of the profile cascades from the first and is not remembered", () => {
+    const saveBounds = vi.fn();
+    const { windows, options, created } = setup({ displays, saveBounds });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    expect(options[1]).toMatchObject({ x: 104, y: 87, width: 1280, height: 800 });
+    // Another profile's first window: its own rectangle.
+    expect(options[2]).toMatchObject({ x: 80, y: 63 });
+    created[1]?.emit("close");
+    expect(saveBounds).not.toHaveBeenCalled();
+    created[0]?.emit("close");
+    expect(saveBounds).toHaveBeenCalledWith("p1", expect.anything());
   });
 
   test("moves and resizes are saved for the profile (debounced), and on close", () => {

@@ -312,7 +312,8 @@ describe("found", () => {
       signedIn: true,
     });
     await toFound(h);
-    expect(h.deps.openMain).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }));
+    // Its open window comes forward as it is: no navigation to `/`.
+    expect(h.deps.openMain).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }), false);
     expect(h.win().close).toHaveBeenCalled();
     expect(h.deps.saveProfile).not.toHaveBeenCalled();
   });
@@ -394,6 +395,7 @@ describe("waiting", () => {
     );
     expect(h.deps.openMain).toHaveBeenCalledWith(
       expect.objectContaining({ id: "new1", signedIn: true }),
+      true,
     );
     expect(h.win().close).toHaveBeenCalled();
     // The main window opened before the small one closed (the last window closing quits on
@@ -428,19 +430,86 @@ describe("waiting", () => {
     expect(h.state()).toMatchObject({ page: "found", error: "link_invalid" });
   });
 
-  test("a stale callback of the same issuer shows link invalid; the attempt stays", async () => {
+  test("a stale callback of the same issuer ends the attempt and shows link invalid", async () => {
     const h = setup();
     await toWaiting(h);
     h.sign.stale("https://other.example.com");
     expect(h.state().page).toBe("waiting");
+    expect(h.sign.signIn.cancel).not.toHaveBeenCalled();
     h.sign.stale("https://capybara.meta1.top");
     await flush();
     expect(h.state()).toMatchObject({ page: "found", error: "link_invalid" });
-    expect(h.sign.signIn.cancel).not.toHaveBeenCalled();
-    // The real callback still completes the sign-in.
+    expect(h.sign.signIn.cancel).toHaveBeenCalledWith("new1");
+    // 重新登录 starts a fresh attempt.
+    await h.act("found.signIn");
+    expect(h.sign.signIn.begin).toHaveBeenCalledTimes(2);
+  });
+
+  test("an outcome arriving after the window closed saves nothing; clear waits for quiesce", async () => {
+    const h = setup();
+    // An exchange still running when the window closes: cancel does not settle it at once.
+    (h.sign.signIn.cancel as ReturnType<typeof vi.fn>).mockImplementation(() => undefined);
+    const quiet = deferred<void>();
+    (h.sign.signIn.quiesce as ReturnType<typeof vi.fn>).mockImplementation(() => quiet.promise);
+    await toWaiting(h);
+    h.win().close();
+    await flush();
+    expect(h.sign.signIn.cancel).toHaveBeenCalledWith("new1");
+    expect(h.deps.clearPartition).not.toHaveBeenCalled();
     h.sign.attempts[0]?.settle({ ok: true, account: ACCOUNT });
     await flush();
-    expect(h.deps.openMain).toHaveBeenCalled();
+    expect(h.deps.saveProfile).not.toHaveBeenCalled();
+    expect(h.deps.openMain).not.toHaveBeenCalled();
+    quiet.resolve();
+    await flush();
+    expect(h.deps.clearPartition).toHaveBeenCalledWith("new1");
+  });
+
+  test("an outcome arriving after 取消 saves nothing", async () => {
+    const h = setup();
+    (h.sign.signIn.cancel as ReturnType<typeof vi.fn>).mockImplementation(() => undefined);
+    await toWaiting(h);
+    await h.act("waiting.cancel");
+    h.sign.attempts[0]?.settle({ ok: true, account: ACCOUNT });
+    await flush();
+    expect(h.deps.saveProfile).not.toHaveBeenCalled();
+    expect(h.state()).toMatchObject({ page: "found", error: null });
+  });
+
+  test("the address saved meanwhile under another id: provisional cleared, sign in again", async () => {
+    const h = setup();
+    await toWaiting(h);
+    const other: Profile = {
+      id: "managed1",
+      base: "https://capybara.meta1.top",
+      origin: "https://capybara.meta1.top",
+      name: "M",
+      signedIn: false,
+    };
+    (h.deps.saveProfile as ReturnType<typeof vi.fn>).mockImplementation(() => other);
+    h.sign.attempts[0]?.settle({ ok: true, account: ACCOUNT });
+    await flush();
+    expect(h.deps.openMain).not.toHaveBeenCalled();
+    expect(h.order).toEqual(["quiesce:new1", "clear:new1"]);
+    expect(h.state()).toMatchObject({ page: "found", error: "link_invalid" });
+    expect(h.host.current()).toEqual({ page: "found", profileId: "managed1", provisional: false });
+    h.saved.push(other);
+    await h.act("found.signIn");
+    expect(h.sign.signIn.begin).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "managed1" }),
+    );
+    h.sign.attempts[1]?.settle({ ok: true, account: ACCOUNT });
+    await flush();
+    expect(h.deps.markSignedIn).toHaveBeenCalledWith("managed1", ACCOUNT);
+  });
+
+  test("capybara://connect while waiting only brings the window forward", async () => {
+    const h = setup();
+    await toWaiting(h);
+    h.host.openConnect("other.example.com");
+    expect(h.state().page).toBe("waiting");
+    expect(h.sign.signIn.cancel).not.toHaveBeenCalled();
+    expect(h.deps.openWindow).toHaveBeenCalledTimes(2);
   });
 
   test("closing the window abandons: cancel, then the partition cleared after quiesce", async () => {
@@ -514,6 +583,45 @@ describe("signed out", () => {
     expect(h.localPages.entries()[0]?.profileId).toBeUndefined();
   });
 
+  test("a failed or cancelled sign-in from here returns here, the failure shown", async () => {
+    const h = setup();
+    h.host.showSignedOut(p1);
+    await h.act("signedOut.signIn");
+    h.sign.attempts[0]?.settle({ ok: false, reason: "timeout" });
+    await flush();
+    expect(h.state()).toMatchObject({ page: "signedOut", error: "timeout" });
+    await h.act("signedOut.signIn");
+    await h.act("waiting.cancel");
+    expect(h.state()).toMatchObject({ page: "signedOut", error: null });
+  });
+
+  test("a saved profile is discovered once: the pre-check applies, name and icon refresh", async () => {
+    const h = setup({
+      discover: vi.fn(async (base: string) => ({
+        ok: true as const,
+        base,
+        meta: { ...META, name: "Renamed", features: { ...META.features, appSignIn: false } },
+      })),
+    });
+    h.host.showSignedOut(p1);
+    await flush();
+    expect(h.deps.discover).toHaveBeenCalledWith(p1.base, expect.anything());
+    expect(h.state().platform).toMatchObject({ name: "Renamed", iconUrl: ICON });
+    await h.act("signedOut.signIn");
+    expect(h.state()).toMatchObject({ page: "signedOut", error: "not_allowed" });
+    expect(h.sign.signIn.begin).not.toHaveBeenCalled();
+  });
+
+  test("a saved profile whose discovery fails still signs in (no pre-check)", async () => {
+    const h = setup({
+      discover: vi.fn(async () => ({ ok: false as const, error: "unreachable" as const })),
+    });
+    h.host.showSignedOut(p1);
+    await h.act("signedOut.signIn");
+    expect(h.sign.signIn.begin).toHaveBeenCalled();
+    expect(h.state()).toMatchObject({ page: "waiting", platform: { name: p1.name } });
+  });
+
   test("under a managed lock nothing is removable", async () => {
     const h = setup({ canRemove: () => false });
     h.host.showSignedOut(p1);
@@ -547,6 +655,16 @@ describe("the page's actions", () => {
     expect(await h.act("found.signIn")).toEqual({ ok: true, value: false });
     expect(await h.act("waiting.cancel")).toEqual({ ok: true, value: false });
     expect(h.sign.signIn.begin).not.toHaveBeenCalled();
+  });
+
+  test("an address longer than 2048 characters is not submitted", async () => {
+    const h = setup();
+    h.host.openConnect();
+    expect(await h.act("connect.submit", { address: "a".repeat(2049) })).toEqual({
+      ok: false,
+      error: "invalid",
+    });
+    expect(h.deps.discover).not.toHaveBeenCalled();
   });
 
   test("refresh recolors the window and pushes the state", () => {

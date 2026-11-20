@@ -100,6 +100,8 @@ export const SMALL_WINDOW_SIZE = { width: 480, height: 600 } as const;
 /** Windows / Linux: the caption buttons' overlay height and the width of the three buttons. */
 export const CAPTION_OVERLAY_HEIGHT = 32;
 export const CAPTION_BUTTONS_WIDTH = 138;
+/** A further window of a profile opens this far right and down of its first window. */
+export const CASCADE_OFFSET = 24;
 /** The main window's smallest size (spec §6.7). */
 export const MAIN_MIN_SIZE = { width: 480, height: 400 } as const;
 
@@ -302,7 +304,20 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
   function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
     const partition = preparePartition(profile);
-    const rect = deps.displays ? initialBounds(profile.bounds, deps.displays()) : undefined;
+    // The profile's first window opens at the remembered rectangle and keeps it up to date; a
+    // further window cascades from the first one and is not remembered.
+    const first = profileEntries(profile.id)[0];
+    let rect: Rect | undefined;
+    if (first) {
+      try {
+        const b = first.window.getBounds();
+        rect = { ...b, x: b.x + CASCADE_OFFSET, y: b.y + CASCADE_OFFSET };
+      } catch {
+        rect = undefined;
+      }
+    } else if (deps.displays) {
+      rect = initialBounds(profile.bounds, deps.displays());
+    }
     const win = deps.createWindow({
       ...(rect ?? DEFAULT_SIZE),
       minWidth: MAIN_MIN_SIZE.width,
@@ -325,7 +340,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
     const save = deps.saveBounds;
-    if (save) trackBounds(win, (b) => save(profile.id, b), deps.boundsScheduler);
+    if (save && !first) trackBounds(win, (b) => save(profile.id, b), deps.boundsScheduler);
     load(win, url);
     return win;
   }

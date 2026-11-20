@@ -459,8 +459,8 @@ export function createSignIn(deps: SignInDeps) {
      * A callback whose `state` this app does not hold (expired, used, or another run's) and whose
      * `iss` parses as an http(s) URL: listeners get that URL's origin (link invalid, spec §6.6).
      * It never touches an attempt and makes no request; the listener decides whether it waited.
-     * A listener only shows the message: it must not cancel the pending attempt, since anyone can
-     * send such a link and the real callback may still come.
+     * This module never cancels on such a link (anyone can send one). A host that shows the
+     * message may end its own attempt (`cancel`), so its page tells the truth.
      */
     onStaleCallback(listener: (origin: string) => void): () => void {
       staleListeners.add(listener);

@@ -99,6 +99,7 @@ function connectView(ctx: Ctx): HTMLElement {
     syncPrefix();
     if (!errorKeys || state.busy) return;
     f.setError(null);
+    f.input.closest(".lp-page")?.classList.remove("ob-error");
     const next = idle();
     submit.replaceWith(next);
     submit = next;
@@ -140,6 +141,8 @@ function connectView(ctx: Ctx): HTMLElement {
     prefs: preferenceBar(ctx),
     footer: appFooter(ctx),
   });
+  // Boards Errors: the content block sits higher while an error shows.
+  if (errorKeys) el.classList.add("ob-error");
   queueMicrotask(() => {
     if (state.busy) return;
     if (!keep || hadFocus || errorKeys) {
@@ -253,7 +256,10 @@ function signedOutView(ctx: Ctx): HTMLElement {
   if (state.canRemove) {
     actions.push(link(t("onboarding.signedOut.remove"), () => act(ctx, "signedOut.remove")));
   }
-  return page({
+  // A sign-in started here that failed: the error box above the button (ErrorsSignIn's form).
+  const keys = state.error ? signInErrorKeys(state.error) : null;
+  const signIn = () => act(ctx, "signedOut.signIn");
+  const el = page({
     layout: "center",
     content: [
       platformIcon(state.platform, { dim: true }),
@@ -261,15 +267,19 @@ function signedOutView(ctx: Ctx): HTMLElement {
         heading(t("onboarding.signedOut.title", { platform: platformLabel(state.platform) })),
         line ? lead(line) : null,
       ]),
-      button(t("onboarding.signedOut.signIn"), {
-        icon: "external",
-        onClick: () => act(ctx, "signedOut.signIn"),
-      }),
+      keys
+        ? alert(t(keys.message, { platform: platformLabel(state.platform) }), { box: true })
+        : null,
+      keys
+        ? button(t(keys.action), { onClick: signIn })
+        : button(t("onboarding.signedOut.signIn"), { icon: "external", onClick: signIn }),
       links(actions),
     ],
     prefs: preferenceBar(ctx),
     footer: footer(state.platform?.host ?? ""),
   });
+  if (keys) el.classList.add("ob-error");
+  return el;
 }
 
 function render(ctx: Ctx): void {

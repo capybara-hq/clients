@@ -72,12 +72,19 @@ export interface OnboardingDeps {
   /** The system browser. */
   openExternal(url: string): Promise<unknown> | unknown;
   writeClipboard(text: string): void;
-  /** Saves a provisional profile under its own id, signed in as `account`. */
+  /**
+   * Saves a provisional profile under its own id, signed in as `account`. When a profile of the
+   * same address was saved meanwhile (a managed profile saved in the background), returns that one
+   * unchanged: its partition does not hold this sign-in's session.
+   */
   saveProfile(provisional: Profile, account: SignedInAccount): Profile;
   /** Marks a saved profile signed in as `account`; undefined when it is gone. */
   markSignedIn(profileId: string, account: SignedInAccount): Profile | undefined;
-  /** Opens (or focuses) the profile's main window on `/`. */
-  openMain(profile: Profile): void;
+  /**
+   * Opens (or focuses) the profile's main window; `home`: load `/` there (after a sign-in), else an
+   * open window keeps its page.
+   */
+  openMain(profile: Profile, home: boolean): void;
   /** Clears an abandoned provisional profile's partition. */
   clearPartition(profileId: string): Promise<void>;
   /** The removal flow (spec §6.3), from the signed-out page. */
@@ -98,12 +105,19 @@ interface Target {
   platform: PagePlatform;
   /** An attempt was begun with this profile's partition. */
   used: boolean;
+  /** A saved profile's discovery (meta for the pre-check, a fresh name and icon), while it runs. */
+  discovering?: Promise<void> | undefined;
 }
 
 interface Attempt {
   id: number;
   target: Target;
+  /** Where a cancel or a failure returns to: the page the sign-in started from. */
+  from: "found" | "signedOut";
 }
+
+/** The longest address the connect page takes. */
+export const MAX_ADDRESS_LENGTH = 2048;
 
 function hostOf(origin: string): string {
   try {
@@ -304,7 +318,7 @@ export function createOnboarding(deps: OnboardingDeps) {
       // Saved and signed in already: nothing to add, its main window comes forward.
       discovery = undefined;
       // The main window first: closing the last window would quit the app on Windows / Linux.
-      deps.openMain(existing);
+      deps.openMain(existing, false);
       closeWindow();
       return;
     }
@@ -356,10 +370,26 @@ export function createOnboarding(deps: OnboardingDeps) {
       setPage("found", { error: "link_invalid" satisfies SignInError });
       return;
     }
+    if (saved.id !== t.profile.id) {
+      // The address was saved meanwhile under another id, whose partition lacks this session:
+      // drop the provisional partition and sign in again, to the saved profile.
+      const provisionalId = t.profile.id;
+      void (async () => {
+        try {
+          await deps.signIn.quiesce(provisionalId);
+          await deps.clearPartition(provisionalId);
+        } catch (err) {
+          log("could not clear an abandoned sign-in partition", err);
+        }
+      })();
+      target = { ...t, profile: saved, provisional: false, used: false };
+      setPage("found", { error: "link_invalid" satisfies SignInError });
+      return;
+    }
     // Saved: closing the window must not clear its partition any more.
     target = undefined;
     // The main window first: closing the last window would quit the app on Windows / Linux.
-    deps.openMain(saved);
+    deps.openMain(saved, true);
     closeWindow();
   }
 
@@ -368,18 +398,23 @@ export function createOnboarding(deps: OnboardingDeps) {
     if (attempt !== a || target !== a.target) return;
     attempt = undefined;
     if (outcome.ok) complete(a.target, outcome.account);
-    else setPage("found", { error: outcome.reason });
+    else setPage(a.from, { error: outcome.reason });
   }
 
   async function startSignIn(): Promise<void> {
     const t = target;
     if (!t) return;
+    const from = page === "signedOut" ? "signedOut" : "found";
+    if (t.discovering) {
+      await t.discovering;
+      if (target !== t || page !== from) return;
+    }
     // Spec §6.6: refused before the browser opens when the deployment says so.
     if (t.meta && appSignInBlocked(t.meta, deps.redirectUri)) {
-      setPage("found", { error: "not_allowed" satisfies SignInError });
+      setPage(from, { error: "not_allowed" satisfies SignInError });
       return;
     }
-    const a: Attempt = { id: ++attemptSeq, target: t };
+    const a: Attempt = { id: ++attemptSeq, target: t, from };
     attempt = a;
     t.used = true;
     const { url, outcome } = deps.signIn.begin(t.profile);
@@ -391,7 +426,7 @@ export function createOnboarding(deps: OnboardingDeps) {
       log("could not open the browser for sign-in", err instanceof Error ? err.name : undefined);
       if (attempt !== a) return;
       endAttempt();
-      setPage("found", { error: "link_invalid" satisfies SignInError });
+      setPage(from, { error: "link_invalid" satisfies SignInError });
     }
   }
 
@@ -399,8 +434,10 @@ export function createOnboarding(deps: OnboardingDeps) {
   const fromWindow = (ctx: LocalActContext) => contents !== undefined && ctx.contents === contents;
 
   deps.localPages.handle("onboarding", "connect.submit", (ctx, args) => {
-    if (!fromWindow(ctx) || page !== "connect" || typeof args.address !== "string") return false;
-    void submit(args.address);
+    const address = args.address;
+    if (!fromWindow(ctx) || page !== "connect" || typeof address !== "string") return false;
+    if (address.length > MAX_ADDRESS_LENGTH) return false;
+    void submit(address);
     return true;
   });
   deps.localPages.handle("onboarding", "found.signIn", (ctx) => {
@@ -435,8 +472,9 @@ export function createOnboarding(deps: OnboardingDeps) {
   });
   deps.localPages.handle("onboarding", "waiting.cancel", (ctx) => {
     if (!fromWindow(ctx) || page !== "waiting") return false;
+    const from = attempt?.from ?? "found";
     endAttempt();
-    setPage("found");
+    setPage(from);
     return true;
   });
   deps.localPages.handle("onboarding", "signedOut.addOther", (ctx) => {
@@ -451,12 +489,49 @@ export function createOnboarding(deps: OnboardingDeps) {
   });
 
   // Spec §6.6: a callback for a `state` this app no longer holds, from the deployment the window
-  // waits for, says the link is invalid. The attempt stays: the real callback may still come.
+  // waits for, says the link is invalid. The window ends its own attempt so the page tells the
+  // truth (重新登录 starts a fresh one); the sign-in module itself never cancels on such a link.
   deps.signIn.onStaleCallback((origin) => {
     if (page !== "waiting" || !attempt || target !== attempt.target) return;
     if (origin !== attempt.target.profile.origin) return;
-    setPage("found", { error: "link_invalid" satisfies SignInError });
+    const from = attempt.from;
+    endAttempt();
+    setPage(from, { error: "link_invalid" satisfies SignInError });
   });
+
+  /**
+   * Discovery for a saved profile shown at start or after sign-out: the meta for the pre-check and
+   * the current name and icon. A failure only logs: the sign-in then runs without the pre-check.
+   */
+  async function refreshSaved(t: Target, signal: AbortSignal): Promise<void> {
+    try {
+      const result = await deps.discover(t.profile.base, signal);
+      if (signal.aborted || target !== t) return;
+      if (!result.ok) {
+        log(`discovery of a saved platform failed (${result.error})`);
+        return;
+      }
+      t.meta = result.meta;
+      const host = hostOf(t.profile.origin);
+      let iconUrl = t.platform.iconUrl;
+      if (!iconUrl) {
+        try {
+          iconUrl = (await deps.platformIcon(t.profile, result.meta.icon)).iconUrl;
+        } catch (err) {
+          log("could not fetch the platform icon", err instanceof Error ? err.name : undefined);
+        }
+      }
+      if (signal.aborted || target !== t) return;
+      t.platform = {
+        name: platformName(result.meta, host),
+        host,
+        ...(iconUrl ? { iconUrl } : {}),
+      };
+      push();
+    } catch (err) {
+      log("discovery of a saved platform failed", err instanceof Error ? err.name : undefined);
+    }
+  }
 
   function showSaved(profile: Profile, view: "signedOut" | "found"): void {
     stopDiscovery();
@@ -473,6 +548,12 @@ export function createOnboarding(deps: OnboardingDeps) {
       },
       used: false,
     };
+    const t = target;
+    const abort = new AbortController();
+    discovery = { seq: ++discoverySeq, abort };
+    t.discovering = refreshSaved(t, abort.signal).finally(() => {
+      t.discovering = undefined;
+    });
     page = view;
     fields = {
       ...fields,
@@ -490,6 +571,11 @@ export function createOnboarding(deps: OnboardingDeps) {
      * field's text; never submitted on its own. Leaves any other flow of the small window.
      */
     openConnect(prefill?: string): void {
+      // A sign-in waiting for the browser is not thrown away by a link or a menu: focus only.
+      if (page === "waiting" && win && !win.isDestroyed()) {
+        show();
+        return;
+      }
       if (page === "connect" && win && !win.isDestroyed()) {
         if (prefill !== undefined) {
           stopDiscovery();

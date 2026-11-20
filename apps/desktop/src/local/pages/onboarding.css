@@ -26,6 +26,11 @@
   margin-top: 4px;
 }
 
+/* Boards Errors and ErrorsSignIn: with an error the content block sits 40 px above center. */
+.ob-error .lp-content {
+  margin-top: -40px;
+}
+
 /* Found: the board's 24 px rhythm (the other icon pages use the kit's 22 px). */
 .ob-found .lp-content {
   gap: 24px;

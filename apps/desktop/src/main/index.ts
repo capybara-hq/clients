@@ -378,6 +378,9 @@ function start(): void {
       openExternal: (url) => shell.openExternal(url),
       writeClipboard: (text) => clipboard.writeText(text),
       saveProfile: (provisional, account) => {
+        // Saved meanwhile under another id (a managed profile): returned as is, not signed in.
+        const other = profiles.list().find((p) => p.base === provisional.base);
+        if (other && other.id !== provisional.id) return other;
         const added = profiles.add({
           id: provisional.id,
           base: provisional.base,
@@ -395,9 +398,9 @@ function start(): void {
         ui.stateChanged();
         return saved;
       },
-      openMain: (profile) => {
+      openMain: (profile, home) => {
         profiles.setLastUsed(profile.id);
-        windows.showProfile(profile, `${profile.base}/`);
+        windows.showProfile(profile, home ? `${profile.base}/` : undefined);
         ui.stateChanged();
       },
       clearPartition: async (id) => {
