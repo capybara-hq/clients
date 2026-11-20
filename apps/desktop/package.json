@@ -14,8 +14,8 @@
     "bundle-node": "node scripts/bundle-node.ts"
   },
   "devDependencies": {
-    "@capybara-hq/device": "0.1.0-rc.18",
-    "@capybara-hq/plugin-sdk": "0.1.0-rc.38",
+    "@capybara-hq/device": "0.1.0-rc.19",
+    "@capybara-hq/plugin-sdk": "0.1.0-rc.41",
     "@capybara-hq/shell": "workspace:*",
     "@electron/fuses": "^2.1.3",
     "electron": "^45.4.1",

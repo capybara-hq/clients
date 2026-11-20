@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, test, vi } from "vitest";
+import type { DeviceCeilingRequest } from "@capybara-hq/plugin-sdk";
+import { describe, expect, expectTypeOf, test, vi } from "vitest";
 import {
   BUNDLED_DEVICE_PROTOCOL,
   createDeviceAvailability,
@@ -10,6 +11,11 @@ import {
 import { createDeviceCapability } from "../../src/main/device/capability.ts";
 import type { SpawnLike } from "../../src/main/device/cli.ts";
 import type { LiveStatus, RunningOperation } from "../../src/main/device/control.ts";
+import {
+  type CeilingField,
+  type OwnerCeiling,
+  parseCeilingRequest,
+} from "../../src/main/device/machine.ts";
 import { createDeviceTexts } from "../../src/main/device/texts.ts";
 import type { Profile } from "../../src/main/profiles.ts";
 import {
@@ -28,12 +34,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The installed device package: what scripts/bundle-node.ts copies into Resources/device. */
 const DEVICE_PKG = join(here, "../../node_modules/@capybara-hq/device");
 
-const TEXTS = { ceilingWidening: "WIDENING (from the program)", fullAccessRisk: "RISK (program)" };
+const TEXTS = {
+  ceilingWidening: "WIDENING (from the program)",
+  outsideSandboxRisk: "RISK (program)",
+};
 
 const meta = (over: Record<string, unknown> = {}) => ({
   name: "Acme",
   icon: null,
-  protocols: { device: { min: 3, max: 3 } },
+  protocols: { device: { min: 4, max: 4 } },
   features: { localDevices: true, appSignIn: true },
   ...over,
 });
@@ -86,13 +95,13 @@ describe("when device@1 is offered", () => {
       }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 4, max: 5 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 5, max: 6 } } }) }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 1, max: 2 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 1, max: 3 } } }) }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 2, max: 4 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 3, max: 5 } } }) }),
     ).toBe(true);
     expect(deviceOffered({ ...base, meta: { error: "unreachable" } })).toBe(false);
   });
@@ -293,7 +302,7 @@ describe("pause, disconnect, resume", () => {
       () => s.device.impl.pause(ctx),
       () => s.device.impl.disconnect(ctx),
       () => s.device.impl.resume(ctx),
-      () => s.device.impl.requestCeiling(ctx, { fullAccess: false, projectReach: "workspace" }),
+      () => s.device.impl.requestCeiling(ctx, { network: "allowlist" }),
       () => s.device.impl.setKeepAwake(ctx, "off"),
     ]) {
       await expect(call()).rejects.toMatchObject({ code: "failed" });
@@ -310,21 +319,45 @@ describe("pause, disconnect, resume", () => {
 });
 
 describe("requestCeiling", () => {
-  const wide = { fullAccess: true, projectReach: "os-user" } as const;
+  /** Everything allowed on the machine. */
+  const wide = { outsideSandbox: true, network: "open", projectReach: "os-user" } as const;
+  /** The machine's ceiling as `ceiling show --json` prints it. */
+  const shown = (c: { outsideSandbox: boolean; network: string; projectReach: string }) => ({
+    lines: [{ ...c, allowedDomains: [], revision: null }],
+  });
 
-  test("a narrowing applies at once, with no dialog and no confirmation slot", async () => {
+  test("a narrowing applies at once, with no dialog, no confirmation slot and no --yes", async () => {
     const s = setup({ status: loggedIn(), ceiling: wide });
     const ctx = ctxFor();
-    expect(
-      await s.device.impl.requestCeiling(ctx, { fullAccess: false, projectReach: "workspace" }),
-    ).toBe("applied");
+    expect(await s.device.impl.requestCeiling(ctx, { network: "allowlist" })).toBe("applied");
     // Without --yes: the program decides again under its lock, so a race cannot widen.
-    expect(s.cli.writes()).toEqual(["ceiling set --full-access deny --project-reach workspace"]);
+    expect(s.cli.writes()).toEqual(["ceiling set --network allowlist"]);
     expect(s.dialogs.asked).toEqual([]);
     expect(ctx.confirm).not.toHaveBeenCalled();
   });
 
-  test("a widening shows the program's texts and applies only on yes", async () => {
+  test("only the requested fields reach the program: the others are never sent", async () => {
+    const s = setup({ status: loggedIn(), ceiling: wide });
+    await s.device.impl.requestCeiling(ctxFor(), { outsideSandbox: false });
+    await s.device.impl.requestCeiling(ctxFor(), { projectReach: "workspace" });
+    expect(s.cli.writes()).toEqual([
+      "ceiling set --outside-sandbox off",
+      "ceiling set --project-reach workspace",
+    ]);
+  });
+
+  test("a narrowing the program refuses (it became a widening under its lock) fails", async () => {
+    const s = setup(
+      { status: loggedIn(), ceiling: wide },
+      { handlers: { "ceiling set --network allowlist": () => ({ code: 2 }) } },
+    );
+    await expect(
+      s.device.impl.requestCeiling(ctxFor(), { network: "allowlist" }),
+    ).rejects.toMatchObject({ code: "failed" });
+    expect(s.dialogs.asked).toEqual([]);
+  });
+
+  test("a widening names each widened field, shows the program's texts, applies only on yes", async () => {
     const s = setup({ status: loggedIn() });
     const ctx = ctxFor();
     expect(await s.device.impl.requestCeiling(ctx, wide)).toBe("applied");
@@ -333,30 +366,48 @@ describe("requestCeiling", () => {
       name: "confirmWidenCeiling",
       args: [
         ctx.window,
-        { fullAccess: true, projectReach: true },
-        [TEXTS.ceilingWidening, TEXTS.fullAccessRisk],
+        { outsideSandbox: true, network: true, projectReach: true },
+        [TEXTS.ceilingWidening, TEXTS.outsideSandboxRisk],
       ],
     });
     expect(s.cli.writes()).toEqual([
-      "ceiling set --full-access allow --project-reach os-user --yes",
+      "ceiling set --outside-sandbox on --network open --project-reach os-user --yes",
     ]);
   });
 
-  test("widening only the project reach shows the widening text alone", async () => {
+  test("widening the network alone names only it and shows the widening text alone", async () => {
     const s = setup({ status: loggedIn() });
-    const ctx = ctxFor();
-    await s.device.impl.requestCeiling(ctx, { fullAccess: false, projectReach: "os-user" });
+    await s.device.impl.requestCeiling(ctxFor(), { network: "open" });
     expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
-      { fullAccess: false, projectReach: true },
+      { outsideSandbox: false, network: true, projectReach: false },
       [TEXTS.ceilingWidening],
     ]);
+    expect(s.cli.writes()).toEqual(["ceiling set --network open --yes"]);
   });
 
-  test("in docker mode widening Full access still names it, without the os risk text", async () => {
-    const s = setup({ status: loggedIn({ mode: "docker" }) });
-    await s.device.impl.requestCeiling(ctxFor(), { fullAccess: true, projectReach: "workspace" });
+  test("a widening with a narrowing names only the widened field", async () => {
+    const s = setup({
+      status: loggedIn(),
+      ceiling: { outsideSandbox: true, network: "allowlist", projectReach: "workspace" },
+    });
+    await s.device.impl.requestCeiling(ctxFor(), {
+      outsideSandbox: false,
+      projectReach: "os-user",
+    });
     expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
-      { fullAccess: true, projectReach: false },
+      { outsideSandbox: false, network: false, projectReach: true },
+      [TEXTS.ceilingWidening],
+    ]);
+    expect(s.cli.writes()).toEqual([
+      "ceiling set --outside-sandbox off --project-reach os-user --yes",
+    ]);
+  });
+
+  test("in docker mode widening outside the sandbox still names it, without the os risk text", async () => {
+    const s = setup({ status: loggedIn({ mode: "docker" }) });
+    await s.device.impl.requestCeiling(ctxFor(), { outsideSandbox: true });
+    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+      { outsideSandbox: true, network: false, projectReach: false },
       [TEXTS.ceilingWidening],
     ]);
   });
@@ -369,10 +420,12 @@ describe("requestCeiling", () => {
         handlers: {
           "ceiling show --json": () => {
             reads++;
-            // Before: full access already allowed; after the dialog it was narrowed meanwhile.
-            return {
-              lines: [{ fullAccess: reads === 1, projectReach: "workspace", revision: null }],
-            };
+            // Before: the network already open; after the dialog it was narrowed meanwhile.
+            return shown({
+              outsideSandbox: false,
+              network: reads === 1 ? "open" : "allowlist",
+              projectReach: "workspace",
+            });
           },
         },
       },
@@ -392,16 +445,18 @@ describe("requestCeiling", () => {
         handlers: {
           "ceiling show --json": () => {
             reads++;
-            return {
-              lines: [{ fullAccess: reads === 2, projectReach: "workspace", revision: null }],
-            };
+            return shown({
+              outsideSandbox: reads === 2,
+              network: "allowlist",
+              projectReach: "workspace",
+            });
           },
         },
       },
     );
     expect(await s.device.impl.requestCeiling(ctxFor(), wide)).toBe("applied");
     expect(s.cli.writes()).toEqual([
-      "ceiling set --full-access allow --project-reach os-user --yes",
+      "ceiling set --outside-sandbox on --network open --project-reach os-user --yes",
     ]);
   });
 
@@ -412,10 +467,11 @@ describe("requestCeiling", () => {
   });
 
   test("the widening is decided from the device, not the page", async () => {
-    // Already wide on the machine: the same request is no widening and needs no dialog.
+    // Already wide on the machine: the same request is no widening, needs no dialog, writes nothing.
     const s = setup({ status: loggedIn(), ceiling: wide });
     expect(await s.device.impl.requestCeiling(ctxFor(), wide)).toBe("applied");
     expect(s.dialogs.asked).toEqual([]);
+    expect(s.cli.writes()).toEqual([]);
   });
 
   test("a busy confirmation slot refuses the widening before any dialog", async () => {
@@ -447,19 +503,44 @@ describe("requestCeiling", () => {
     expect(cli.writes()).toEqual([]);
   });
 
-  test("malformed input fails", async () => {
+  test("an unreadable ceiling (an older program's shape) refuses before anything", async () => {
+    const s = setup(
+      { status: loggedIn() },
+      {
+        handlers: {
+          "ceiling show --json": () => ({
+            lines: [{ fullAccess: false, projectReach: "workspace", revision: null }],
+          }),
+        },
+      },
+    );
+    await expect(s.device.impl.requestCeiling(ctxFor(), { network: "open" })).rejects.toMatchObject(
+      { code: "failed" },
+    );
+    expect(s.dialogs.asked).toEqual([]);
+    expect(s.cli.writes()).toEqual([]);
+  });
+
+  test("malformed input fails: empty, unknown fields (the old shape), bad values", async () => {
     const s = setup({ status: loggedIn() });
     for (const input of [
       undefined,
+      null,
       {},
-      { fullAccess: "yes", projectReach: "workspace" },
-      { fullAccess: true, projectReach: "anywhere" },
+      [],
+      { fullAccess: true, projectReach: "os-user" },
+      { network: "open", fullAccess: true },
+      { outsideSandbox: "on" },
+      { network: "none" },
+      { projectReach: "anywhere" },
+      { network: undefined },
     ]) {
       await expect(s.device.impl.requestCeiling(ctxFor(), input)).rejects.toMatchObject({
         code: "failed",
       });
     }
     expect(s.cli.writes()).toEqual([]);
+    expect(s.dialogs.asked).toEqual([]);
   });
 });
 
@@ -625,7 +706,7 @@ describe("no function returns the credential", () => {
       await settle(() => s.device.impl.resume(ctx));
       await settle(() => s.device.impl.disconnect(ctx));
       await settle(() =>
-        s.device.impl.requestCeiling(ctx, { fullAccess: true, projectReach: "os-user" }),
+        s.device.impl.requestCeiling(ctx, { outsideSandbox: true, projectReach: "os-user" }),
       );
       await settle(() => s.device.impl.setKeepAwake(ctx, "connected"));
       const seen: unknown[] = [];
@@ -655,12 +736,12 @@ describe("the program's risk texts", () => {
     const login = (await import(
       pathToFileURL(join(DEVICE_PKG, "dist/commands/login.js")).href
     )) as {
-      FULL_ACCESS_RISK_TEXT: string;
+      OUTSIDE_SANDBOX_RISK_TEXT: string;
     };
     const got = await texts();
     expect(got).toEqual({
       ceilingWidening: ceiling.CEILING_WIDENING_TEXT,
-      fullAccessRisk: login.FULL_ACCESS_RISK_TEXT,
+      outsideSandboxRisk: login.OUTSIDE_SANDBOX_RISK_TEXT,
     });
     // Asked once per app run.
     expect(await texts()).toBe(got);
@@ -675,5 +756,13 @@ describe("the program's risk texts", () => {
       ) as unknown as ReturnType<SpawnLike>;
     const texts = createDeviceTexts({ resourcesPath: "/nowhere", spawn: quietSpawn, env: {} });
     await expect(texts()).rejects.toThrow();
+  });
+});
+
+describe("the request shape", () => {
+  test("the shell's ceiling fields are exactly the SDK's DeviceCeilingRequest", () => {
+    expectTypeOf<Partial<OwnerCeiling>>().toEqualTypeOf<DeviceCeilingRequest>();
+    expectTypeOf<keyof DeviceCeilingRequest>().toEqualTypeOf<CeilingField>();
+    expectTypeOf(parseCeilingRequest).returns.toEqualTypeOf<DeviceCeilingRequest | undefined>();
   });
 });

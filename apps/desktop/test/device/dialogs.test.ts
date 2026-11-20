@@ -54,7 +54,10 @@ describe("the connect dialog", () => {
     expect(box?.options.defaultId).toBe(1);
     expect(box?.options.cancelId).toBe(1);
     expect(box?.options.detail).toContain("本地设备");
-    expect(box?.options.detail).toContain("完全访问");
+    // the starting state as the device program sets it up: in the sandbox, the open network
+    expect(box?.options.detail).toContain("沙箱内运行");
+    expect(box?.options.detail).toContain("公共互联网");
+    expect(box?.options.detail).not.toContain("完全访问");
     expect(box?.options.detail).toContain("登录服务");
     expect(box?.options.detail).toContain("唤醒");
     expect(box?.options.detail).not.toMatch(/企业|agent/i);
@@ -87,7 +90,11 @@ describe("the other confirmations", () => {
     expect(await dialogs.confirmDisconnectOther(null, "https://other.example.com")).toBe(false);
     expect(await dialogs.confirmResume(null, named)).toBe(false);
     expect(
-      await dialogs.confirmWidenCeiling(null, { fullAccess: true, projectReach: false }, ["W."]),
+      await dialogs.confirmWidenCeiling(
+        null,
+        { outsideSandbox: true, network: false, projectReach: false },
+        ["W."],
+      ),
     ).toBe(false);
     expect(await dialogs.confirmRaiseKeepAwake(null, "connected")).toBe(false);
     expect(await dialogs.confirmRemoveDevice(null, named)).toBe(false);
@@ -107,11 +114,15 @@ describe("the other confirmations", () => {
 
   test("the widening dialog names each widened item, then the program's own texts", async () => {
     const cases = [
-      [{ fullAccess: true, projectReach: false }, "完全访问：允许"],
-      [{ fullAccess: false, projectReach: true }, "项目范围：整个系统用户（os-user）"],
+      [{ outsideSandbox: true, network: false, projectReach: false }, "沙箱外运行：允许"],
+      [{ outsideSandbox: false, network: true, projectReach: false }, "网络：开放（公共互联网）"],
       [
-        { fullAccess: true, projectReach: true },
-        "完全访问：允许\n项目范围：整个系统用户（os-user）",
+        { outsideSandbox: false, network: false, projectReach: true },
+        "项目范围：整个系统用户（os-user）",
+      ],
+      [
+        { outsideSandbox: true, network: true, projectReach: true },
+        "沙箱外运行：允许\n网络：开放（公共互联网）\n项目范围：整个系统用户（os-user）",
       ],
     ] as const;
     for (const [widened, lines] of cases) {
@@ -124,9 +135,14 @@ describe("the other confirmations", () => {
 
   test("the widened items in English", async () => {
     const { dialogs, shown } = setup(0, "en");
-    await dialogs.confirmWidenCeiling(null, { fullAccess: true, projectReach: true }, ["W."]);
+    await dialogs.confirmWidenCeiling(
+      null,
+      { outsideSandbox: true, network: true, projectReach: true },
+      ["W."],
+    );
     expect(shown[0]?.options.detail).toBe(
-      "Full access: allowed\nProject reach: the whole OS user (os-user)\n\nW.",
+      "Running outside the sandbox: allowed\nNetwork: open (the public internet)\n" +
+        "Project reach: the whole OS user (os-user)\n\nW.",
     );
   });
 

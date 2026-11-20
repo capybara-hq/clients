@@ -12,7 +12,7 @@ import type { Profile } from "../profiles.ts";
  * `DEVICE_PROTOCOL_VERSION`). The package does not export it at runtime without loading the whole
  * program, so it is restated here and pinned to the package by a test.
  */
-export const BUNDLED_DEVICE_PROTOCOL = 3;
+export const BUNDLED_DEVICE_PROTOCOL = 4;
 
 export function deviceOffered(o: {
   platform: string;

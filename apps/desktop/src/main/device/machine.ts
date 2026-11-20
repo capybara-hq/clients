@@ -1,7 +1,11 @@
 // What this machine is, read from the device program (spec §8: `status --json` and the control
 // socket). Every reader keeps only the fields it names, so whatever else a command prints (the
 // working directory, the connect URL, and never, but even if, a credential) does not travel on.
-import type { KeepAwakeMode, ThisMachineStatus } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceCeilingRequest,
+  KeepAwakeMode,
+  ThisMachineStatus,
+} from "@capybara-hq/plugin-sdk";
 import { normalizeAddress } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
@@ -81,19 +85,75 @@ export const readKeepAwake = (cli: DeviceCli): Promise<KeepAwakeMode> =>
     isRecord(v) && isKeepAwakeMode(v.keepAwake) ? v.keepAwake : undefined,
   );
 
+/** This machine's owner ceiling, as `ceiling show --json` prints it (device policy version 3). */
 export interface OwnerCeiling {
-  fullAccess: boolean;
+  outsideSandbox: boolean;
+  network: "open" | "allowlist";
   projectReach: "workspace" | "os-user";
 }
 
-export const isProjectReach = (v: unknown): v is OwnerCeiling["projectReach"] =>
+/** The ceiling fields `device@1.requestCeiling` may name. */
+export const CEILING_FIELDS = ["outsideSandbox", "network", "projectReach"] as const;
+export type CeilingField = (typeof CEILING_FIELDS)[number];
+
+const isNetwork = (v: unknown): v is OwnerCeiling["network"] => v === "open" || v === "allowlist";
+const isProjectReach = (v: unknown): v is OwnerCeiling["projectReach"] =>
   v === "workspace" || v === "os-user";
 
-/** `ceiling show --json`: this machine's owner ceiling now. */
+/**
+ * A `device@1.requestCeiling` input (`DeviceCeilingRequest`): at least one known field,
+ * each with a valid value, and nothing else (an older page's `{ fullAccess, projectReach }` is
+ * refused, never half applied); undefined otherwise.
+ */
+export function parseCeilingRequest(v: unknown): DeviceCeilingRequest | undefined {
+  if (!isRecord(v)) return undefined;
+  const keys = Object.keys(v);
+  if (keys.length === 0) return undefined;
+  if (!keys.every((k) => (CEILING_FIELDS as readonly string[]).includes(k))) return undefined;
+  const { outsideSandbox, network, projectReach } = v;
+  if ("outsideSandbox" in v && typeof outsideSandbox !== "boolean") return undefined;
+  if ("network" in v && !isNetwork(network)) return undefined;
+  if ("projectReach" in v && !isProjectReach(projectReach)) return undefined;
+  return v as DeviceCeilingRequest;
+}
+
+/** Whether `next[field]` allows more than `cur[field]` (an absent field changes nothing). */
+export function widensField(
+  cur: OwnerCeiling,
+  next: DeviceCeilingRequest,
+  field: CeilingField,
+): boolean {
+  switch (field) {
+    case "outsideSandbox":
+      return !cur.outsideSandbox && next.outsideSandbox === true;
+    case "network":
+      return cur.network === "allowlist" && next.network === "open";
+    case "projectReach":
+      return cur.projectReach === "workspace" && next.projectReach === "os-user";
+  }
+}
+
+/** `ceiling set` arguments naming only the requested fields (the program keeps the others). */
+export function ceilingSetArgs(req: DeviceCeilingRequest): string[] {
+  return [
+    "ceiling",
+    "set",
+    ...(req.outsideSandbox !== undefined
+      ? ["--outside-sandbox", req.outsideSandbox ? "on" : "off"]
+      : []),
+    ...(req.network !== undefined ? ["--network", req.network] : []),
+    ...(req.projectReach !== undefined ? ["--project-reach", req.projectReach] : []),
+  ];
+}
+
+/** `ceiling show --json`: this machine's owner ceiling now; an older program's shape fails. */
 export const readCeiling = (cli: DeviceCli): Promise<OwnerCeiling> =>
   readJson(cli, ["ceiling", "show", "--json"], (v) =>
-    isRecord(v) && typeof v.fullAccess === "boolean" && isProjectReach(v.projectReach)
-      ? { fullAccess: v.fullAccess, projectReach: v.projectReach }
+    isRecord(v) &&
+    typeof v.outsideSandbox === "boolean" &&
+    isNetwork(v.network) &&
+    isProjectReach(v.projectReach)
+      ? { outsideSandbox: v.outsideSandbox, network: v.network, projectReach: v.projectReach }
       : undefined,
   );
 

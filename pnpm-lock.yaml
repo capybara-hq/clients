@@ -39,11 +39,11 @@ importers:
   apps/desktop:
     devDependencies:
       '@capybara-hq/device':
-        specifier: 0.1.0-rc.18
-        version: 0.1.0-rc.18
+        specifier: 0.1.0-rc.19
+        version: 0.1.0-rc.19
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.38
-        version: 0.1.0-rc.38
+        specifier: 0.1.0-rc.41
+        version: 0.1.0-rc.41
       '@capybara-hq/shell':
         specifier: workspace:*
         version: link:../../packages/shell
@@ -144,13 +144,13 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@capybara-hq/device@0.1.0-rc.18':
-    resolution: {integrity: sha512-fzOwwH4ozU09p92l9MKP1SIHXA05eIqOqZNOpSEGsWlKYUNW9SOoKJV/A/NxWCCgVMkZm4TL31yTFjcT+pKl2A==}
+  '@capybara-hq/device@0.1.0-rc.19':
+    resolution: {integrity: sha512-jaK0f2devL5mjUqTRwm5ZcpvMQj+QhFHHCgD1el7phIwtpcOuDxESjoU+4ONMP71ohwGnsYGheBN6NAgArQ+JA==}
     engines: {node: '>=22.12'}
     hasBin: true
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.38':
-    resolution: {integrity: sha512-x1GieDQqGC/Q7KJ60S6f2qytm16D28YVOJV9zPpn62ejz/ZUEW3Kw48RMLspITZw8v/C1I9KlUnrX8Z6miGxGA==}
+  '@capybara-hq/plugin-sdk@0.1.0-rc.41':
+    resolution: {integrity: sha512-n3qnCHS0s/rPlPP1a1drMxOsAi+wkYM2BcKZChH8b3ieCoga4j6GW1XErnISHNYd80rsHIMjgnBSn8hFsVLnow==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -2461,9 +2461,9 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
 
-  '@capybara-hq/device@0.1.0-rc.18': {}
+  '@capybara-hq/device@0.1.0-rc.19': {}
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.38':
+  '@capybara-hq/plugin-sdk@0.1.0-rc.41':
     dependencies:
       '@types/mdast': 4.0.4
       kysely: 0.29.9

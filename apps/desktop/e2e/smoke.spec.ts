@@ -302,6 +302,28 @@ test("a contextBridge subscription returns a working unsubscribe", async () => {
   expect(result).toBe("function");
 });
 
+test("device@1.requestCeiling refuses the old shape and an empty request across the bridge", async () => {
+  test.skip(process.platform !== "darwin" && process.platform !== "linux", "no device@1");
+  const codes = await page.evaluate(async () => {
+    const device = (window as unknown as { capybaraShell: PageShell }).capybaraShell.capabilities[
+      "device@1"
+    ] as unknown as { requestCeiling(input: unknown): Promise<unknown> };
+    const code = (input: unknown) =>
+      device.requestCeiling(input).then(
+        () => "resolved",
+        (e: unknown) => (e as { code?: unknown } | null)?.code,
+      );
+    return [
+      await code({ fullAccess: true, projectReach: "os-user" }),
+      await code({}),
+      await code({ network: "open", fullAccess: true }),
+    ];
+  });
+  // The call crosses the bridge and is refused; the unit tests prove the shape check refuses
+  // these before any device command runs.
+  expect(codes).toEqual(["failed", "failed", "failed"]);
+});
+
 test("a redirect hop to another origin gets Chromium's user agent and no shell", async () => {
   await page.locator("#hop").click();
   await expect(page).toHaveURL(`${peer.base}/ua`);

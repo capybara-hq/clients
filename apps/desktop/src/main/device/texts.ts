@@ -1,6 +1,6 @@
 // The device program's own risk texts (spec §9.5): the widening dialog shows exactly what the
 // bundled program says, never a copy kept here that could drift from it. The bundled Node prints
-// the two constants of the bundled package (`CEILING_WIDENING_TEXT`, `FULL_ACCESS_RISK_TEXT`) as
+// the two constants of the bundled package (`CEILING_WIDENING_TEXT`, `OUTSIDE_SANDBOX_RISK_TEXT`) as
 // one JSON line; the answer is kept for the app run (the bundled package does not change while
 // the app runs; an update installs at quit).
 import { join } from "node:path";
@@ -10,8 +10,8 @@ import { deviceEnv, devicePaths, type SpawnLike } from "./cli.ts";
 export interface DeviceTexts {
   /** `CEILING_WIDENING_TEXT` (device `commands/ceiling.js`). */
   ceilingWidening: string;
-  /** `FULL_ACCESS_RISK_TEXT` (device `commands/login.js`). */
-  fullAccessRisk: string;
+  /** `OUTSIDE_SANDBOX_RISK_TEXT` (device `commands/login.js`). */
+  outsideSandboxRisk: string;
 }
 
 export interface DeviceTextsDeps {
@@ -27,7 +27,7 @@ const SCRIPT = [
   "const [ceilingUrl, loginUrl] = process.argv.slice(1);",
   "const ceiling = await import(ceilingUrl);",
   "const login = await import(loginUrl);",
-  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, fullAccessRisk: login.FULL_ACCESS_RISK_TEXT }));",
+  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, outsideSandboxRisk: login.OUTSIDE_SANDBOX_RISK_TEXT }));",
 ].join("\n");
 
 const TEXT_MAX = 4000;
@@ -37,10 +37,11 @@ function parse(stdout: string): DeviceTexts | undefined {
   for (const line of stdout.split("\n").reverse()) {
     try {
       const v = JSON.parse(line) as Record<string, unknown>;
-      const { ceilingWidening, fullAccessRisk } = v ?? {};
+      const { ceilingWidening, outsideSandboxRisk } = v ?? {};
       const ok = (s: unknown): s is string =>
         typeof s === "string" && s.trim() !== "" && s.length <= TEXT_MAX;
-      if (ok(ceilingWidening) && ok(fullAccessRisk)) return { ceilingWidening, fullAccessRisk };
+      if (ok(ceilingWidening) && ok(outsideSandboxRisk))
+        return { ceilingWidening, outsideSandboxRisk };
     } catch {
       // not the answer line
     }

@@ -12,7 +12,7 @@ import { fakeFrame } from "./fakes.ts";
 const META = {
   name: "Example Corp",
   icon: "/api/v1/platform/icon/app?v=abc123",
-  protocols: { device: { min: 3, max: 3 } },
+  protocols: { device: { min: 4, max: 4 } },
   features: { localDevices: true, appSignIn: true },
 };
 
