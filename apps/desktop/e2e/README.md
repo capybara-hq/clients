@@ -32,7 +32,7 @@ What it covers:
   the page's frame (`senderFrame.origin`), so address -> meta discovery -> icon -> Open works.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{28,0,0,0}`, controls `{0,0,80,28}`) with `signIn@1`, `notify@1`, `openExternal@1`,
-  `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 3 in
+  `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
   range) without a reload. `executeInMainWorld` works.
 - Same-origin and `/plugin-ui/...` iframes do not see `capybaraShell`.
 - A `signIn@1` call without a user activation is refused (`no_activation`); a real click opens

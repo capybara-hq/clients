@@ -69,7 +69,11 @@ export function fakeCli(
   state: {
     status?: Record<string, unknown>;
     service?: Partial<ServiceStatus>;
-    ceiling?: { fullAccess: boolean; projectReach: "workspace" | "os-user" };
+    ceiling?: {
+      outsideSandbox: boolean;
+      network: "open" | "allowlist";
+      projectReach: "workspace" | "os-user";
+    };
     keepAwake?: "off" | "while-busy" | "connected";
   } = {},
   handlers: Record<string, Handler> = {},
@@ -95,7 +99,12 @@ export function fakeCli(
       r = {
         lines: [
           {
-            ...(state.ceiling ?? { fullAccess: false, projectReach: "workspace" }),
+            ...(state.ceiling ?? {
+              outsideSandbox: false,
+              network: "allowlist",
+              projectReach: "workspace",
+            }),
+            allowedDomains: [],
             revision: null,
           },
         ],

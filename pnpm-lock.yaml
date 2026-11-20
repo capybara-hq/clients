@@ -39,8 +39,8 @@ importers:
   apps/desktop:
     devDependencies:
       '@capybara-hq/device':
-        specifier: 0.1.0-rc.18
-        version: 0.1.0-rc.18
+        specifier: 0.1.0-rc.19
+        version: 0.1.0-rc.19
       '@capybara-hq/plugin-sdk':
         specifier: 0.1.0-rc.38
         version: 0.1.0-rc.38
@@ -144,8 +144,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@capybara-hq/device@0.1.0-rc.18':
-    resolution: {integrity: sha512-fzOwwH4ozU09p92l9MKP1SIHXA05eIqOqZNOpSEGsWlKYUNW9SOoKJV/A/NxWCCgVMkZm4TL31yTFjcT+pKl2A==}
+  '@capybara-hq/device@0.1.0-rc.19':
+    resolution: {integrity: sha512-jaK0f2devL5mjUqTRwm5ZcpvMQj+QhFHHCgD1el7phIwtpcOuDxESjoU+4ONMP71ohwGnsYGheBN6NAgArQ+JA==}
     engines: {node: '>=22.12'}
     hasBin: true
 
@@ -2461,7 +2461,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
 
-  '@capybara-hq/device@0.1.0-rc.18': {}
+  '@capybara-hq/device@0.1.0-rc.19': {}
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.38':
     dependencies:

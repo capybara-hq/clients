@@ -37,7 +37,7 @@ export interface DeviceDialogs {
    */
   confirmWidenCeiling(
     parent: unknown,
-    widened: { fullAccess: boolean; projectReach: boolean },
+    widened: { outsideSandbox: boolean; network: boolean; projectReach: boolean },
     texts: string[],
   ): Promise<boolean>;
   confirmRaiseKeepAwake(parent: unknown, mode: Exclude<KeepAwakeMode, "off">): Promise<boolean>;
@@ -126,7 +126,8 @@ export function createDeviceDialogs(deps: {
         message: tr("device.ceiling.message"),
         detail: [
           [
-            ...(widened.fullAccess ? [tr("device.ceiling.change.full_access")] : []),
+            ...(widened.outsideSandbox ? [tr("device.ceiling.change.outside_sandbox")] : []),
+            ...(widened.network ? [tr("device.ceiling.change.network")] : []),
             ...(widened.projectReach ? [tr("device.ceiling.change.project_reach")] : []),
           ].join("\n"),
           ...texts,

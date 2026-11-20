@@ -201,7 +201,7 @@ export async function startFakeDeployment(
           name: "Fake Deployment",
           icon: "/icon.png?v=abc123",
           icons: { app: "/icon.png?v=abc123", maskable: null, favicon: null },
-          protocols: { device: { min: 3, max: 3 } },
+          protocols: { device: { min: 4, max: 4 } },
           features: { localDevices: true, appSignIn: true },
         }),
         { "content-type": "application/json", "cache-control": "no-store" },

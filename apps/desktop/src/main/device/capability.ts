@@ -22,17 +22,20 @@ import {
 import type { ControlClient } from "./control.ts";
 import type { DeviceDialogs } from "./dialogs.ts";
 import {
+  CEILING_FIELDS,
+  ceilingSetArgs,
   failed,
   hereOrNull,
   isKeepAwakeMode,
-  isProjectReach,
   isThisDeployment,
   KEEP_AWAKE_MODES,
   type Machine,
   machineStatus,
+  parseCeilingRequest,
   readCeiling,
   readKeepAwake,
   readMachine,
+  widensField,
 } from "./machine.ts";
 import type { DeviceService } from "./service.ts";
 import type { DeviceTexts } from "./texts.ts";
@@ -239,23 +242,22 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     },
 
     async requestCeiling(ctx: Ctx, input: unknown): Promise<"applied" | "cancelled"> {
-      if (typeof input !== "object" || input === null) throw failed();
-      const { fullAccess, projectReach } = input as Record<string, unknown>;
-      if (typeof fullAccess !== "boolean" || !isProjectReach(projectReach)) throw failed();
+      // Only the fields the page names: the program keeps every other field as it is then, so a
+      // stale value on the page can never narrow (or widen) one it did not ask about.
+      const req = parseCeilingRequest(input);
+      if (req === undefined) throw failed();
       const machine = await connectedHere(ctx.profile);
       const cur = await readCeiling(cli);
-      const args = [
-        "ceiling",
-        "set",
-        "--full-access",
-        fullAccess ? "allow" : "deny",
-        "--project-reach",
-        projectReach,
-      ];
-      const widensFull = !cur.fullAccess && fullAccess;
-      const widensReach = cur.projectReach === "workspace" && projectReach === "os-user";
-      if (!widensFull && !widensReach) {
-        if (cur.fullAccess === fullAccess && cur.projectReach === projectReach) return "applied";
+      const args = ceilingSetArgs(req);
+      const widened = {
+        outsideSandbox: widensField(cur, req, "outsideSandbox"),
+        network: widensField(cur, req, "network"),
+        projectReach: widensField(cur, req, "projectReach"),
+      };
+      if (!widened.outsideSandbox && !widened.network && !widened.projectReach) {
+        if (CEILING_FIELDS.every((f) => req[f] === undefined || req[f] === cur[f])) {
+          return "applied";
+        }
         // Without --yes: the program decides again under its policy lock, so a widening that
         // landed meanwhile is refused instead of applied unconfirmed.
         await run(cli, args);
@@ -269,22 +271,19 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
           log("the device program's risk texts are unavailable; no widening", err);
           throw failed();
         }
-        // Full access runs as the owner outside Docker: the program shows its risk text then.
+        // Outside the sandbox a call runs as the owner on an os machine: the program shows its
+        // risk text then (login), so the dialog does too.
         const shown = [
           texts.ceilingWidening,
-          ...(widensFull && machine.mode !== "docker" ? [texts.fullAccessRisk] : []),
+          ...(widened.outsideSandbox && machine.mode !== "docker"
+            ? [texts.outsideSandboxRisk]
+            : []),
         ];
-        const widened = { fullAccess: widensFull, projectReach: widensReach };
         if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown))) return "cancelled";
-        // The ceiling may have narrowed while the dialog was open: --yes must not widen more than
-        // the person saw.
+        // The ceiling may have narrowed while the dialog was open: --yes must not widen a field
+        // the person did not see named.
         const now = await readCeiling(cli);
-        if (
-          (!now.fullAccess && fullAccess && !widensFull) ||
-          (now.projectReach === "workspace" && projectReach === "os-user" && !widensReach)
-        ) {
-          throw failed();
-        }
+        if (CEILING_FIELDS.some((f) => widensField(now, req, f) && !widened[f])) throw failed();
         await run(cli, [...args, "--yes"]);
         return "applied";
       });

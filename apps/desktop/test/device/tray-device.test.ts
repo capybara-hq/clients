@@ -89,7 +89,7 @@ function harness(
     service: fakeService(),
     control,
     dialogs: d.dialogs,
-    texts: async () => ({ ceilingWidening: "w", fullAccessRisk: "r" }),
+    texts: async () => ({ ceilingWidening: "w", outsideSandboxRisk: "r" }),
     openVerification: () => ({ close() {}, onClosed() {} }),
   });
   const gate = createConfirmGate();

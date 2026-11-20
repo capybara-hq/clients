@@ -16,7 +16,7 @@ const profile = (n: number, over: Partial<Profile> = {}): Profile => ({
 const meta = (icon: string | null) => ({
   name: "X",
   icon,
-  protocols: { device: { min: 3, max: 3 } },
+  protocols: { device: { min: 4, max: 4 } },
   features: { localDevices: true, appSignIn: true },
 });
 
