@@ -1,6 +1,8 @@
 // The loopback server of the hostile-page test, started by the test itself in the app's process on
 // the device. Origin A is http://127.0.0.1:<port>, origin B http://localhost:<port>: one server,
-// told apart by the Host header. It serves apps/mobile/testpages/hostile (the test APK's assets),
+// told apart by the Host header. It serves apps/mobile/testpages/<dir> (the test APK's assets;
+// `hostile` by default, `navigation` for NavigationPageTest), records every GET with its host,
+// answers /redirect-oauth with an OAuth-shaped redirect to origin B,
 // answers /redirect with a redirect to origin B, serves the sandbox-CSP pages, and collects the
 // pages' reports (POST /report). The gate log arrives in-process through `logNative`.
 
@@ -17,7 +19,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
-class HostileServer(private val assets: AssetManager) : AutoCloseable {
+class HostileServer(private val assets: AssetManager, private val dir: String = "hostile") : AutoCloseable {
     private val socket = ServerSocket(0, 50, InetAddress.getByName("::"))
     val port: Int = socket.localPort
     val originA = "http://127.0.0.1:$port"
@@ -26,6 +28,7 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
     private val lock = Object()
     private val reports = ArrayList<JSONObject>()
     private val nativeLog = ArrayList<JSONObject>()
+    private val requests = ArrayList<String>()
     private val latches = HashMap<String, CountDownLatch>()
 
     init {
@@ -64,6 +67,9 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
     /** Waits for a report of `doc`; false on timeout. */
     fun await(doc: String, seconds: Long): Boolean = latch(doc).await(seconds, TimeUnit.SECONDS)
 
+    /** Every GET so far, as "<host> <path with query>". */
+    fun requests(): List<String> = synchronized(lock) { requests.toList() }
+
     private fun latch(doc: String): CountDownLatch = synchronized(lock) {
         latches.getOrPut(doc) {
             CountDownLatch(1).also { l -> if (reports.any { it.optString("doc") == doc }) l.countDown() }
@@ -86,6 +92,10 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
         if (parts.size < 2) return
         val method = parts[0]
         val path = parts[1].substringBefore('?')
+        if (method == "GET") {
+            val host = lines.drop(1).firstOrNull { it.lowercase().startsWith("host:") }?.substringAfter(':')?.trim() ?: "?"
+            synchronized(lock) { requests.add("$host ${parts[1]}") }
+        }
         val length = lines.drop(1).firstOrNull { it.lowercase().startsWith("content-length:") }
             ?.substringAfter(':')?.trim()?.toIntOrNull() ?: 0
         val body = ByteArray(length)
@@ -125,6 +135,12 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
                 status = "302 Found"
                 headers["Location"] = "$originB/redirected.html"
             }
+            method == "GET" && path == "/redirect-oauth" -> {
+                // A server redirect shaped as an OAuth authorization URL back to origin A: the
+                // policy lets it leave the origin (a plain /redirect to origin B goes to the sheet).
+                status = "302 Found"
+                headers["Location"] = "$originB/redirected.html?response_type=code&redirect_uri=$originA%2Fcb"
+            }
             method == "GET" -> {
                 var name = if (path == "/") "top.html" else path.removePrefix("/")
                 if (path.startsWith("/plugin-ui/")) name = "plugin-ui.html"
@@ -133,7 +149,7 @@ class HostileServer(private val assets: AssetManager) : AutoCloseable {
                 }
                 val text = if (Regex("^[a-z0-9-]+\\.(html|js|json)$").matches(name)) {
                     try {
-                        assets.open("hostile/$name").bufferedReader().use { it.readText() }
+                        assets.open("$dir/$name").bufferedReader().use { it.readText() }
                     } catch (_: Exception) {
                         null
                     }

@@ -36,6 +36,9 @@ android {
     sourceSets {
         androidTest.assets.srcDirs += ['../../testpages']
     }
+    buildFeatures {
+        buildConfig = true
+    }
     buildTypes {
         release {
             minifyEnabled false
@@ -58,7 +61,11 @@ dependencies {
     implementation project(':capacitor-android')
     // The profile WebViews' gate: document-start script, web message listener, profiles.
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    // The browser sheet (Custom Tabs) for other origins and new windows.
+    implementation "androidx.browser:browser:$androidxBrowserVersion"
     testImplementation "junit:junit:$junitVersion"
+    // The real org.json for JVM tests that read the shared vector files (android.jar's is a stub).
+    testImplementation "org.json:json:20250517"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

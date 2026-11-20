@@ -1,10 +1,14 @@
 // The Capacitor plugin `CapybaraHost`: the native side of `HostPort` (src/runtime/host-port.ts).
 // It lives on Capacitor's bridge, which only the app's local pages reach; profile WebViews never
 // see it. Gated calls from profile WebViews become `call` events for the runtime; the runtime's
-// `reply`, `pushState` and `event` go back to the profile's WebView.
+// `reply`, `pushState` and `event` go back to the profile's WebView. It also carries the
+// `ProfileHostPort` (Task 16): `open`, `showError`, `setAppearance`, and the `load` and
+// `document` events (the document events let the runtime cancel a dead document's calls and
+// push the current state to a new one).
 
 import Capacitor
 import Foundation
+import UIKit
 
 @objc(ShellPlugin)
 public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -15,9 +19,34 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "pushState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "event", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "httpGet", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showError", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setAppearance", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "launchOptions", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
+
+    @MainActor private var host: ProfileHost?
+
+    @MainActor private func profileHost() -> ProfileHost? {
+        if let host { return host }
+        guard let controller = bridge?.viewController as? CAPBridgeViewController else { return nil }
+        let made = ProfileHost(controller: controller)
+        made.sink = self
+        #if DEBUG
+        if let log = LoaderTestLog.current {
+            made.monitor = log
+            let present = made.sheet
+            made.sheet = { url in
+                log.log(["event": "sheet", "url": url.absoluteString])
+                present(url)
+            }
+        }
+        #endif
+        host = made
+        return made
+    }
 
     private final class WeakView {
         weak var view: ProfileWebView?
@@ -91,9 +120,88 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
+extension ShellPlugin {
+    @objc func open(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId"), let origin = call.getString("origin"),
+              let base = call.getString("base"), let dataStoreId = call.getString("dataStoreId"),
+              let state = call.getObject("state")
+        else {
+            call.reject("open needs profileId, origin, base, dataStoreId and state")
+            return
+        }
+        DispatchQueue.main.async {
+            guard let host = self.profileHost() else { return call.reject("no profile host") }
+            do {
+                try host.open(ProfileHost.Spec(profileId: profileId, origin: origin, base: base,
+                                               dataStoreId: dataStoreId, state: state))
+                call.resolve()
+            } catch {
+                call.reject("\(error)")
+            }
+        }
+    }
+
+    @objc func showError(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("showError needs profileId") }
+        DispatchQueue.main.async {
+            self.profileHost()?.showError(profileId)
+            call.resolve()
+        }
+    }
+
+    @objc func setAppearance(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId"), let hex = call.getString("background"),
+              let color = UIColor(shellHex: hex),
+              let statusBar = call.getString("statusBar"), statusBar == "light" || statusBar == "dark"
+        else {
+            call.reject("setAppearance needs profileId, background #rrggbb and statusBar light|dark")
+            return
+        }
+        DispatchQueue.main.async {
+            self.profileHost()?.setAppearance(profileId, background: color, lightContent: statusBar == "light")
+            #if DEBUG
+            LoaderTestLog.current?.log(["event": "appearance", "background": hex, "statusBar": statusBar])
+            #endif
+            call.resolve()
+        }
+    }
+
+    /// Debug builds only: the loopback address a UI test asks the runtime to open.
+    @objc func launchOptions(_ call: CAPPluginCall) {
+        var result: [String: Any] = [:]
+        #if DEBUG
+        if let log = LoaderTestLog.current {
+            result["testOrigin"] = log.origin
+            result["testBase"] = log.base
+        }
+        #endif
+        call.resolve(result)
+    }
+}
+
+extension UIColor {
+    /// `#rrggbb` only (what the runtime sends).
+    convenience init?(shellHex hex: String) {
+        guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        self.init(red: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+                  blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+    }
+}
+
 extension ShellPlugin: ShellCallSink {
     func profileWebView(_ webView: ProfileWebView, didOpenDocument docId: String) {
         remember(webView)
+        notifyListeners("document", data: ["profileId": webView.profileId, "docId": docId, "state": "opened"])
+    }
+
+    func profileWebView(_ webView: ProfileWebView, didEndDocument docId: String) {
+        notifyListeners("document", data: ["profileId": webView.profileId, "docId": docId, "state": "ended"])
+    }
+
+    func profileWebView(_ webView: ProfileWebView, load event: [String: Any]) {
+        var data = event
+        data["profileId"] = webView.profileId
+        notifyListeners("load", data: data)
     }
 
     func profileWebView(_ webView: ProfileWebView, didCall call: ShellCall) {

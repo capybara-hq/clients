@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Task 16: the loader end to end. The page is transparent, sets the native background through
+     chrome@1.setAppearance and then calls chrome@1.ready(): the splash must go and what shows is
+     the native background (#123456). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <style>
+      html, body { margin: 0; height: 100%; background: transparent; }
+    </style>
+  </head>
+  <body>
+    <script>
+      const report = (results) =>
+        fetch("/report", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: "chrome-page", results }),
+        });
+      const chrome = window.capybaraShell?.capabilities?.["chrome@1"];
+      if (!chrome) {
+        report({ error: "no chrome@1" });
+      } else {
+        chrome
+          .setAppearance({ scheme: "dark", background: "#123456" })
+          .then(() => new Promise((r) => requestAnimationFrame(() => r())))
+          .then(() => chrome.ready())
+          .then(() => report({ ready: true }), (e) => report({ error: String(e) }));
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shell's own native text in zh (see values/strings_shell.xml). -->
+<resources>
+    <string name="unsupported_title">这台设备的 WebView 版本太旧</string>
+    <string name="unsupported_body">请在应用商店更新 Android System WebView（或 Chrome），然后重新打开应用。更新之前，这里无法打开任何平台。</string>
+</resources>

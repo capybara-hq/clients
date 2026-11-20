@@ -1,0 +1,626 @@
+[
+  {
+    "name": "same origin main frame",
+    "url": "https://cap.example.com/team/chat/1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "same origin root without the base path",
+    "url": "https://cap.example.com/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "same origin, default port spelled",
+    "url": "https://cap.example.com:443/team/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "same origin, upper case host",
+    "url": "https://CAP.example.com/team/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "loopback profile",
+    "url": "http://127.0.0.1:8080/top.html",
+    "profile": {
+      "origin": "http://127.0.0.1:8080",
+      "base": "http://127.0.0.1:8080"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "another port is another origin",
+    "url": "https://cap.example.com:8443/team/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "http is another origin",
+    "url": "http://cap.example.com/team/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "another origin top level",
+    "url": "https://docs.example.org/page",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "a look-alike host",
+    "url": "https://cap.example.com.evil.test/team/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "credentials before a foreign host",
+    "url": "https://cap.example.com@evil.test/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "connector OAuth authorization URL returning to the profile",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback&state=s",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "authorization URL, redirect_uri on the profile origin root",
+    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com/api/v1/oauth/callback",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "authorization URL without response_type",
+    "url": "https://login.idp.example/authorize?redirect_uri=https://cap.example.com/team/api/v1/oauth/callback",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL returning elsewhere",
+    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://evil.test/cb",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL returning to a look-alike",
+    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com.evil.test/cb",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL returning over http",
+    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=http://cap.example.com/team/cb",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL over a non-http scheme",
+    "url": "ftp://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com/cb",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "authorization URL in a new window",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback&state=s",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "while an OAuth return is pending, the provider's own pages",
+    "url": "https://accounts.idp2.example/signin",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": true,
+    "expect": "allow"
+  },
+  {
+    "name": "while an OAuth return is pending, back to the profile",
+    "url": "https://cap.example.com/team/api/v1/oauth/callback?code=1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": true,
+    "expect": "allow"
+  },
+  {
+    "name": "while an OAuth return is pending, javascript: still blocks",
+    "url": "javascript:alert(1)",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": true,
+    "expect": "block"
+  },
+  {
+    "name": "target=_blank to another origin",
+    "url": "https://docs.example.org/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "target=_blank on the profile origin",
+    "url": "https://cap.example.com/team/files/1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "target=_blank from a frame",
+    "url": "https://docs.example.org/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "target=_blank with javascript:",
+    "url": "javascript:alert(1)",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "target=_blank with data:",
+    "url": "data:text/html,hi",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "javascript: top level",
+    "url": "javascript:alert(1)",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "JavaScript: upper case",
+    "url": "JavaScript:alert(1)",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "file: top level",
+    "url": "file:///etc/passwd",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "data: top level",
+    "url": "data:text/html,<script>1</script>",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "blob: top level",
+    "url": "blob:https://cap.example.com/1234",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "about:blank top level",
+    "url": "about:blank",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "a custom scheme top level",
+    "url": "intent://x#Intent;end",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "mailto: top level",
+    "url": "mailto:a@b.example",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "not a URL",
+    "url": "not a url",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "empty",
+    "url": "",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "the login route as a navigation",
+    "url": "https://cap.example.com/team/api/v1/auth/login",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "the login route, spelled differently",
+    "url": "https://cap.example.com/team//API/v1/auth/%6cogin/",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "an SSO start route",
+    "url": "https://cap.example.com/team/api/v1/auth/sso/lark/start?x=1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "an SSO start route at the root",
+    "url": "https://cap.example.com/api/v1/auth/sso/oidc/start",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "an SSO start route while an OAuth return is pending",
+    "url": "https://cap.example.com/team/api/v1/auth/sso/lark/start",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": true,
+    "expect": "block"
+  },
+  {
+    "name": "the SSO callback is not a sign-in start",
+    "url": "https://cap.example.com/team/api/v1/auth/sso/lark/callback?code=1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "the login route outside the base path is just a page",
+    "url": "https://cap.example.com/api/v1/auth/login",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame on another origin",
+    "url": "https://embed.example.org/x",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame about:srcdoc",
+    "url": "about:srcdoc",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame about:blank",
+    "url": "about:blank",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame data:",
+    "url": "data:text/html,hi",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame blob:",
+    "url": "blob:https://cap.example.com/1",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "allow"
+  },
+  {
+    "name": "sub frame javascript:",
+    "url": "javascript:alert(1)",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "sub frame file:",
+    "url": "file:///etc/passwd",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "sub frame custom scheme",
+    "url": "intent://x",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  },
+  {
+    "name": "sub frame on the login route",
+    "url": "https://cap.example.com/team/api/v1/auth/login",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": false,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "expect": "block"
+  }
+]

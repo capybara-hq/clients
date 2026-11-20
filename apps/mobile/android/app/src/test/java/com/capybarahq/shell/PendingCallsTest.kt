@@ -74,6 +74,36 @@ class PendingCallsTest {
     }
 
     @Test
+    fun failAllAnswersEveryClearedEntryThroughItsOwnExpiryAndLeavesNoTimer() {
+        // A new document's hello: each owed call of the old document is answered `failed` through
+        // its own reply proxy (like iOS flush("gone")), never dropped silently.
+        val expiry = FakeExpiry()
+        val calls = PendingCalls<String>(5_000, expiry)
+        val answered = mutableListOf<String>()
+        calls.add("a") { answered.add("a:$it") }
+        calls.add("b") { answered.add("b:$it") }
+        calls.failAll()
+        assertEquals(listOf("a:a", "b:b"), answered)
+        assertTrue(expiry.tasks.isEmpty())
+        assertEquals(0, calls.count)
+        expiry.fireAll()
+        assertEquals(2, answered.size)
+    }
+
+    @Test
+    fun everyEntryPointChecksTheThread() {
+        var checks = 0
+        val calls = PendingCalls<String>(5_000, FakeExpiry(), assertThread = { checks++ })
+        val id = calls.add("a") {}
+        calls.take(id)
+        calls.clear()
+        calls.failAll()
+        assertEquals(4, checks)
+        val offMain = PendingCalls<String>(5_000, FakeExpiry(), assertThread = { error("not main") })
+        assertTrue(runCatching { offMain.add("a") {} }.isFailure)
+    }
+
+    @Test
     fun idsCarryAPerInstancePrefixSoALateReplyNeverResolvesAnotherInstance() {
         val a = PendingCalls<String>(5_000, FakeExpiry())
         val b = PendingCalls<String>(5_000, FakeExpiry())

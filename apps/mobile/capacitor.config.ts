@@ -12,6 +12,9 @@ const config: CapacitorConfig = {
     // destroy, and CapacitorHttp patches fetch / XHR. The app needs neither.
     CapacitorCookies: { enabled: false },
     CapacitorHttp: { enabled: false },
+    // The runtime drops the splash: on chrome@1.ready(), on the error state, or 3 s after the
+    // main-frame load finished (src/runtime/splash.ts).
+    SplashScreen: { launchAutoHide: false },
   },
 };
 

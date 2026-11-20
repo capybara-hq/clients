@@ -3,8 +3,14 @@
 // exists in it. It injects the Shell environment script into the main frame at document start
 // and owns the one gated endpoint (ShellMessageHandler). Accepted posts go to its `sink` (the
 // ShellPlugin, which forwards them to the TypeScript runtime); replies return to the posting
-// document only, and state and events go to the current document only. Popups never get a
-// WebView: `window.open` and `target=_blank` are handed to `onPopup` (the browser sheet, Task 16).
+// document only, and state and events go to the current document only.
+//
+// Navigation (Task 16, R14): every navigation passes `NavigationPolicy` (Navigation.swift) before
+// WebKit starts it, server redirects included; another origin and every new window
+// (`window.open`, `target=_blank`) go to `onSheet` (the browser sheet) and never load here, so
+// popups never get a WebView. Main-frame load results go to the sink (`didFinish`,
+// `didFailProvisional` before anything committed; a TLS failure never gets a proceed path), and
+// so does every document's end. The back-forward swipe moves through the WebView's history.
 
 import os
 import UIKit
@@ -28,12 +34,21 @@ struct ShellCall {
     }
 }
 
-/// Receives what the gate let through. Held weakly.
+/// Receives what the gate let through and what the WebView's loads did. Held weakly.
 protocol ShellCallSink: AnyObject {
     /// A new document of the profile origin is current (its script said hello).
     func profileWebView(_ webView: ProfileWebView, didOpenDocument docId: String)
     /// Answer with `webView.reply(callId:result:)`.
     func profileWebView(_ webView: ProfileWebView, didCall call: ShellCall)
+    /// The document that said hello ended (a main-frame commit, a new hello, the process died).
+    func profileWebView(_ webView: ProfileWebView, didEndDocument docId: String)
+    /// A main-frame load event (`LoadEvent` in src/runtime/host-port.ts, without profileId).
+    func profileWebView(_ webView: ProfileWebView, load event: [String: Any])
+}
+
+extension ShellCallSink {
+    func profileWebView(_ webView: ProfileWebView, didEndDocument docId: String) {}
+    func profileWebView(_ webView: ProfileWebView, load event: [String: Any]) {}
 }
 
 /// Observes gate decisions (accept, drop, popup), for logs and the hostile-page harness.
@@ -83,22 +98,48 @@ class DelegateChain: NSObject {
     }
 }
 
-/// Ends the current document on every main-frame commit and on a web process crash.
+/// The navigation policy, and the document and load lifecycle: ends the current document on
+/// every main-frame commit and on a web process crash. The policy decision is final (a chained
+/// delegate is not asked); the other callbacks are forwarded.
 final class NavigationTracker: DelegateChain, WKNavigationDelegate {
     weak var owner: ProfileWebView?
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let owner, let url = navigationAction.request.url else { return decisionHandler(.cancel) }
+        // A nil target frame is a new window (`target=_blank`): it never gets one.
+        let frame = navigationAction.targetFrame
+        let allowed = owner.route(url, isMainFrame: frame?.isMainFrame ?? true, targetBlank: frame == nil)
+        decisionHandler(allowed ? .allow : .cancel)
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        owner?.committed()
         owner?.documentEnded()
         (next as? WKNavigationDelegate)?.webView?(webView, didCommit: navigation)
     }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        owner?.emitLoad(["type": "didFinish"])
+        (next as? WKNavigationDelegate)?.webView?(webView, didFinish: navigation)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+                 withError error: Error) {
+        owner?.provisionalFailure(error)
+        (next as? WKNavigationDelegate)?.webView?(webView, didFailProvisionalNavigation: navigation, withError: error)
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         owner?.documentEnded()
+        // The page went blank: load it again (iOS keeps the WebView; Android recreates it, R11).
+        webView.reload()
         (next as? WKNavigationDelegate)?.webViewWebContentProcessDidTerminate?(webView)
     }
 }
 
-/// R14: never creates a WebView for a popup; the URL goes to `onPopup`.
+/// R14: never creates a WebView for a popup; the URL goes to the policy, which sends it to the
+/// browser sheet.
 final class PopupBlocker: DelegateChain, WKUIDelegate {
     weak var owner: ProfileWebView?
 
@@ -112,13 +153,38 @@ final class PopupBlocker: DelegateChain, WKUIDelegate {
     }
 }
 
+/// How a failed provisional navigation is reported: cancellations (ours included) are not
+/// failures; a certificate or TLS error is marked `tls` (there is no way past one).
+enum LoadFailure {
+    static let tlsCodes: Set<Int> = [
+        NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateHasBadDate,
+        NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasUnknownRoot,
+        NSURLErrorServerCertificateNotYetValid, NSURLErrorClientCertificateRejected,
+        NSURLErrorClientCertificateRequired, NSURLErrorAppTransportSecurityRequiresSecureConnection,
+    ]
+
+    /// Nil for a cancelled navigation (a policy cancel, a new navigation, a stop).
+    static func event(_ error: Error) -> [String: Any]? {
+        let e = error as NSError
+        if e.domain == NSURLErrorDomain, e.code == NSURLErrorCancelled { return nil }
+        // WebKitErrorFrameLoadInterruptedByPolicyChange: the policy cancelled it.
+        if e.domain == "WebKitErrorDomain", e.code == 102 { return nil }
+        let tls = e.domain == NSURLErrorDomain && tlsCodes.contains(e.code)
+        return ["type": "didFailProvisional", "code": "\(e.domain):\(e.code)", "tls": tls]
+    }
+}
+
 final class ProfileWebView: WKWebView {
     let profileId: String
     let profileOrigin: Origin
     weak var sink: ShellCallSink?
     weak var monitor: ShellGateMonitor?
-    /// Where a popup's URL goes instead of a new WebView (Task 16: the browser sheet).
-    var onPopup: ((URL) -> Void)?
+    /// The deployment address (origin plus path prefix): the sign-in routes are under it.
+    let base: String
+    /// Where a navigation that leaves the profile goes: the browser sheet (BrowserSheet.swift).
+    var onSheet: ((URL) -> Void)?
+    /// A connector OAuth leave-and-return under way (NavigationPolicy).
+    private var oauthReturn: OauthReturn?
 
     var currentDocId: String? { pushes.docId }
     private let gateHandler: ShellMessageHandler
@@ -134,7 +200,8 @@ final class ProfileWebView: WKWebView {
     ///   - state: the initial `insets`, `capabilities` and `events` (`registry.descriptors`).
     ///   - script: the Shell environment bundle (`ShellScript.bundled()`).
     static func make(profileId: String, profileOrigin: String, dataStore: WKWebsiteDataStore,
-                     shellVersion: String, state: [String: Any], script: String) throws -> ProfileWebView {
+                     shellVersion: String, state: [String: Any], script: String,
+                     base: String? = nil) throws -> ProfileWebView {
         if dataStore === WKWebsiteDataStore.default() { throw ProfileWebViewError.defaultDataStore }
         guard let origin = Origin(string: profileOrigin), origin.serialized == profileOrigin,
               let originURL = URL(string: profileOrigin)
@@ -147,13 +214,14 @@ final class ProfileWebView: WKWebView {
             throw ProfileWebViewError.badInit
         }
         return ProfileWebView(profileId: profileId, origin: origin, originURL: originURL,
-                              dataStore: dataStore, source: source)
+                              dataStore: dataStore, source: source, base: base ?? origin.serialized)
     }
 
     private init(profileId: String, origin: Origin, originURL: URL, dataStore: WKWebsiteDataStore,
-                 source: String) {
+                 source: String, base: String) {
         self.profileId = profileId
         self.profileOrigin = origin
+        self.base = base
         gateHandler = ShellMessageHandler(profileOrigin: originURL)
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart,
@@ -164,6 +232,9 @@ final class ProfileWebView: WKWebView {
         configuration.websiteDataStore = dataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         super.init(frame: .zero, configuration: configuration)
+        allowsBackForwardNavigationGestures = true
+        // The native background (chrome@1) shows until the page paints and under a transparent one.
+        isOpaque = false
         gateHandler.delegate = self
         tracker.owner = self
         popups.owner = self
@@ -185,6 +256,13 @@ final class ProfileWebView: WKWebView {
             pushes.end()
         }
         configuration.userContentController.removeAllScriptMessageHandlers()
+    }
+
+    /// R7: the window's safe area, so `env(safe-area-inset-*)` never counts native chrome that a
+    /// container adds around the WebView (the strip host, Task 31). On a phone today the WebView
+    /// fills the window and both are the same.
+    override var safeAreaInsets: UIEdgeInsets {
+        window?.safeAreaInsets ?? super.safeAreaInsets
     }
 
     override var navigationDelegate: WKNavigationDelegate? {
@@ -234,13 +312,67 @@ final class ProfileWebView: WKWebView {
     // MARK: Document lifecycle
 
     fileprivate func documentEnded() {
+        let ended = pushes.docId
         pushes.end()
         pending.flush("gone")
+        if let ended { sink?.profileWebView(self, didEndDocument: ended) }
+    }
+
+    fileprivate func committed() {
+        report(["event": "commit", "url": url?.absoluteString ?? ""])
     }
 
     fileprivate func popupRequested(_ url: URL) {
         report(["event": "popup", "url": url.absoluteString])
-        onPopup?(url)
+        _ = route(url, isMainFrame: true, targetBlank: true)
+    }
+
+    // MARK: Navigation and loading
+
+    /// Loads the deployment's base address.
+    func loadBase() {
+        guard let url = URL(string: base) else { return }
+        load(URLRequest(url: url))
+    }
+
+    /// Applies the policy; true when the navigation may proceed here.
+    func route(_ url: URL, isMainFrame: Bool, targetBlank: Bool) -> Bool {
+        let now = Date()
+        let text = url.absoluteString
+        let decision = NavigationPolicy.decide(
+            url: text, profileOrigin: profileOrigin.serialized, base: base, isMainFrame: isMainFrame,
+            targetBlank: targetBlank, oauthReturnPending: OauthReturn.isPending(oauthReturn, now: now))
+        if isMainFrame, !targetBlank {
+            oauthReturn = OauthReturn.next(oauthReturn, url: text, decision: decision,
+                                           profileOrigin: profileOrigin, now: now)
+        }
+        report(["event": "navigation", "url": text, "decision": decision.rawValue, "isMainFrame": isMainFrame,
+                "targetBlank": targetBlank])
+        switch decision {
+        case .allow:
+            return true
+        case .sheet:
+            onSheet?(url)
+            return false
+        case .block:
+            return false
+        }
+    }
+
+    fileprivate func emitLoad(_ event: [String: Any]) {
+        report(["event": "load", "detail": event])
+        sink?.profileWebView(self, load: event)
+    }
+
+    fileprivate func provisionalFailure(_ error: Error) {
+        if let event = LoadFailure.event(error) { emitLoad(event) }
+    }
+
+    /// chrome@1: the color behind the page (before it paints, under a transparent one, overscroll).
+    func setBackground(_ color: UIColor) {
+        backgroundColor = color
+        scrollView.backgroundColor = color
+        underPageBackgroundColor = color
     }
 
     private func report(_ event: [String: Any]) {
@@ -257,6 +389,9 @@ extension ProfileWebView: ShellMessageHandlerDelegate {
         switch post {
         case let .hello(docId):
             report(["event": "accept", "kind": "hello", "origin": origin.serialized])
+            if let previous = pushes.docId, previous != docId {
+                sink?.profileWebView(self, didEndDocument: previous)
+            }
             pending.flush("gone")
             pushes.open(docId: docId)
             reply(true, nil)

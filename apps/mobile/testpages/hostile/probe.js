@@ -127,8 +127,9 @@
     }
     await attempt("raw", () => rawPost(`${doc}:raw`));
     if (!realShell) {
-      // A raw `listen` for the profile document's id: native must reject it, so it never receives
-      // the pushes queued for the profile document.
+      // A raw `listen` with the fixed doc id `probe-doc-0000` (rawPost's), not the profile
+      // document's real id: the gate drops a hostile document's post before the id is read, so
+      // which id it carries does not matter, and it never receives the profile document's pushes.
       await attempt("listen", () => rawPost(`${doc}:listen`, { type: "listen" }));
     }
     if (isTop && realShell) {
