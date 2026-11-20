@@ -167,18 +167,21 @@ describe("installDeepLinks", () => {
 describe("connect and open (spec 6.4)", () => {
   const a: Profile = {
     id: "a",
+    signedIn: true,
     base: "https://a.example.com",
     origin: "https://a.example.com",
     name: "A",
   };
   const team: Profile = {
     id: "team",
+    signedIn: true,
     base: "https://b.example.com/team",
     origin: "https://b.example.com",
     name: "Team",
   };
   const wide: Profile = {
     id: "wide",
+    signedIn: true,
     base: "https://b.example.com",
     origin: "https://b.example.com",
     name: "Wide",

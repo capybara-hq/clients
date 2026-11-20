@@ -10,6 +10,7 @@ import type { Profile } from "../src/main/profiles.ts";
 
 const profile: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://capybara.example.com/team",
   origin: "https://capybara.example.com",
   name: "Example",

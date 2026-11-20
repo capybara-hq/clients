@@ -8,6 +8,7 @@ import type { Profile } from "../../src/main/profiles.ts";
 
 const named: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://a.example.com/team",
   origin: "https://a.example.com",
   name: "Acme 平台",
@@ -15,6 +16,7 @@ const named: Profile = {
 // Discovery without a platform name stores the host as the profile name.
 const unnamed: Profile = {
   id: "p2",
+  signedIn: true,
   base: "https://b.example.com:8443",
   origin: "https://b.example.com:8443",
   name: "b.example.com:8443",

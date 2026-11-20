@@ -35,7 +35,7 @@ describe("profiles", () => {
   test("create and list, persisted with an atomic write", () => {
     const { fs, store } = setup();
     const p = store.add(example);
-    expect(p).toEqual({ id: "p1", ...example });
+    expect(p).toEqual({ id: "p1", ...example, signedIn: false });
     expect(store.list()).toEqual([p]);
     const saved = JSON.parse(fs.files.get(FILE) as string);
     expect(saved.profiles).toEqual([p]);
@@ -143,5 +143,68 @@ describe("profiles", () => {
     const { store } = setup({ [FILE]: file });
     expect(store.list().map((p) => p.id)).toEqual(["ok1"]);
     expect(store.lastUsed()?.id).toBe("ok1");
+  });
+});
+
+describe("profile fields", () => {
+  const stored = (p: Record<string, unknown>) =>
+    JSON.stringify({ version: 1, profiles: [{ id: "a", ...example, ...p }], lastUsedId: null });
+  const read = (p: Record<string, unknown>) => setup({ [FILE]: stored(p) }).store.get("a");
+
+  test("an older file reads as signed in; a new profile starts signed out", () => {
+    expect(read({})?.signedIn).toBe(true);
+    expect(setup().store.add(example).signedIn).toBe(false);
+  });
+
+  test("valid optional fields are kept", () => {
+    const tokens = {
+      bg: "#000",
+      panel: "#111",
+      ink: "#fff",
+      muted: "#888",
+      line: "#222",
+      accent: "#0f0",
+      onAccent: "#000",
+    };
+    const p = read({
+      signedIn: false,
+      account: { name: "Ann", login: "ann" },
+      bounds: { x: 1, y: 2, width: 800, height: 600 },
+      appearance: { scheme: "dark", tokens, singleScheme: true },
+    });
+    expect(p).toMatchObject({
+      signedIn: false,
+      account: { name: "Ann", login: "ann" },
+      bounds: { x: 1, y: 2, width: 800, height: 600 },
+      appearance: { scheme: "dark", tokens, singleScheme: true },
+    });
+  });
+
+  test("malformed optional fields are dropped, the profile stays", () => {
+    const p = read({
+      signedIn: "yes",
+      account: { name: 1 },
+      bounds: { x: 1, y: 2, width: -5, height: 600 },
+      appearance: { scheme: "blue" },
+    });
+    expect(p).toEqual({ id: "a", ...example, signedIn: true });
+    expect(read({ appearance: { scheme: "light", tokens: { bg: "#fff" } } })?.appearance).toBe(
+      undefined,
+    );
+  });
+
+  test("update merges, removes undefined keys, ignores identity and persists", () => {
+    const { fs, store } = setup();
+    const a = store.add(example);
+    const u = store.update(a.id, {
+      signedIn: true,
+      account: { name: "Ann", login: "ann" },
+      // biome-ignore lint/suspicious/noExplicitAny: identity keys are not in the patch type
+      ...({ base: "https://evil.example.com" } as any),
+    });
+    expect(u).toMatchObject({ signedIn: true, base: example.base });
+    expect(store.update(a.id, { account: undefined })?.account).toBeUndefined();
+    expect(JSON.parse(fs.files.get(FILE) as string).profiles[0].account).toBeUndefined();
+    expect(store.update("nope", { signedIn: false })).toBeUndefined();
   });
 });
