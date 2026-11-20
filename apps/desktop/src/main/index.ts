@@ -586,7 +586,14 @@ function start(): void {
       removeProfile: async (id) => {
         // First: the partition's clearing must not put a cache entry back.
         prefs.forget(id);
-        await profiles.remove(id);
+        try {
+          await profiles.remove(id);
+        } catch (err) {
+          // The profile stays: follow its cookies again.
+          const kept = profiles.get(id);
+          if (kept) void prefs.watch(kept);
+          throw err;
+        }
       },
       forgetAvailability: (id) => deviceAvailability.forget(id),
       onRemoved: () => {

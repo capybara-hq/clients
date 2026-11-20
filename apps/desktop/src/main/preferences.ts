@@ -130,6 +130,8 @@ export function createPreferences(deps: PreferencesDeps) {
   const listening = new Set<string>();
   /** The newest load per profile: only it writes the cache. */
   const loads = new Map<string, number>();
+  /** Generation counter shared by all profiles, so a deleted entry never repeats a number. */
+  let generation = 0;
   /** The tail of each profile's seed chain. */
   const seeding = new Map<string, Promise<void>>();
 
@@ -161,7 +163,7 @@ export function createPreferences(deps: PreferencesDeps) {
 
   /** Starts a new generation of the profile's cached values: older loads stop counting. */
   function bump(profileId: string): number {
-    const seq = (loads.get(profileId) ?? 0) + 1;
+    const seq = ++generation;
     loads.set(profileId, seq);
     return seq;
   }
@@ -266,7 +268,8 @@ export function createPreferences(deps: PreferencesDeps) {
     forget(profileId: string): void {
       watched.delete(profileId);
       cache.delete(profileId);
-      bump(profileId);
+      // An in-flight load finds no entry and stops.
+      loads.delete(profileId);
     },
 
     /** Sets the theme of `profile` (its cookie) or, without one, the app's choice. */
@@ -280,9 +283,11 @@ export function createPreferences(deps: PreferencesDeps) {
       }
       await writeCookie(profile, THEME_COOKIE, theme);
       if (!watched.has(profile.id)) return;
-      bump(profile.id);
       cache.set(profile.id, { ...cache.get(profile.id), theme });
       deps.onChange?.(profile.id);
+      // Read both cookies again: a load in flight (the other preference toggled in the web) is
+      // superseded, and its field ends up current too.
+      await load(profile);
     },
 
     /** Sets the language of `profile` (its cookie) or, without one, the app's choice. */
@@ -296,9 +301,11 @@ export function createPreferences(deps: PreferencesDeps) {
       }
       await writeCookie(profile, LOCALE_COOKIE, locale);
       if (!watched.has(profile.id)) return;
-      bump(profile.id);
       cache.set(profile.id, { ...cache.get(profile.id), locale });
       deps.onChange?.(profile.id);
+      // Read both cookies again: a load in flight (the other preference toggled in the web) is
+      // superseded, and its field ends up current too.
+      await load(profile);
     },
 
     /**

@@ -441,6 +441,30 @@ describe("review fixes", () => {
     expect(s.prefs.theme(httpsProfile)).toBe("light");
   });
 
+  test("a setter during a load for the other preference leaves both fields current", async () => {
+    const s = setup();
+    await s.prefs.watch(httpsProfile);
+    const jar = s.jar("p1");
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const original = jar.get.getMockImplementation();
+    // The web toggles the language; the load it starts is held after its (stale) theme read.
+    jar.get.mockImplementationOnce(async (f) => {
+      const result = await (original as NonNullable<typeof original>)(f);
+      await held;
+      return result;
+    });
+    jar.webWrites("https://capybara.example.com/", "NEXT_LOCALE", "zh");
+    await settle();
+    await s.prefs.setTheme(httpsProfile, "dark");
+    release();
+    await settle();
+    expect(s.prefs.theme(httpsProfile)).toBe("dark");
+    expect(s.prefs.locale(httpsProfile)).toBe("zh");
+  });
+
   test("seeds of one profile run one after another", async () => {
     const s = setup({ file: '{"theme":"light"}' });
     const jar = s.jar("p1");
