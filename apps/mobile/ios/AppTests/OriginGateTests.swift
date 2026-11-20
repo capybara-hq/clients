@@ -102,12 +102,16 @@ final class ShellPostTests: XCTestCase {
         guard case .hello? = ShellPost.parse(["type": "hello", "docId": "doc-1234-5678"]) else {
             return XCTFail("hello not parsed")
         }
+        guard case .listen? = ShellPost.parse(["type": "listen", "docId": "doc-1234-5678"]) else {
+            return XCTFail("listen not parsed")
+        }
     }
 
     func testRejectsMalformedPosts() {
         let bad: [Any] = [
             "string",
             ["type": "hello"],
+            ["type": "listen", "docId": "x"],
             call(["type": "other"]),
             call(["docId": "x"]),
             call(["key": "nav"]),

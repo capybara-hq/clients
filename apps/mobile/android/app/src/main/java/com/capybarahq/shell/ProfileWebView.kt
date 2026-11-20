@@ -14,6 +14,8 @@ package com.capybarahq.shell
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.util.Log
 import android.webkit.WebChromeClient
@@ -26,6 +28,7 @@ import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
+import java.util.UUID
 
 /** R9: the WebView features a profile WebView cannot do without. */
 object ProfileWebViewSupport {
@@ -106,8 +109,15 @@ class ProfileWebView private constructor(
     private val pending = HashMap<String, Pair<String, JavaScriptReplyProxy>>()
     private var nextCall = 0
 
+    /** Random per instance: a late reply for an earlier or recreated WebView never matches. */
+    private val callPrefix = UUID.randomUUID().toString().replace("-", "").take(12)
+    private val main = Handler(Looper.getMainLooper())
+
     companion object {
         private const val TAG = "CapybaraGate"
+
+        /** An unanswered call ends after this long with `failed` (it ends sooner with its document). */
+        var pendingLifetimeMs: Long = 600_000
         const val DEFAULT_PROFILE = "Default"
 
         /** The Shell environment bundle (dist/local/inject, copied into the app's public assets). */
@@ -213,7 +223,8 @@ class ProfileWebView private constructor(
             is ShellPost.Hello -> {
                 report(mapOf("event" to "accept", "kind" to "hello", "origin" to origin.serialized))
                 if (post.docId != currentDocId) {
-                    // A new document: the old one's calls can no longer be answered.
+                    // A new document: the old one's calls can no longer be answered (their reply
+                    // proxies belong to a document that is gone).
                     pending.clear()
                 }
                 current = reply
@@ -231,8 +242,16 @@ class ProfileWebView private constructor(
                     return
                 }
                 nextCall += 1
-                val callId = "c$nextCall"
+                val callId = "$callPrefix-$nextCall"
                 pending[callId] = post.callId to reply
+                main.postDelayed({
+                    pending.remove(callId)?.let { (pageCallId, proxy) ->
+                        proxy.postMessage(
+                            JSONObject().put("type", "reply").put("callId", pageCallId)
+                                .put("result", JSONObject().put("ok", false).put("code", "failed")).toString(),
+                        )
+                    }
+                }, pendingLifetimeMs)
                 target.onCall(
                     this,
                     ShellCall(profileId, origin.serialized, post.docId, callId, post.key, post.fn, post.args, post.activation),

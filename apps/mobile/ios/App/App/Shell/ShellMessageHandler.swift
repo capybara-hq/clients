@@ -4,11 +4,14 @@
 // else is dropped with a "denied" reply, so the page's promise settles and learns nothing.
 
 import Foundation
+import os
 import WebKit
 
 /// A post the gate let through, in the shape `PagePost` (src/runtime/protocol.ts) describes.
 enum ShellPost {
     case hello(docId: String)
+    /// The document's one outstanding pull for pushes (PushQueue).
+    case listen(docId: String)
     case call(docId: String, callId: String, key: String, fn: String, args: [Any], activation: Bool)
 
     static let maxBytes = 65536
@@ -24,6 +27,8 @@ enum ShellPost {
         switch type {
         case "hello":
             return .hello(docId: docId)
+        case "listen":
+            return .listen(docId: docId)
         case "call":
             guard let callId = dict["callId"] as? String, matches(callId, callIdPattern),
                   let key = dict["key"] as? String, matches(key, keyPattern),
@@ -62,6 +67,7 @@ protocol ShellMessageHandlerDelegate: AnyObject {
 
 final class ShellMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
     static let name = "capybaraShell"
+    private static let log = Logger(subsystem: "com.capybarahq.shell", category: "gate")
 
     let profileOrigin: URL
     weak var delegate: ShellMessageHandlerDelegate?
@@ -88,9 +94,15 @@ final class ShellMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
             replyHandler(nil, "denied")
             return
         }
-        guard let post = ShellPost.parse(message.body), let delegate else {
+        guard let post = ShellPost.parse(message.body) else {
             delegate?.shellMessageHandler(dropped: "shape", callId: callId,
                                           isMainFrame: frame.isMainFrame, origin: shown)
+            replyHandler(nil, "denied")
+            return
+        }
+        guard let delegate else {
+            // The WebView is gone: no owner to report to or to answer with.
+            ShellMessageHandler.log.info("drop no-delegate id=\(callId ?? "", privacy: .public)")
             replyHandler(nil, "denied")
             return
         }

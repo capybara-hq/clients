@@ -7,6 +7,9 @@
 // every post (OriginGate). Page scripts run after this one, so the native endpoints and the
 // activation getter are captured before a page could patch them.
 //
+// The document id and the activation flag each call carries are asserted by this page: advisory
+// for the runtime, never an authorization. The person's tap on a native dialog is the consent.
+//
 // Only node-free code may be imported here (the installer subpath of @capybara-hq/shell).
 import {
   type CapabilityDescriptors,
@@ -20,7 +23,6 @@ import {
   IOS_HANDLER_NAME,
   isShellCallResult,
   type PagePost,
-  RECEIVER_NAME,
   type ShellCallResult,
 } from "../runtime/protocol.ts";
 
@@ -155,14 +157,32 @@ interface IosHandler {
   postMessage(message: unknown): Promise<unknown>;
 }
 
-/** iOS: `WKScriptMessageHandlerWithReply` answers each post; pushes arrive through the receiver. */
-export function iosTransport(win: Record<string, unknown>, target: object): NativeTransport | null {
+/**
+ * iOS: `WKScriptMessageHandlerWithReply` answers each post. Pushes are pulled: after hello the
+ * script keeps one `listen` post outstanding, native answers it with the pushes queued for this
+ * document, and the script posts the next one. WebKit binds a reply to the document that posted,
+ * so a push never reaches another document (the same property as Android's reply proxy). A
+ * rejected listen (the document ended, or a drop) ends the loop.
+ */
+export function iosTransport(win: Record<string, unknown>): NativeTransport | null {
   const webkit = win.webkit as { messageHandlers?: Record<string, IosHandler> } | undefined;
   const handler = webkit?.messageHandlers?.[IOS_HANDLER_NAME];
   if (!handler || typeof handler.postMessage !== "function") return null;
   const post = handler.postMessage.bind(handler);
+  const isArray = Array.isArray;
   let receiver: ((push: { type: string }) => void) | undefined;
-  let ownDoc: string | undefined;
+  const listen = (docId: string): void => {
+    post({ type: "listen", docId }).then(
+      (pushes) => {
+        if (!isArray(pushes)) return;
+        for (const push of pushes) {
+          if (typeof push === "object" && push !== null) receiver?.(push as { type: string });
+        }
+        listen(docId);
+      },
+      () => {},
+    );
+  };
   return {
     call(message) {
       return post(message).then(
@@ -171,18 +191,10 @@ export function iosTransport(win: Record<string, unknown>, target: object): Nati
       );
     },
     hello(docId) {
-      ownDoc = docId;
-      // Native pushes `window.__capybaraShellReceive(docId, push)` into the current document.
-      Object.defineProperty(target, RECEIVER_NAME, {
-        value: (doc: unknown, push: unknown) => {
-          if (doc !== ownDoc || typeof push !== "object" || push === null) return;
-          receiver?.(push as { type: string });
-        },
-        enumerable: false,
-        configurable: false,
-        writable: false,
-      });
-      post({ type: "hello", docId }).catch(() => {});
+      post({ type: "hello", docId }).then(
+        () => listen(docId),
+        () => {},
+      );
     },
     onPush(listener) {
       receiver = listener;
@@ -267,7 +279,7 @@ function main(): void {
       activationGetter && activationObject
         ? activationGetter.call(activationObject) === true
         : false,
-    transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win, win),
+    transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win),
   });
 }
 

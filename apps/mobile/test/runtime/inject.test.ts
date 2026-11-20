@@ -12,6 +12,8 @@ import {
   iosTransport,
   type NativeTransport,
 } from "../../src/inject/shell-environment.ts";
+import { createHostPort } from "../../src/runtime/host-port.ts";
+import { createRegistry, serveCalls } from "../../src/runtime/registry.ts";
 
 const ORIGIN = "https://a.example";
 
@@ -244,7 +246,7 @@ describe("the iOS transport", () => {
   }
 
   test("is null without the handler", () => {
-    expect(iosTransport({}, {})).toBeNull();
+    expect(iosTransport({})).toBeNull();
   });
 
   test("resolves native results, and a drop (rejection) as failed", async () => {
@@ -252,7 +254,7 @@ describe("the iOS transport", () => {
       if ((m as { key?: string }).key === "denied@1") throw new Error("denied");
       return { ok: true, value: 1 };
     });
-    const t = iosTransport(win, {});
+    const t = iosTransport(win);
     const base = { type: "call", docId: "doc-1234-5678", callId: "1", fn: "f" } as const;
     expect(await t?.call({ ...base, args: [], key: "a@1", activation: false })).toEqual({
       ok: true,
@@ -264,21 +266,147 @@ describe("the iOS transport", () => {
     });
   });
 
-  test("hello defines a frozen receiver that accepts only this document's pushes", () => {
-    const { win, posted } = fakeWebkit(async () => true);
-    const target: Record<string, unknown> = {};
-    const t = iosTransport(win, target);
+  test("after hello it keeps one listen outstanding and delivers what native answers", async () => {
+    const listens: ((v: unknown) => void)[] = [];
+    const { win, posted } = fakeWebkit((m) => {
+      const type = (m as { type: string }).type;
+      if (type === "hello") return Promise.resolve(true);
+      return new Promise((resolve) => listens.push(resolve));
+    });
+    const t = iosTransport(win);
     const seen = vi.fn();
     t?.onPush(seen);
     t?.hello("doc-1234-5678");
-    expect(posted).toEqual([{ type: "hello", docId: "doc-1234-5678" }]);
-    const receive = target.__capybaraShellReceive as (d: unknown, p: unknown) => void;
-    receive("other-doc-000", { type: "state" });
-    receive("doc-1234-5678", { type: "state", state: 1 });
-    expect(seen.mock.calls).toEqual([[{ type: "state", state: 1 }]]);
-    expect(() => {
-      target.__capybaraShellReceive = () => {};
-    }).toThrow();
+    await vi.waitFor(() => expect(listens).toHaveLength(1));
+    expect(posted).toEqual([
+      { type: "hello", docId: "doc-1234-5678" },
+      { type: "listen", docId: "doc-1234-5678" },
+    ]);
+    listens[0]?.([{ type: "state", state: 1 }, null, { type: "event", key: "a@1" }]);
+    await vi.waitFor(() => expect(listens).toHaveLength(2));
+    expect(seen.mock.calls).toEqual([
+      [{ type: "state", state: 1 }],
+      [{ type: "event", key: "a@1" }],
+    ]);
+    // Only one listen is ever outstanding.
+    expect(posted.filter((p) => (p as { type: string }).type === "listen")).toHaveLength(2);
+  });
+
+  test("a rejected listen (the document ended, or a drop) ends the loop", async () => {
+    let listens = 0;
+    const { win } = fakeWebkit((m) => {
+      if ((m as { type: string }).type === "hello") return Promise.resolve(true);
+      listens += 1;
+      return Promise.reject(new Error("gone"));
+    });
+    const t = iosTransport(win);
+    t?.onPush(vi.fn());
+    t?.hello("doc-1234-5678");
+    await vi.waitFor(() => expect(listens).toBe(1));
+    await new Promise((r) => setImmediate(r));
+    expect(listens).toBe(1);
+  });
+
+  test("defines no global receiver a page could imitate", () => {
+    const { win } = fakeWebkit(async () => true);
+    iosTransport(win)?.hello("doc-1234-5678");
+    expect(Object.keys(win)).toEqual(["webkit"]);
+  });
+});
+
+/**
+ * The whole hop a call takes on iOS, with JSON at both native crossings: page script → native
+ * (adds profile, origin, its own call id) → the CapybaraHost plugin's `call` event → registry →
+ * plugin `reply` → native → the page's promise; and a push through the listen loop.
+ */
+describe("the host hop end to end", () => {
+  function fakeNative() {
+    const json = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+    let pluginListener: ((m: unknown) => void) | undefined;
+    const pending = new Map<string, (v: unknown) => void>();
+    let listen: ((v: unknown) => void) | undefined;
+    const queue: unknown[] = [];
+    let n = 0;
+    const flush = () => {
+      if (listen && queue.length > 0) {
+        const answer = listen;
+        listen = undefined;
+        answer(json(queue.splice(0)));
+      }
+    };
+    const plugin = {
+      addListener: async (_e: "call", l: (m: unknown) => void) => {
+        pluginListener = l;
+        return { remove: async () => {} };
+      },
+      reply: async (o: { profileId: string; callId: string; result: unknown }) => {
+        const r = json(o);
+        pending.get(r.callId)?.(r.result);
+        pending.delete(r.callId);
+      },
+      pushState: async (o: { profileId: string; state: unknown }) => {
+        queue.push({ type: "state", state: json(o).state });
+        flush();
+      },
+      event: async () => {},
+    };
+    const handler = {
+      postMessage: (raw: unknown) => {
+        const m = json(raw) as Record<string, unknown>;
+        if (m.type === "hello") return Promise.resolve(true);
+        if (m.type === "listen") {
+          return new Promise((resolve) => {
+            listen = resolve;
+            flush();
+          });
+        }
+        n += 1;
+        const callId = `abcd1234-${n}`;
+        return new Promise((resolve) => {
+          pending.set(callId, resolve);
+          pluginListener?.(
+            json({ ...m, type: undefined, profileId: "p1", origin: ORIGIN, callId }),
+          );
+        });
+      },
+    };
+    return { plugin, win: { webkit: { messageHandlers: { capybaraShell: handler } } } };
+  }
+
+  test("a void implementation resolves null in the page, and a push reaches it", async () => {
+    const native = fakeNative();
+    const host = createHostPort(native.plugin);
+    const registry = createRegistry({
+      host,
+      profiles: { list: () => [{ id: "p1", origin: ORIGIN }] },
+    });
+    registry.register("haptics@1", { functions: { impact: async () => undefined } });
+    registry.register("nav@1", { functions: { set: async (_c, a) => (a as number) + 1 } });
+    serveCalls(host, registry);
+    const target: { capybaraShell?: CapybaraShell } = {};
+    bootShellEnvironment({
+      init,
+      target,
+      isTopFrame: true,
+      windowOrigin: ORIGIN,
+      randomId: () => "doc-1234-5678",
+      userActivation: () => false,
+      transport: iosTransport(native.win),
+    });
+    const shell = target.capybaraShell as CapybaraShell;
+    const caps = shell.capabilities as Record<
+      string,
+      Record<string, (...a: unknown[]) => Promise<unknown>>
+    >;
+    await expect(caps["haptics@1"]?.impact?.("light")).resolves.toBeNull();
+    await expect(caps["nav@1"]?.set?.(41)).resolves.toBe(42);
+    const changed = new Promise<void>((resolve) => shell.on("change", () => resolve()));
+    await host.pushState("p1", {
+      insets: { top: 0, right: 0, bottom: 3, left: 0 },
+      capabilities: {},
+    });
+    await changed;
+    expect(shell.insets.bottom).toBe(3);
   });
 });
 

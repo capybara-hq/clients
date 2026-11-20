@@ -20,12 +20,14 @@ export interface ShellCallMessage {
   profileId: string;
   /** Added by native: the posting frame's security origin. */
   origin: string;
+  /** Page-asserted: advisory, see `CallContext`. */
   docId: string;
+  /** Assigned by native, unique per WebView instance. */
   callId: string;
   key: string;
   fn: string;
   args: unknown[];
-  /** `navigator.userActivation.isActive` when the page made the call. */
+  /** Page-asserted `navigator.userActivation.isActive`: advisory, see `CallContext`. */
   activation: boolean;
 }
 
@@ -44,16 +46,27 @@ export const SHELL_CALL_ERRORS: readonly ShellCallError[] = Object.keys(
 export type { ShellCallError };
 export type ShellCallResult = { ok: true; value: unknown } | { ok: false; code: ShellCallError };
 
+/**
+ * What an implementation learns about a call. `profile` and `origin` come from native (the WebView
+ * the post came from and the frame's checked origin). `docId` and `activation` are asserted by the
+ * page itself and are advisory only: the registry uses `activation` to refuse confirming calls
+ * early, but an implementation must never use either for authorization. The only real consent is
+ * the person's tap on the native dialog a confirming function shows.
+ */
 export interface CallContext<P extends ProfileRef = ProfileRef> {
   profile: P;
   origin: string;
+  /** Page-asserted, advisory. */
   docId: string;
+  /** Page-asserted, advisory. */
   activation: boolean;
 }
 
 /** What a page posts to the native endpoint (`webkit.messageHandlers` / the web message port). */
 export type PagePost =
   | { type: "hello"; docId: string }
+  /** iOS: one outstanding post per document; native answers it with the queued pushes. */
+  | { type: "listen"; docId: string }
   | {
       type: "call";
       docId: string;
@@ -64,7 +77,11 @@ export type PagePost =
       activation: boolean;
     };
 
-/** What native delivers to the page's receiver (Android: over the port; iOS: `evaluateJavaScript`). */
+/**
+ * What native delivers to a document: Android over the hello document's reply proxy, iOS as the
+ * answer to that document's outstanding `listen` post (an array of pushes). Both are bound by the
+ * platform to the document that posted, so no other document can receive them.
+ */
 export type NativePush =
   | { type: "reply"; callId: string; result: ShellCallResult }
   | { type: "denied"; callId: string }
@@ -79,8 +96,6 @@ export const FN_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
 /** The largest post native forwards, in bytes of its JSON. */
 export const MAX_POST_BYTES = 65536;
 
-/** The global the shell script defines for native pushes (iOS); the page can only lie to itself. */
-export const RECEIVER_NAME = "__capybaraShellReceive";
 /** The iOS script message handler and the Android web message listener. */
 export const IOS_HANDLER_NAME = "capybaraShell";
 export const ANDROID_PORT_NAME = "capybaraShellPort";

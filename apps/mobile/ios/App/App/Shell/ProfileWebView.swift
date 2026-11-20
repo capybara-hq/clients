@@ -120,12 +120,12 @@ final class ProfileWebView: WKWebView {
     /// Where a popup's URL goes instead of a new WebView (Task 16: the browser sheet).
     var onPopup: ((URL) -> Void)?
 
-    private(set) var currentDocId: String?
+    var currentDocId: String? { pushes.docId }
     private let gateHandler: ShellMessageHandler
     private let tracker = NavigationTracker()
     private let popups = PopupBlocker()
-    private var pending: [String: (Any?, String?) -> Void] = [:]
-    private var nextCall = 0
+    private let pending = PendingReplies()
+    private let pushes = PushQueue()
     private static let log = Logger(subsystem: "com.capybarahq.shell", category: "gate")
 
     /// - Parameters:
@@ -177,7 +177,8 @@ final class ProfileWebView: WKWebView {
     }
 
     deinit {
-        for reply in pending.values { reply(nil, "gone") }
+        pending.flush("gone")
+        pushes.end()
         configuration.userContentController.removeAllScriptMessageHandlers()
     }
 
@@ -205,7 +206,7 @@ final class ProfileWebView: WKWebView {
     /// Answers one call of the current document; false when it is gone or unknown.
     @discardableResult
     func reply(callId: String, result: [String: Any]) -> Bool {
-        guard let reply = pending.removeValue(forKey: callId) else { return false }
+        guard let reply = pending.take(callId) else { return false }
         reply(result, nil)
         return true
     }
@@ -219,24 +220,17 @@ final class ProfileWebView: WKWebView {
         push(["type": "event", "key": key, "event": event, "payload": payload])
     }
 
+    /// Queued for the current document and answered to its outstanding `listen` post only.
     private func push(_ message: [String: Any]) {
-        // Only a document that said hello through the gate; cleared on every main-frame commit.
-        guard let docId = currentDocId, JSONSerialization.isValidJSONObject(message),
-              let body = try? JSONSerialization.data(withJSONObject: message),
-              let doc = try? JSONSerialization.data(withJSONObject: docId, options: .fragmentsAllowed)
-        else { return }
-        let js = "window.__capybaraShellReceive && window.__capybaraShellReceive("
-            + "\(String(decoding: doc, as: UTF8.self)), \(String(decoding: body, as: UTF8.self)));"
-        evaluateJavaScript(js, in: nil, in: .page, completionHandler: nil)
+        guard JSONSerialization.isValidJSONObject(message) else { return }
+        pushes.push(message)
     }
 
     // MARK: Document lifecycle
 
     fileprivate func documentEnded() {
-        currentDocId = nil
-        let replies = pending
-        pending.removeAll()
-        for reply in replies.values { reply(nil, "gone") }
+        pushes.end()
+        pending.flush("gone")
     }
 
     fileprivate func popupRequested(_ url: URL) {
@@ -258,18 +252,19 @@ extension ProfileWebView: ShellMessageHandlerDelegate {
         switch post {
         case let .hello(docId):
             report(["event": "accept", "kind": "hello", "origin": origin.serialized])
-            currentDocId = docId
+            pending.flush("gone")
+            pushes.open(docId: docId)
             reply(true, nil)
             sink?.profileWebView(self, didOpenDocument: docId)
+        case let .listen(docId):
+            pushes.listen(docId: docId, reply: reply)
         case let .call(docId, pageCallId, key, fn, args, activation):
             report(["event": "accept", "kind": "call", "id": pageCallId, "origin": origin.serialized])
             guard let sink else {
                 reply(["ok": false, "code": "failed"], nil)
                 return
             }
-            nextCall += 1
-            let callId = "c\(nextCall)"
-            pending[callId] = reply
+            let callId = pending.add(reply)
             sink.profileWebView(self, didCall: ShellCall(
                 profileId: profileId, origin: origin.serialized, docId: docId, callId: callId,
                 key: key, fn: fn, args: args, activation: activation))

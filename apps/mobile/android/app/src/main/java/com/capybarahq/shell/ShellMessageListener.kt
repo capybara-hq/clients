@@ -7,6 +7,7 @@
 package com.capybarahq.shell
 
 import android.net.Uri
+import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
@@ -106,8 +107,14 @@ class ShellMessageListener(
         }
         val post = body?.let { ShellPost.parse(it) }
         val owner = delegate.get()
-        if (post == null || owner == null) {
+        if (post == null) {
             owner?.dropped("shape", callId, isMainFrame, shown)
+            deny(replyProxy, callId)
+            return
+        }
+        if (owner == null) {
+            // The WebView is gone: no owner to report to or to answer with.
+            Log.i("CapybaraGate", "drop no-delegate id=$callId")
             deny(replyProxy, callId)
             return
         }
