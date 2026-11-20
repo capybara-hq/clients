@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { canonicalPath, isInWindowSignIn, signInBlockRules } from "../src/sign-in-guard.ts";
+import {
+  canonicalPath,
+  isInWindowSignIn,
+  PATH_LITERALS,
+  signInBlockRules,
+} from "../src/sign-in-guard.ts";
 import vectors from "./fixtures/in-window-sign-in.json" with { type: "json" };
 
 interface Vector {
@@ -68,6 +73,77 @@ describe("signInBlockRules: the WebKit content-blocker emulation", () => {
         expect(f, "no backreference").not.toMatch(/\\[1-9]/);
         expect(f, "no word boundary").not.toMatch(/\\[bB]/);
       }
+    }
+  });
+});
+
+// Every printable ASCII character and two non-ASCII ones, as part of a base path segment.
+const CHARS = [
+  ...Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i)),
+  "é",
+  "团",
+];
+
+function escapes(ch: string): string[] {
+  const bytes = [...new TextEncoder().encode(ch)].map((b) => b.toString(16).padStart(2, "0"));
+  const lower = bytes.map((h) => `%${h}`).join("");
+  return [lower, lower.toUpperCase()];
+}
+
+/** The parser keeps `ch` as written inside a path segment. */
+function parserKeeps(ch: string): boolean {
+  return new URL(`https://x.example.com/a${ch}z`).pathname === `/a${ch}z`;
+}
+
+describe("signInBlockRules: every character of a base path segment", () => {
+  test("PATH_LITERALS is what the URL parser keeps (plus ^, kept by older parsers)", () => {
+    const kept = CHARS.filter((ch) => !/[a-zA-Z0-9%/]/.test(ch) && parserKeeps(ch));
+    expect([...PATH_LITERALS].filter((ch) => ch !== "^").sort()).toEqual(kept.sort());
+    expect(parserKeeps("%"), "a stray % stays as written: the rules accept it").toBe(true);
+    expect(parserKeeps("^")).toBe(false);
+  });
+
+  const routes = [
+    ["POST", "/api/v1/auth/login"],
+    ["GET", "/api/v1/auth/sso/lark/start"],
+  ] as const;
+  test.each(CHARS.map((ch) => [JSON.stringify(ch), ch] as const))(
+    "a%sz: the iOS rules block exactly what isInWindowSignIn blocks",
+    (_n, ch) => {
+      const segments = [`a${ch}z`, ...escapes(ch).map((e) => `a${e}z`)];
+      const bases = segments.flatMap((seg) => {
+        const literal = `https://x.example.com/${seg}`;
+        return [literal, new URL(literal).href];
+      });
+      let blocked = 0;
+      for (const base of bases) {
+        for (const seg of segments) {
+          for (const [method, route] of routes) {
+            for (const suffix of [route, `${route}?next=1`]) {
+              const literal = `https://x.example.com/${seg}${suffix}`;
+              for (const url of [literal, new URL(literal).href]) {
+                const guard = isInWindowSignIn(method, url, base);
+                expect(iosBlocks(base, url), `${method} ${url} (base ${base})`).toBe(guard);
+                if (guard) blocked += 1;
+              }
+            }
+          }
+        }
+      }
+      // Each spelling of the base matches its escaped URLs at least, so the loop is not vacuous.
+      expect(blocked).toBeGreaterThan(0);
+    },
+  );
+
+  test("a literal ^ is accepted as well as %5E (older WebViews keep it)", () => {
+    const filters = signInBlockRules("https://x.example.com/a^z").map(
+      (r) => new RegExp(r.trigger["url-filter"], "i"),
+    );
+    for (const url of [
+      "https://x.example.com/a^z/api/v1/auth/login",
+      "https://x.example.com/a%5Ez/api/v1/auth/login",
+    ]) {
+      expect(filters.some((f) => f.test(url))).toBe(true);
     }
   });
 });

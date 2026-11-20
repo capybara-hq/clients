@@ -11,5 +11,8 @@ const bases = [
   "https://x.example.com/a+b",
   "https://x.example.com/x:y@z",
   "https://x.example.com/a;b=c!$&'()*",
+  "https://x.example.com/a|b",
+  "https://x.example.com/a[b]",
+  "https://x.example.com/x^y]z[w|v%5C%25q",
 ];
 console.log(JSON.stringify(Object.fromEntries(bases.map((b) => [b, signInBlockRules(b)]))));

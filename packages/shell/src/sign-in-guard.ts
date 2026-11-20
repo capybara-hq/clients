@@ -90,15 +90,26 @@ function escapeLiteral(text: string): string {
 }
 
 /**
- * ASCII characters the URL parser leaves unescaped in a path (they may also arrive as `%XX`); any
- * other character (a space, quotes, `<>`, a backtick, braces, non-ASCII) appears only as `%XX` bytes.
+ * The path characters (besides letters and digits) the WHATWG URL parser keeps as written, so a URL
+ * may carry them literally or as `%XX`; a test checks this list against `new URL` for every
+ * printable ASCII character. `^` is the one extra: the spec escapes it in a path only since 2024
+ * and an older WebView may keep it, and accepting both spellings only blocks more. `%` is apart:
+ * the parser keeps a stray `%` too, and the server reads `%25` as the same character. Any other
+ * character (a space, quotes, `<>`, a backtick, braces, `?`, `#`, non-ASCII) reaches the engine
+ * only as its UTF-8 `%XX` bytes.
  */
-const LITERAL_OK = /[-._~+,:;=@!$&'()*]/;
+export const PATH_LITERALS = "!$&'()*+,-.:;=@[]^_|~";
+
+/** A character inside a rule's class: `[ ] \ ^ |` escaped (WebKit has no `|` at all). */
+function classChar(ch: string): string {
+  return /[[\]\\^|]/.test(ch) ? `\\${ch}` : ch;
+}
 
 /**
- * `login` -> `[l%][46]?c?...`: each letter or digit, or `%` and its two hex digits. Other
- * characters of a base segment are their literal when a URL may keep it (`-._~`) or else only the
- * UTF-8 `%XX` bytes the WebView keeps (a space, a CJK character): every rule stays ASCII.
+ * `login` -> `[l%][46]?c?...`: each letter or digit, or `%` and its two hex digits. Each
+ * `PATH_LITERALS` character is its literal or its `%XX` (`[%|]7?c?`, `-` last in the class so it is
+ * literal), `%` is `%` or `%25`, and any other character only the UTF-8 `%XX` bytes the WebView
+ * keeps (a space, a CJK character): every rule stays ASCII.
  */
 function word(text: string): string {
   let out = "";
@@ -110,11 +121,14 @@ function word(text: string): string {
       out += `[${ch}%]${hi}?${hex.charAt(1)}?`;
       continue;
     }
+    if (ch === "%") {
+      out += "%2?5?";
+      continue;
+    }
     const bytes = [...new TextEncoder().encode(ch)];
-    if (bytes.length === 1 && LITERAL_OK.test(ch)) {
-      // `-` is last in the class, so it is a literal.
+    if (bytes.length === 1 && PATH_LITERALS.includes(ch)) {
       const hex = (bytes[0] as number).toString(16).padStart(2, "0");
-      out += `[%${ch}]${hex.charAt(0)}?${hex.charAt(1)}?`;
+      out += `[%${classChar(ch)}]${hex.charAt(0)}?${hex.charAt(1)}?`;
       continue;
     }
     for (const byte of bytes) out += `%${byte.toString(16).padStart(2, "0")}`;

@@ -20,4 +20,5 @@ node --experimental-strip-types packages/shell/scripts/dump-rules.ts > /tmp/rule
 swift packages/shell/scripts/compile-rules.swift /tmp/rules.json   # OK <base> per list, exit 1 on a rejection
 ```
 
-(`dump-rules.ts` lists the bases: plain, a path prefix, a port, CJK, a space.)
+(`dump-rules.ts` lists the bases: plain, a path prefix, a port, CJK, a space, and the literal path
+characters `PATH_LITERALS` the rules escape inside a class: `[`, `]`, `^`, `|`, plus `%`.)

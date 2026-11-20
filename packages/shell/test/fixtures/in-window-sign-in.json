@@ -767,5 +767,125 @@
     "url": "https://x.example.com/x:y@zx/api/v1/auth/login",
     "base": "https://x.example.com/x:y@z",
     "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a|b/api/v1/auth/login",
+    "base": "https://x.example.com/a|b",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/a|b/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/a|b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%7Cb/api/v1/auth/login",
+    "base": "https://x.example.com/a|b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%7cb/api/v1/auth/login",
+    "base": "https://x.example.com/a|b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a|b/api/v1/auth/login",
+    "base": "https://x.example.com/a%7Cb",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/a|b/api/v1/auth/sso/lark/start?x=1",
+    "base": "https://x.example.com/a%7Cb",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a|bx/api/v1/auth/login",
+    "base": "https://x.example.com/a|b",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a[b]/api/v1/auth/login",
+    "base": "https://x.example.com/a[b]",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/a[b]/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/a[b]",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%5Bb%5D/api/v1/auth/login",
+    "base": "https://x.example.com/a[b]",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%5bb%5d/api/v1/auth/login",
+    "base": "https://x.example.com/a[b]",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a[b]/api/v1/auth/login",
+    "base": "https://x.example.com/a%5Bb%5D",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/a[b]/api/v1/auth/sso/lark/start?x=1",
+    "base": "https://x.example.com/a%5Bb%5D",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a[b]x/api/v1/auth/login",
+    "base": "https://x.example.com/a[b]",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%5Eb/api/v1/auth/login",
+    "base": "https://x.example.com/a^b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a^b/api/v1/auth/login",
+    "base": "https://x.example.com/a%5Eb",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%5Ebx/api/v1/auth/login",
+    "base": "https://x.example.com/a^b",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%b/api/v1/auth/login",
+    "base": "https://x.example.com/a%25b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%25b/api/v1/auth/login",
+    "base": "https://x.example.com/a%25b",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a%25bx/api/v1/auth/login",
+    "base": "https://x.example.com/a%25b",
+    "blocked": false
   }
 ]
