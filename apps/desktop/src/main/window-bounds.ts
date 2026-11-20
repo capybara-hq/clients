@@ -1,4 +1,4 @@
-// The main window's rectangle: where it opens and how it is remembered (spec §6.9).
+// The main window's rectangle: where it opens and how it is remembered (spec §6.7).
 
 export interface Rect {
   x: number;
@@ -47,6 +47,8 @@ export function initialBounds(saved: Rect | undefined, displays: DisplayInfo[]):
 
 export interface TrackedWindow {
   getBounds(): Rect;
+  /** The rectangle to restore to; saved while maximized or full-screen. */
+  getNormalBounds?(): Rect;
   isMaximized?(): boolean;
   isMinimized?(): boolean;
   isFullScreen?(): boolean;
@@ -70,24 +72,27 @@ export function trackBounds(
   },
 ): void {
   let handle: unknown;
-  let pending = false;
   const flush = () => {
     if (handle !== undefined) scheduler.clear(handle);
     handle = undefined;
-    pending = false;
-    // A maximized, minimized or full-screen rectangle is not the one to restore.
-    if (win.isMaximized?.() || win.isMinimized?.() || win.isFullScreen?.()) return;
+    // A maximized, minimized or full-screen rectangle is not the one to restore: save the normal
+    // one, or nothing when it is unknown or the window is minimized.
+    if (win.isMinimized?.()) return;
+    const special = win.isMaximized?.() || win.isFullScreen?.();
+    if (special) {
+      if (win.getNormalBounds) save(win.getNormalBounds());
+      return;
+    }
     save(win.getBounds());
   };
   const schedule = () => {
     if (handle !== undefined) scheduler.clear(handle);
-    pending = true;
     handle = scheduler.set(flush, BOUNDS_DEBOUNCE_MS);
   };
   win.on("resize", schedule);
   win.on("move", schedule);
   win.on("close", () => {
     // Save on close even without a pending change, so the final rectangle is always kept.
-    if (pending || handle === undefined) flush();
+    flush();
   });
 }

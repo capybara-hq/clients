@@ -39,10 +39,13 @@ describe("initialBounds", () => {
 function fakeWindow() {
   const listeners = new Map<string, () => void>();
   let bounds: Rect = { x: 0, y: 0, width: 800, height: 600 };
-  const state = { maximized: false };
+  const normal: Rect = { x: 10, y: 20, width: 640, height: 480 };
+  const state = { maximized: false, minimized: false };
   return {
     win: {
       getBounds: () => bounds,
+      getNormalBounds: () => normal,
+      isMinimized: () => state.minimized,
       isMaximized: () => state.maximized,
       on: (e: string, l: () => void) => listeners.set(e, l),
     },
@@ -103,11 +106,33 @@ describe("trackBounds", () => {
     expect(s.size()).toBe(0);
   });
 
-  test("a maximized window is not saved", () => {
+  test("a maximized window saves its normal bounds", () => {
     const f = fakeWindow();
     const s = fakeScheduler();
     const saved: Rect[] = [];
     trackBounds(f.win, (b) => saved.push(b), s.scheduler);
+    f.state.maximized = true;
+    f.emit("resize");
+    s.runAll();
+    expect(saved).toEqual([{ x: 10, y: 20, width: 640, height: 480 }]);
+  });
+
+  test("a minimized window is not saved", () => {
+    const f = fakeWindow();
+    const s = fakeScheduler();
+    const saved: Rect[] = [];
+    trackBounds(f.win, (b) => saved.push(b), s.scheduler);
+    f.state.minimized = true;
+    f.emit("close");
+    expect(saved).toEqual([]);
+  });
+
+  test("a maximized window without normal bounds is not saved", () => {
+    const f = fakeWindow();
+    const s = fakeScheduler();
+    const saved: Rect[] = [];
+    const { getNormalBounds: _n, ...win } = f.win;
+    trackBounds({ ...win, on: f.win.on }, (b) => saved.push(b), s.scheduler);
     f.state.maximized = true;
     f.emit("resize");
     s.runAll();
