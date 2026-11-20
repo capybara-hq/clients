@@ -131,6 +131,22 @@ describe("profile windows", () => {
     ]);
   });
 
+  test("hasProfileWindows and profileUrls (sign-out pairs a logout with a window on /login)", () => {
+    const { windows, created } = setup();
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    Object.assign(created[0]?.webContents ?? {}, {
+      getURL: () => "https://a.example.com/team/login",
+    });
+    expect(windows.hasProfileWindows("p1")).toBe(true);
+    expect(windows.profileUrls("p1")).toEqual(["https://a.example.com/team/login"]);
+    // No getURL on the fake: nothing to report.
+    expect(windows.profileUrls("p2")).toEqual([]);
+    windows.closeProfileWindows("p1");
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+  });
+
   test("permission handlers are installed once per partition", () => {
     const { windows, sessions } = setup();
     windows.openProfileWindow(p1);

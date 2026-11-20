@@ -72,7 +72,9 @@ export function platformMenuTemplate(
     tail.push({ label: tr("menu.platform.add"), click: () => actions.addPlatform() });
   }
   tail.push({
-    label: tr("menu.platform.signOut", { platform: current?.name ?? "" }).replace(/\s+…$/, "…"),
+    label: current
+      ? tr("menu.platform.signOut", { platform: current.name })
+      : tr("menu.platform.signOutPlain"),
     enabled: current?.signedIn === true,
     click: () => {
       if (current?.signedIn) actions.signOut(current.id);

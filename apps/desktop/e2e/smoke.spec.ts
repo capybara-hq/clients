@@ -391,18 +391,22 @@ test("a redirect hop to another origin gets Chromium's user agent and no shell",
   ).toBe("undefined");
 });
 
-test("the web's own sign-out ends in the small window's signed-out page", async () => {
-  // Back on the deployment (the previous test hopped to the peer).
-  await page.goto(`${fake.base}/`);
-  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
-  const next = app.waitForEvent("window");
-  // The web's 「退出登录」: POST /api/v1/auth/logout (seen on the partition), then /login.
-  await page.locator("#logout").click();
-  const small = await next;
-  await expect(small).toHaveURL("app://local/onboarding.html");
+/** The window on `url`, polled (a re-shown small window raises no `window` event). */
+async function windowOn(url: string): Promise<Page> {
+  let found: Page | undefined;
+  await expect
+    .poll(() => {
+      found = app.windows().find((w) => !w.isClosed() && w.url() === url);
+      return found !== undefined;
+    })
+    .toBe(true);
+  return found as Page;
+}
+
+/** Only the small window is open, and the profile is saved signed out. */
+async function expectSignedOut(): Promise<Page> {
+  const small = await windowOn("app://local/onboarding.html");
   await expect(small.locator("h1")).toHaveText(/^(已退出|Signed out of) Fake Deployment$/);
-  expect(fake.logouts).toBe(1);
-  // The main window closed: only the small window is left; the profile stays, signed out.
   await expect
     .poll(() =>
       app.evaluate(({ BrowserWindow }) =>
@@ -414,4 +418,45 @@ test("the web's own sign-out ends in the small window's signed-out page", async 
     profiles: { base: string; signedIn: boolean }[];
   };
   expect(profiles.profiles.find((p) => p.base === fake.base)?.signedIn).toBe(false);
+  return small;
+}
+
+test("the web's own sign-out ends in the small window's signed-out page", async () => {
+  // Back on the deployment (the previous test hopped to the peer).
+  await page.goto(`${fake.base}/`);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  // The web's 「退出登录」: POST /api/v1/auth/logout (seen on the partition), then /login.
+  await page.locator("#logout").click();
+  page = await expectSignedOut();
+  expect(fake.logouts).toBe(1);
+});
+
+test("the same when the /login navigation lands before the logout completes", async () => {
+  // Sign in again from the signed-out page.
+  const opened = (await openedUrls()).length;
+  await page.locator("main .lp-btn").click();
+  await expect.poll(openedUrls).toHaveLength(opened + 1);
+  const url = new URL((await openedUrls())[opened] as string);
+  await page.request.get(url.href);
+  const signInState = url.searchParams.get("state") as string;
+  const code = fake.issueCode(signInState);
+  const link = `capybara://auth/callback?${new URLSearchParams({ code, state: signInState, iss: fake.base })}`;
+  await app.evaluate(({ app: electronApp }, u) => {
+    electronApp.emit("open-url", { preventDefault() {} }, u);
+  }, link);
+  page = await windowOn(`${fake.base}/`);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+
+  // The logout's body (its completion on the partition) waits for the /login request, and that
+  // /login stays unanswered: the sign-out must end on the completion, not on a committed /login.
+  fake.holdLogoutBody = true;
+  await page.locator("#logout").click();
+  try {
+    await expectSignedOut();
+    expect(fake.logouts).toBe(2);
+    const paths = fake.requests.map((r) => r.path);
+    expect(paths.lastIndexOf("/login")).toBeGreaterThan(paths.lastIndexOf("/api/v1/auth/logout"));
+  } finally {
+    fake.releaseLogin();
+  }
 });

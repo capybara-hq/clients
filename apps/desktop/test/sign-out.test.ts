@@ -7,7 +7,9 @@ import {
   isLoginUrl,
   isLogoutCompletion,
   LOGGED_OUT_WINDOW_MS,
+  LOGIN_PAIR_MS,
   type SignOutDeps,
+  SUPPRESS_GRACE_MS,
   signOutOnLogin,
   watchLoginNavigations,
   watchLogout,
@@ -179,7 +181,131 @@ describe("noteLoggedOut / takeLoggedOut", () => {
   });
 });
 
+describe("either order: the completion after the /login", () => {
+  function contents() {
+    const em = fakeEmitter();
+    return { ...em, on: em.on };
+  }
+
+  test("after will-navigate: the completion completes at once", async () => {
+    const h = setup();
+    const wc = contents();
+    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
+    const e = { preventDefault: vi.fn() };
+    wc.emit("will-navigate", e, "https://a.example.com/team/login");
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(h.deps.showSignedOut).not.toHaveBeenCalled();
+    h.advance(LOGIN_PAIR_MS - 1);
+    h.signOut.noteLoggedOut("p1");
+    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
+    expect(h.order).toEqual(["mark", "show", "close"]);
+    // No note is left for a later /login.
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+  });
+
+  test("after did-navigate-in-page: the same", async () => {
+    const h = setup();
+    const wc = contents();
+    watchLoginNavigations(wc, profile, signOutOnLogin(h.signOut, "p1"));
+    wc.emit("did-navigate-in-page", {}, "https://a.example.com/team/login", true);
+    h.signOut.noteLoggedOut("p1");
+    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
+  });
+
+  test("a /login older than 5 s does not pair: the completion waits for the next one", () => {
+    const h = setup();
+    h.signOut.noteLogin("p1");
+    h.advance(LOGIN_PAIR_MS + 1);
+    h.signOut.noteLoggedOut("p1");
+    expect(h.deps.showSignedOut).not.toHaveBeenCalled();
+    expect(h.signOut.takeLoggedOut("p1")).toBe(true);
+  });
+
+  test("a window already on /login pairs too", async () => {
+    const h = setup({ showsLogin: (id) => id === "p1" });
+    h.signOut.noteLoggedOut("p1");
+    await vi.waitFor(() => expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("the shell's own logouts (suppress)", () => {
+  test("a completion during or within 5 s after the run leaves no note", async () => {
+    const h = setup();
+    await h.signOut.suppress("p1", async () => {
+      // The completion during the run.
+      h.signOut.noteLoggedOut("p1");
+    });
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+    await h.signOut.suppress("p1", async () => undefined);
+    h.advance(SUPPRESS_GRACE_MS);
+    // After the run (session.fetch resolves before its completion).
+    h.signOut.noteLoggedOut("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+    // Each run swallows one completion only.
+    h.signOut.noteLoggedOut("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(true);
+  });
+
+  test("a run whose completion never came stops suppressing after the grace", async () => {
+    const h = setup();
+    await h.signOut.suppress("p1", async () => undefined);
+    h.advance(SUPPRESS_GRACE_MS + 1);
+    h.signOut.noteLoggedOut("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(true);
+  });
+
+  test("the result and a rejection pass through", async () => {
+    const h = setup();
+    await expect(h.signOut.suppress("p1", async () => 7)).resolves.toBe(7);
+    await expect(
+      h.signOut.suppress("p1", async () => {
+        throw new Error("x");
+      }),
+    ).rejects.toThrow("x");
+  });
+
+  test("the menu's POST runs suppressed: its completion after the run pairs with nothing", async () => {
+    let complete: () => void = () => {};
+    const h = setup({
+      fetchFor: () => async () => {
+        complete = () => h.signOut.noteLoggedOut("p1");
+        return { ok: true, status: 204, json: async () => ({}) };
+      },
+      // Keep a window open so a second completion would show the page again.
+      hasProfileWindows: () => true,
+      showsLogin: () => true,
+    });
+    await h.signOut.confirmAndSignOut("p1");
+    expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1);
+    complete();
+    await Promise.resolve();
+    expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("forget", () => {
+  test("a removed profile's notes go", () => {
+    const h = setup();
+    h.signOut.noteLoggedOut("p1");
+    h.signOut.forget("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+  });
+});
+
 describe("complete", () => {
+  test("idempotent: signed out with no window left, a second call does nothing", async () => {
+    let open = true;
+    const h = setup({
+      hasProfileWindows: () => open,
+      closeProfileWindows: vi.fn(() => {
+        open = false;
+      }),
+    });
+    await h.signOut.complete("p1");
+    await h.signOut.complete("p1");
+    expect(h.deps.showSignedOut).toHaveBeenCalledTimes(1);
+  });
+
   test("marks signed out, shows the signed-out page first, then closes the windows", async () => {
     const h = setup();
     await h.signOut.complete("p1");
@@ -358,7 +484,7 @@ describe("the login navigation watch", () => {
     expect(onLogin).not.toHaveBeenCalled();
     wc.emit("will-redirect", event(), "https://a.example.com/team/login", false, true);
     expect(onLogin).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://a.example.com/team/login", stoppable: true }),
+      expect.objectContaining({ url: "https://a.example.com/team/login" }),
     );
   });
 });

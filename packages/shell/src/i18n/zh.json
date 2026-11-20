@@ -161,5 +161,6 @@
   "menu.platform.title": "平台",
   "menu.platform.add": "添加平台…",
   "menu.platform.signOut": "退出登录 {platform}…",
+  "menu.platform.signOutPlain": "退出登录…",
   "menu.platform.remove": "移除这个平台…"
 }

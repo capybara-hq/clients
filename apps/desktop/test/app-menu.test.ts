@@ -102,6 +102,9 @@ describe("the 「平台」 menu (spec 6.9)", () => {
       "移除这个平台…",
     ]);
     expect(items.slice(-2).map((i) => i.enabled)).toEqual([false, false]);
+    expect(
+      labels(platformMenuTemplate({ ...state, locale: "en", activeId: undefined }, actions())),
+    ).toContain("Sign Out…");
   });
 
   test("under lockDeployments neither adding nor removing is offered", () => {

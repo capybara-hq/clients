@@ -42,6 +42,8 @@ export interface WebContentsLike extends ContentsLike {
   send(channel: string, payload: unknown): void;
   reload(): void;
   isDestroyed(): boolean;
+  /** The main frame's URL now (sign-out pairs a logout with a window already on /login). */
+  getURL?(): string;
 }
 
 export interface WindowLike {
@@ -551,6 +553,26 @@ export function createWindowManager(deps: WindowManagerDeps) {
       return lastFocused?.kind === "small" && entries().includes(lastFocused)
         ? lastFocused.window
         : undefined;
+    },
+
+    /** Whether a main window of the profile is open. */
+    hasProfileWindows(profileId: string): boolean {
+      return profileEntries(profileId).length > 0;
+    },
+
+    /** The main-frame URLs of the profile's open windows (a destroyed one is skipped). */
+    profileUrls(profileId: string): string[] {
+      const urls: string[] = [];
+      for (const e of profileEntries(profileId)) {
+        try {
+          const wc = e.window.webContents;
+          const url = wc.isDestroyed() ? undefined : wc.getURL?.();
+          if (url) urls.push(url);
+        } catch {
+          // Gone between the check and the read.
+        }
+      }
+      return urls;
     },
 
     hasWindows(): boolean {

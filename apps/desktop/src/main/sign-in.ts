@@ -60,6 +60,11 @@ export interface SignInDeps {
    * logged out, in case the logout did not clear them.
    */
   clearSessionCookies?(profile: Profile): Promise<unknown> | unknown;
+  /**
+   * Wraps the revoke's logout POST (sign-out.ts `suppress`): its completion on the partition is
+   * the app's own, not the web's sign-out. Absent: run as is.
+   */
+  aroundLogout?<T>(profileId: string, run: () => Promise<T>): Promise<T>;
   /** Shown on the authorize page and recorded in the session's user agent. */
   machineName: string;
   appVersion: string;
@@ -271,8 +276,8 @@ export function createSignIn(deps: SignInDeps) {
    * revokes the session and clears its cookies), then the cookies removed locally as well.
    */
   async function revoke(attempt: Attempt, profile: Profile): Promise<void> {
-    try {
-      const res = await deps.fetchFor(profile)(`${attempt.base}/api/v1/auth/logout`, {
+    const post = () =>
+      deps.fetchFor(profile)(`${attempt.base}/api/v1/auth/logout`, {
         method: "POST",
         headers: { "X-Capybara-Csrf": "1", "User-Agent": userAgent },
         credentials: "include",
@@ -280,6 +285,8 @@ export function createSignIn(deps: SignInDeps) {
         cache: "no-store",
         signal: timeoutSignal(EXCHANGE_TIMEOUT_MS),
       });
+    try {
+      const res = await (deps.aroundLogout ? deps.aroundLogout(profile.id, post) : post());
       if (!res.ok) log(`sign-in revoke refused (${res.status})`);
     } catch (err) {
       log("sign-in revoke failed", err instanceof Error ? err.name : undefined);

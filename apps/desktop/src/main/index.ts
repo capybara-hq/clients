@@ -86,6 +86,7 @@ import { createSignIn, type FetchLike, REDIRECT_URI } from "./sign-in.ts";
 import {
   type CompletedSession,
   createSignOut,
+  isLoginUrl,
   signOutOnLogin,
   watchLoginNavigations,
   watchLogout,
@@ -335,6 +336,8 @@ function start(): void {
       onSignedIn: (profile) => windows.reloadProfile(profile),
       // A session the app did not want: its cookies go from the partition's jar as well.
       clearSessionCookies,
+      // Its logout is the app's own: no sign-out note (sign-out.ts).
+      aroundLogout: (profileId, run) => signOut.suppress(profileId, run),
       machineName: hostname(),
       appVersion: shellVersion,
       log: (message, err) => console.error(message, err ?? ""),
@@ -419,6 +422,13 @@ function start(): void {
     // there. A profile is saved only when its first sign-in completes (spec §6.3).
     // The provisional profile whose sign-in began last: its partition gets the app's choices.
     let begun: Profile | undefined;
+    /** This machine is connected as the profile's deployment's device (the tray's status). */
+    const deviceConnectedTo = (id: string): boolean => {
+      const d = trayDevice.current();
+      return d.icon !== "not_connected" && d.profileId === id;
+    };
+    /** The device note the signed-out page last rendered (`<profileId>:<connected>`). */
+    let lastDeviceNote: string | undefined;
     const onboarding = createOnboarding({
       localPages,
       openWindow: (colors) => windows.openSmallWindow(colors).window as unknown as OnboardingWindow,
@@ -496,8 +506,10 @@ function start(): void {
       removeProfile: (id) => void removal.remove(id),
       canRemove: () => managed.lockDeployments !== true,
       deviceConnected: (id) => {
-        const d = trayDevice.current();
-        return d.icon !== "not_connected" && d.profileId === id;
+        const connected = deviceConnectedTo(id);
+        // What the page shows now: the tray's onChange refreshes only when this changes.
+        lastDeviceNote = `${id}:${connected}`;
+        return connected;
       },
       machineName: machineNameFrom(hostname()),
       log: (message, err) => console.error(message, err ?? ""),
@@ -542,7 +554,12 @@ function start(): void {
       openDevicePage: (profile, path) => windows.showProfile(profile, profile.base + path),
       onChange: () => {
         ui.stateChanged();
-        // The signed-out page's device note follows the device.
+        // The signed-out page's device note follows the device, when it shows and changed.
+        const shown = onboarding.current();
+        if (shown?.page !== "signedOut" || shown.profileId === undefined) return;
+        const note = `${shown.profileId}:${deviceConnectedTo(shown.profileId)}`;
+        if (note === lastDeviceNote) return;
+        lastDeviceNote = note;
         onboarding.refresh();
       },
       log: (message, err) => console.error(message, err ?? ""),
@@ -568,6 +585,7 @@ function start(): void {
       closeProfileWindows: (id) => {
         windows.closeProfileWindows(id);
         onboarding.profileRemoved(id);
+        signOut.forget(id);
       },
       removeProfile: async (id) => {
         await profiles.remove(id);
@@ -587,6 +605,11 @@ function start(): void {
       markSignedOut: (id) => profiles.update(id, { signedIn: false }),
       showSignedOut: (profile) => onboarding.showSignedOut(profile),
       closeProfileWindows: (id) => windows.closeProfileWindows(id),
+      hasProfileWindows: (id) => windows.hasProfileWindows(id),
+      showsLogin: (id) => {
+        const profile = profiles.get(id);
+        return profile !== undefined && windows.profileUrls(id).some((u) => isLoginUrl(profile, u));
+      },
       confirm: (profile) =>
         shellDialogs.confirmSignOut(
           windows.dialogParent(profile.id) ?? null,
