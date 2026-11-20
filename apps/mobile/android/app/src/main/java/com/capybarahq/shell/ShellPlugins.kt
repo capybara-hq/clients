@@ -8,5 +8,6 @@ import com.getcapacitor.Plugin
 object ShellPlugins {
     val all: List<Class<out Plugin>> = listOf(
         ShellPlugin::class.java,
+        DataStoresPlugin::class.java,
     )
 }

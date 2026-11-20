@@ -8,6 +8,7 @@ enum ShellPlugins {
     static func make() -> [CAPPlugin] {
         [
             ShellPlugin(),
+            DataStoresPlugin(),
         ]
     }
 }
