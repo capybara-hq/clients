@@ -24,12 +24,18 @@ import {
   session,
   shell,
   Tray,
+  WebContentsView,
 } from "electron";
 import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
-import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
+import {
+  appMenuTemplate,
+  createStartAtLogin,
+  type PlatformMenuState,
+  platformMenuTemplate,
+} from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
 import { backgroundOf, overlayColors, resolveAppearance } from "./appearance.ts";
 import {
@@ -71,25 +77,27 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createOnboarding, type OnboardingWindow, platformName } from "./onboarding.ts";
+import { createOpenProfile } from "./open-profile.ts";
+import { type OverlayView, showOverlay } from "./overlay.ts";
 import {
   type CookieJarLike,
   createPreferences,
   installPreferenceActions,
   provisionalToFollow,
 } from "./preferences.ts";
-import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
+import { createProfileStore, type Profile, partitionFor, sweepAfterLoad } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
-import { hardenAnyContents, installDenyAllPermissions, LOCAL_PARTITION } from "./security.ts";
+import {
+  hardenAnyContents,
+  hardenLocalContents,
+  installDenyAllPermissions,
+  LOCAL_PARTITION,
+  localWebPreferences,
+} from "./security.ts";
+import { createSessionWatch, probeMeta, type SessionWindow } from "./session-watch.ts";
 import { createShellDialogs, type DialogWindow } from "./shell-dialog.ts";
 import { createSignIn, type FetchLike, REDIRECT_URI } from "./sign-in.ts";
-import {
-  type CompletedSession,
-  createSignOut,
-  isLoginUrl,
-  signOutOnLogin,
-  watchLoginNavigations,
-  watchLogout,
-} from "./sign-out.ts";
+import { type CompletedSession, createSignOut, isLoginUrl, watchLogout } from "./sign-out.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
 import { setupUpdates, updateNotice } from "./updates.ts";
@@ -185,6 +193,14 @@ function start(): void {
       sessionFor: (partition) => session.fromPartition(partition),
       newId: () => randomUUID(),
     });
+    // A provisional profile's partition outlives a quit in the middle of its sign-in: gone at start,
+    // before any partition is loaded, and only after a clean load of profiles.json.
+    sweepAfterLoad(profiles, {
+      partitionsDir: join(app.getPath("userData"), "Partitions"),
+      fs,
+      join,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
 
     // Theme and language (spec §6.10, §12): the profile's own cb-theme / NEXT_LOCALE cookies, the
     // app's choice before any profile, else the OS. Every page, window and menu reads them here.
@@ -265,7 +281,8 @@ function start(): void {
       // Each load of a deployment window asks its discovery again whether device@1 is offered.
       onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
-      // Sign-out (spec §6.9): the partition's logout completion and the window's /login.
+      // Sign-out (spec §6.9): the partition's logout completion; the window's /login and its load
+      // failures are the session watch's (spec §6.8).
       onPartitionPrepared: (profile, partition) =>
         watchLogout(
           session.fromPartition(partition) as unknown as CompletedSession,
@@ -273,7 +290,7 @@ function start(): void {
           () => signOut.noteLoggedOut(profile.id),
         ),
       onProfileWindow: (profile, win) =>
-        watchLoginNavigations(win.webContents, profile, signOutOnLogin(signOut, profile.id)),
+        sessionWatch.watch(profile, win as unknown as SessionWindow),
       onFocusProfile: (profile) => {
         profiles.setLastUsed(profile.id);
         ui.stateChanged();
@@ -298,7 +315,9 @@ function start(): void {
       SHELL_CAPABILITY_KEYS.notify,
       createNotifyCapability({
         Notification: Notification as unknown as NotificationClass,
-        showProfile: (profile, url) => windows.showProfile(profile, url),
+        // Through openProfile: a profile signed out since the notification gets its signed-out
+        // page, never a main window.
+        showProfile: (profile, url) => openProfile(profile, url),
       }),
     );
     bridge.registerCapability(
@@ -333,7 +352,11 @@ function start(): void {
       // The partition's own fetch: the kernel's Set-Cookie lands in the profile's cookie jar.
       fetchFor: partitionFetch,
       getProfile: (id) => profiles.get(id),
-      onSignedIn: (profile) => windows.reloadProfile(profile),
+      // Windows on the expired page go back to their page; otherwise every window reloads.
+      onSignedIn: (profile, account) => {
+        if (sessionWatch.signedIn(profile.id, account)) windows.showProfile(profile);
+        else windows.reloadProfile(profile);
+      },
       // A session the app did not want: its cookies go from the partition's jar as well.
       clearSessionCookies,
       // Its logout is the app's own: no sign-out note (sign-out.ts).
@@ -488,6 +511,8 @@ function start(): void {
       markSignedIn: (id, account) => {
         const saved = profiles.update(id, { signedIn: true, account });
         ui.stateChanged();
+        // A window still on the expired page goes back to its page.
+        sessionWatch.signedIn(id);
         return saved;
       },
       openMain: (profile, home) => {
@@ -522,12 +547,13 @@ function start(): void {
      * A profile's window (spec §6.3): signed in, its main window; signed out, the small window's
      * signed-out page; never signed in (a managed profile), its found page.
      */
-    const openProfile = (profile: Profile, url?: string) => {
-      profiles.setLastUsed(profile.id);
-      if (profile.signedIn) windows.showProfile(profile, url);
-      else if (profile.account) onboarding.showSignedOut(profile);
-      else onboarding.showFound(profile);
-    };
+    const openProfile = createOpenProfile({
+      getProfile: (id) => profiles.get(id),
+      setLastUsed: (id) => profiles.setLastUsed(id),
+      showMain: (profile, url) => windows.showProfile(profile, url),
+      showSignedOut: (profile) => onboarding.showSignedOut(profile),
+      showFound: (profile) => onboarding.showFound(profile),
+    });
 
     const openDefault = () => {
       const visible = visibleProfiles();
@@ -548,7 +574,7 @@ function start(): void {
       profiles: visibleProfiles,
       impl: device.impl,
       gate: confirmGate,
-      openDevicePage: (profile, path) => windows.showProfile(profile, profile.base + path),
+      openDevicePage: (profile, path) => openProfile(profile, profile.base + path),
       onChange: () => {
         ui.stateChanged();
         // The signed-out page's device note follows the device, when it shows and changed.
@@ -610,9 +636,15 @@ function start(): void {
       showSignedOut: (profile) => onboarding.showSignedOut(profile),
       closeProfileWindows: (id) => windows.closeProfileWindows(id),
       hasProfileWindows: (id) => windows.hasProfileWindows(id),
+      // A window on /login (a client navigation that committed) or on the expired page that
+      // replaced it: a logout completion of the profile ends the sign-out at once.
       showsLogin: (id) => {
         const profile = profiles.get(id);
-        return profile !== undefined && windows.profileUrls(id).some((u) => isLoginUrl(profile, u));
+        if (profile === undefined) return false;
+        return (
+          sessionWatch.showsExpired(id) ||
+          windows.profileUrls(id).some((u) => isLoginUrl(profile, u))
+        );
       },
       confirm: (profile) =>
         shellDialogs.confirmSignOut(
@@ -624,6 +656,70 @@ function start(): void {
       clearSessionCookies,
       onSignedOut: () => ui.stateChanged(),
       gate: confirmGate,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    // Errors after sign-in stay in the main window (spec §6.8): the expired and unreachable pages
+    // as an overlay of local page `main-error` over the window's web contents.
+    const sessionWatch = createSessionWatch({
+      showOverlay: (parent, o) =>
+        showOverlay(
+          {
+            createView: () =>
+              new WebContentsView({
+                webPreferences: localWebPreferences({
+                  preload: join(dist, "preload", "local.cjs"),
+                }),
+              }) as unknown as OverlayView,
+            localPages,
+            harden: (contents) =>
+              hardenLocalContents(contents as unknown as Parameters<typeof hardenLocalContents>[0]),
+            log: (message, err) => console.error(message, err ?? ""),
+          },
+          parent,
+          o,
+        ),
+      localPages,
+      getProfile: (id) => profiles.get(id),
+      signOut,
+      signIn,
+      openExternal: (url) => shell.openExternal(url),
+      markSignedIn: (id, account) => {
+        const saved = profiles.update(id, { signedIn: true, account });
+        ui.stateChanged();
+        return saved;
+      },
+      // The small window first (closing the last window quits on Windows / Linux), then the window.
+      notSignedIn: (id, win) => {
+        if (profiles.get(id)) openProfile({ id });
+        if (!win.isDestroyed()) (win as unknown as BrowserWindow).close();
+      },
+      popupPlatformMenu: (win) =>
+        Menu.buildFromTemplate(
+          platformMenuTemplate(menuState(), uiActions) as unknown as never,
+        ).popup({ window: win as unknown as BrowserWindow }),
+      probe: (profile) => probeMeta(partitionFetch(profile), profile.base),
+      schedule: (run, ms) => {
+        const timer = setTimeout(run, ms);
+        return () => clearTimeout(timer);
+      },
+      now: () => Date.now(),
+      pageBase: (profile) => ({
+        locale: localeOf(profile),
+        appearance: appearanceOf(profile),
+        os: platform,
+        appName: brand.productName,
+        version: shellVersion,
+      }),
+      platformOf: (profile) => {
+        const iconUrl = iconFor(profile);
+        return {
+          name: profile.name,
+          host: new URL(profile.origin).host,
+          ...(iconUrl ? { iconUrl } : {}),
+        };
+      },
+      controls: (win) => chromeState(platform, win.isFullScreen?.() ?? false).controls,
+      background: (profile) => backgroundOf(appearanceOf(profile)),
       log: (message, err) => console.error(message, err ?? ""),
     });
     const uiActions = {
@@ -680,15 +776,17 @@ function start(): void {
       ...iconCache,
       log: (message, err) => console.error(message, err ?? ""),
     });
-    function render(): void {
-      const visible = visibleProfiles();
-      const state = {
+    /** What the 「平台」 menu shows now (the app menu, and the overlay's 切换平台 popup). */
+    function menuState(): PlatformMenuState {
+      return {
         locale: menuLocale(),
-        profiles: visible.map((p) => ({ id: p.id, name: p.name, signedIn: p.signedIn })),
+        profiles: visibleProfiles().map((p) => ({ id: p.id, name: p.name, signedIn: p.signedIn })),
         activeId: profiles.lastUsed()?.id,
         lockDeployments: managed.lockDeployments === true,
-        device: trayDevice.current(),
       };
+    }
+    function render(): void {
+      const state = { ...menuState(), device: trayDevice.current() };
       tray.update(state);
       Menu.setApplicationMenu(
         Menu.buildFromTemplate(

@@ -1,0 +1,11 @@
+/*
+ * The main window's error pages (desktop spec §6.8; board MainErrors): no web sidebar, the 52 px
+ * drag band and a 380 px column centered in the window (the kit's `wide` layout). This file only
+ * adds what the board gives these pages beyond the kit.
+ */
+
+/* The sign-in error box sits between the lead and the button, full column width. */
+.me-page .lp-alert--box {
+  width: 100%;
+  text-align: left;
+}

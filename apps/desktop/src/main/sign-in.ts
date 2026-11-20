@@ -52,8 +52,11 @@ export interface SignInDeps {
   fetchFor(profile: Profile): FetchLike;
   /** The profile as stored now; undefined once it was removed. Read for `signIn@1` only. */
   getProfile(id: string): Profile | undefined;
-  /** Signed in through `signIn@1`: reload the profile's windows on its origin. */
-  onSignedIn(profile: Profile): void;
+  /**
+   * Signed in through `signIn@1` as `account`: store the account and reload the profile's windows
+   * on its origin.
+   */
+  onSignedIn(profile: Profile, account: SignedInAccount): void;
   /**
    * Removes the kernel's session cookies (`cap_at`, `cap_rt`) from the profile's partition. Called
    * after a session the app did not want (a cancelled attempt whose exchange still succeeded) was
@@ -323,7 +326,7 @@ export function createSignIn(deps: SignInDeps) {
       settle(attempt, outcome);
       if (attempt.viaCapability) {
         try {
-          deps.onSignedIn(profile);
+          deps.onSignedIn(profile, outcome.account);
         } catch (err) {
           log("reloading after sign-in failed", err instanceof Error ? err.name : undefined);
         }

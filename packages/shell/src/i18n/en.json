@@ -139,6 +139,8 @@
   "mainError.expired.title": "Your session has expired",
   "mainError.expired.lead": "Sign in again to return to the page you were on.",
   "mainError.expired.signIn": "Sign in again with your browser",
+  "mainError.expired.waiting": "Confirm the sign-in in your browser; you’ll return to the page you were on.",
+  "mainError.expired.reopen": "Reopen the browser",
   "mainError.unreachable.title": "Can’t reach the platform right now",
   "mainError.unreachable.lead": "It may be upgrading or under maintenance, or your network or VPN dropped. You return to the page you were on once it’s back.",
   "mainError.unreachable.meta": "{host} · no response for {duration}",

@@ -182,8 +182,8 @@ export interface WindowManagerDeps {
    */
   onPartitionPrepared?: (profile: Profile, partition: string) => void;
   /**
-   * A profile window was created, before its first load: the login navigation watch goes here
-   * (sign-out.ts `watchLoginNavigations`; K9's session watch takes it over).
+   * A profile window was created, before its first load: the session watch goes here (the expired
+   * and unreachable overlays, session-watch.ts).
    */
   onProfileWindow?: (profile: Profile, window: WindowLike) => void;
   /** A profile window closed: its event subscriptions can go. */

@@ -51,7 +51,7 @@ export interface PlatformMenuActions {
 /**
  * The 「平台」 menu (spec §6.9): the profiles as radio items (⌘1…⌘9), 「添加平台…」,
  * 「退出登录 <平台>…」 (the current profile, enabled only while it is signed in) and 「移除这个平台…」.
- * The app menu shows it; K9's 「切换平台」 pops the same template up
+ * The app menu shows it; the error overlay's 「切换平台」 pops the same template up
  * (`Menu.buildFromTemplate(platformMenuTemplate(...)).popup()`).
  */
 export function platformMenuTemplate(

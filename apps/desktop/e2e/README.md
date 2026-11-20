@@ -2,9 +2,15 @@
 
 ## The automated smoke (`pnpm e2e`)
 
-`smoke.spec.ts` launches the real Electron app through Playwright's `_electron` (no browser is
-downloaded) against `packages/shell/test/fixtures/fake-deployment.ts`, a dependency-free fake
-deployment. It needs no network and no real sign-in. Run it from the repository root:
+`smoke.spec.ts` (the shell, security and sign-out/expiry/unreachable specs, one launched app) and
+`onboarding.spec.ts` (a fresh first launch through the onboarding, its own app) launch the real
+Electron app through Playwright's `_electron` (no browser is downloaded; `harness.ts` is the shared
+launcher) against `packages/shell/test/fixtures/fake-deployment.ts`, a dependency-free fake
+deployment. Its switches: `meta` / `features` / `metaStatus` / `metaRaw` (meta shapes, including
+`appRedirectUris`), `tokenError` (every token exchange refused with that kernel code), `down`
+(503), `holdLogoutBody`, and `GET /protected` (a 302 to `/login?returnTo=%2Fprotected` without a
+session). It needs no network and no real sign-in. Run it from the repository
+root:
 
 ```bash
 pnpm e2e
@@ -28,6 +34,18 @@ so the app's own router handles it. No launchd, Keychain or login item is touche
 
 What it covers:
 
+- First launch (`onboarding.spec.ts`): the small window is 480×600 and not resizable, on connect, with
+  no profile saved. An address that is not a Capybara platform shows `not_capybara` inline and saves
+  nothing. A platform whose `appRedirectUris` lacks the app's redirect URI: found (name, host), then
+  `not_allowed` before the browser opens. A refused token exchange (`auth.account_disabled`) shows
+  the error and saves nothing. An `access_denied` callback shows the cancelled error, its button
+  signs in again, and the callback then closes the small window and opens the main window on `/`.
+- An expired session (cookie removed from the partition, reload of a protected page): the expired
+  overlay, no `/login` request reaches the server, and signing in again returns to the page.
+- The web's logout and `/login` end in the signed-out small window. Its 「移除这个平台」 opens a shell
+  dialog as a window of its own (not an overlay); cancel closes it and keeps the profile. The
+  theme toggle on that local page writes `cb-theme` into the profile's partition, not the default
+  session.
 - The small window's frame origin is `app://local` (read in main), and the local page registry
   accepts its actions, so connect -> meta discovery -> icon -> 在浏览器中登录 -> callback -> the main
   window on `/` works, and the small window closes.
@@ -50,6 +68,20 @@ What it covers:
   calling it (twice) does not throw.
 - The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
   the main window and shows the small window's signed-out page; the profile stays, signed out.
+  When the logout completes only after the page navigated to `/login`, that `/login` is stopped
+  (it never reaches the server), the expired overlay shows, and the completion ends the sign-out.
+- A `/login` navigation without a logout is stopped and the main window shows the expired page
+  (a `WebContentsView` with `app://local/main-error.html`); signing in again removes it and loads
+  the `returnTo` page.
+- `restart.spec.ts` launches twice on the same userData directory: a signed-in profile opens its
+  main window (its persistent session cookie kept), a signed-out one its signed-out small window;
+  a provisional partition directory left on disk is removed at start, the profile's own stays.
+  The 「平台」 menu's sign-out, confirmed in the shell dialog, posts the logout and clears
+  `cap_at` / `cap_rt`. A run in the background never gets OS focus, so the spec makes the dialog
+  window report focus (as a click would) before the confirming button counts; its 500 ms lockout
+  stays real. A deployment page has no `window.capybaraLocal`.
+- A deployment document answered 503 shows the unreachable page; 重试 probes `/api/v1/meta`
+  (still 503: the page stays); once it answers 2xx the overlay goes and the page loads again.
 
 ## Manual acceptance on a real Mac with a dev kernel
 
