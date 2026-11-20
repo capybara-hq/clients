@@ -4,6 +4,7 @@ import { brand } from "../brand.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import {
   createSignIn,
+  type FetchLike,
   REDIRECT_URI,
   type ResponseLike,
   type SignInDeps,
@@ -382,8 +383,9 @@ describe("the callback", () => {
     const handled = signIn.handleCallback(callback({}));
     await flush();
     expect(asked).toEqual([30_000]);
-    expect(signal).toBe(timeout.signal);
+    expect(signal?.aborted).toBe(false);
     timeout.abort();
+    expect(signal?.aborted).toBe(true);
     await handled;
     await expect(result).rejects.toEqual({ code: "failed" });
     expect(onSignedIn).not.toHaveBeenCalled();
@@ -440,6 +442,31 @@ const refusal = (status: number, code?: string): ResponseLike => ({
   json: async () => ({ error: { ...(code ? { code } : {}), message: "BODY_TEXT" } }),
 });
 
+/**
+ * A partition fetch whose answers the test gives by hand. It rejects when its signal aborts, as
+ * Electron's does, unless `ignoreAbort` (the answer was already on its way).
+ */
+function gatedNet(o: { ignoreAbort?: boolean } = {}) {
+  const calls: {
+    profileId: string;
+    url: string;
+    init: RequestInit;
+    resolve(r: ResponseLike): void;
+  }[] = [];
+  const fetchFor =
+    (p: Profile): FetchLike =>
+    (url, init) =>
+      new Promise((resolve, reject) => {
+        calls.push({ profileId: p.id, url, init, resolve });
+        if (!o.ignoreAbort) {
+          init.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }
+      });
+  return { calls, fetchFor };
+}
+
 describe("begin()", () => {
   test("returns the authorize URL without opening the browser; pendingUrl gives it back", () => {
     const { signIn, opened, deps } = setup();
@@ -482,7 +509,7 @@ describe("begin()", () => {
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/Grant|grant@example\.com/);
   });
 
-  test.each([
+  test.each<[string, Record<string, unknown>, { name: string; login: string } | null]>([
     [
       "a login field wins over the email",
       { displayName: "Grant", login: "grant", email: "g@x.io" },
@@ -510,8 +537,32 @@ describe("begin()", () => {
     ],
     [
       "a name with a bidi override is dropped",
-      { displayName: "Grant‮txt.exe", email: "g@x.io" },
+      { displayName: "Grant\u202etxt.exe", email: "g@x.io" },
       { name: "g@x.io", login: "g@x.io" },
+    ],
+    ...[
+      "\u061c",
+      "\u200b",
+      "\u200c",
+      "\u200d",
+      "\u2028",
+      "\u2029",
+      "\u2060",
+      "\u2066",
+      "\u2069",
+      "\ufeff",
+      "\ud800",
+      "\udfff",
+      "\u0085",
+    ].map((ch): [string, Record<string, unknown>, { name: string; login: string }] => [
+      `a name with U+${ch.charCodeAt(0).toString(16).padStart(4, "0")} is dropped`,
+      { displayName: `Gr${ch}ant`, email: "g@x.io" },
+      { name: "g@x.io", login: "g@x.io" },
+    ]),
+    [
+      "a paired surrogate (emoji) is kept",
+      { displayName: "Grant \ud83e\udd9b" },
+      { name: "Grant \ud83e\udd9b", login: "" },
     ],
     [
       "a name over 200 characters is dropped",
@@ -681,19 +732,39 @@ describe("begin()", () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
-  test("a profile removed or re-pointed meanwhile: cancelled, no exchange", async () => {
+  test("signIn@1: a profile removed or re-pointed meanwhile is cancelled, no exchange", async () => {
     for (const change of [
       (m: Map<string, Profile>) => m.delete("p1"),
       (m: Map<string, Profile>) =>
         m.set("p1", { ...profile, base: "https://elsewhere.example.com" }),
     ]) {
       const { signIn, profiles, fetchCalls } = setup();
-      const { outcome } = signIn.begin(profile);
+      const result = signIn.capability.start({ profile });
+      await flush();
       change(profiles);
       await signIn.handleCallback(callback({}));
-      await expect(outcome).resolves.toEqual({ ok: false, reason: "cancelled" });
+      await expect(result).resolves.toBe("cancelled");
       expect(fetchCalls).toHaveLength(0);
     }
+  });
+
+  test("begin keeps the profile it was given: a provisional, unsaved profile signs in", async () => {
+    const { signIn, deps, fetchCalls } = setup();
+    const getProfile = vi.fn(() => undefined);
+    deps.getProfile = getProfile;
+    const provisional: Profile = {
+      id: "new-1",
+      base: "https://fresh.example.com",
+      origin: "https://fresh.example.com",
+      name: "Fresh",
+    } as Profile;
+    const { outcome } = signIn.begin(provisional);
+    await signIn.handleCallback(callback({ iss: "https://fresh.example.com" }));
+    await expect(outcome).resolves.toMatchObject({ ok: true });
+    expect(getProfile).not.toHaveBeenCalled();
+    expect(fetchCalls.map((c) => [c.profileId, c.url])).toEqual([
+      ["new-1", "https://fresh.example.com/api/v1/app-auth/token"],
+    ]);
   });
 
   test("the exchange uses the profile as stored now", async () => {
@@ -732,19 +803,130 @@ describe("cancel() and restarts", () => {
     await expect(a.outcome).resolves.toMatchObject({ ok: true });
   });
 
-  test("cancel while the exchange runs: cancelled stands, and signIn@1 reloads nothing", async () => {
-    const { signIn, deps, onSignedIn } = setup();
-    let finish: (r: ResponseLike) => void = () => undefined;
-    deps.fetchFor = () => () => new Promise((r) => (finish = r));
+  test("cancel while the exchange runs aborts the request; cancelled stands", async () => {
+    const { signIn, deps, onSignedIn, log } = setup();
+    const net = gatedNet();
+    deps.fetchFor = net.fetchFor;
+    const clearSessionCookies = vi.fn();
+    deps.clearSessionCookies = clearSessionCookies;
     const result = signIn.capability.start({ profile });
     await flush();
     const handled = signIn.handleCallback(callback({}));
     await flush();
+    const exchange = net.calls[0];
+    expect(exchange?.init.signal?.aborted).toBe(false);
     signIn.cancel("p1");
-    finish(okResponse());
+    expect(exchange?.init.signal?.aborted).toBe(true);
     await handled;
     await expect(result).resolves.toBe("cancelled");
     expect(onSignedIn).not.toHaveBeenCalled();
+    // No answer came back, so no session reached the partition: nothing to revoke.
+    expect(net.calls).toHaveLength(1);
+    expect(clearSessionCookies).not.toHaveBeenCalled();
+    expect(JSON.stringify(log.mock.calls)).not.toContain("SECRET");
+  });
+
+  test("an exchange that still succeeds after cancel is logged out and its cookies cleared", async () => {
+    const { signIn, deps, onSignedIn } = setup();
+    const net = gatedNet({ ignoreAbort: true });
+    deps.fetchFor = net.fetchFor;
+    const clearSessionCookies = vi.fn();
+    deps.clearSessionCookies = clearSessionCookies;
+    const { outcome } = signIn.begin(profile);
+    const handled = signIn.handleCallback(callback({}));
+    await flush();
+    signIn.cancel("p1");
+    await expect(outcome).resolves.toEqual({ ok: false, reason: "cancelled" });
+    let quiet = false;
+    const quiesced = signIn.quiesce("p1").then(() => {
+      quiet = true;
+    });
+    net.calls[0]?.resolve(okResponse());
+    await flush();
+    // The logout runs in the same slot: quiesce waits for it.
+    expect(quiet).toBe(false);
+    const logout = net.calls[1];
+    expect(logout?.profileId).toBe("p1");
+    expect(logout?.url).toBe("https://capybara.example.com/team/api/v1/auth/logout");
+    expect(logout?.init).toMatchObject({
+      method: "POST",
+      credentials: "include",
+      redirect: "error",
+      cache: "no-store",
+      headers: { "X-Capybara-Csrf": "1" },
+    });
+    expect(clearSessionCookies).not.toHaveBeenCalled();
+    logout?.resolve({ ok: true, status: 204, json: async () => null });
+    await handled;
+    await quiesced;
+    expect(quiet).toBe(true);
+    expect(clearSessionCookies).toHaveBeenCalledExactlyOnceWith(profile);
+    expect(onSignedIn).not.toHaveBeenCalled();
+    await expect(outcome).resolves.toEqual({ ok: false, reason: "cancelled" });
+  });
+
+  test("a 2xx whose account cannot be used is revoked too; a refusal is not", async () => {
+    for (const [response, revoked] of [
+      [okResponse({ nope: true }), true],
+      [refusal(400, "app_auth.code_invalid"), false],
+    ] as const) {
+      const { signIn, deps, fetchCalls } = setup();
+      const clearSessionCookies = vi.fn();
+      deps.clearSessionCookies = clearSessionCookies;
+      const queue = [response, { ok: true, status: 204, json: async () => null }];
+      deps.fetchFor = (p) => async (url, init) => {
+        fetchCalls.push({ profileId: p.id, url, init });
+        return queue.shift() as ResponseLike;
+      };
+      const { outcome } = signIn.begin(profile);
+      await signIn.handleCallback(callback({}));
+      await expect(outcome).resolves.toEqual({ ok: false, reason: "link_invalid" });
+      expect(fetchCalls.map((c) => c.url.endsWith("/auth/logout"))).toEqual(
+        revoked ? [false, true] : [false],
+      );
+      expect(clearSessionCookies).toHaveBeenCalledTimes(revoked ? 1 : 0);
+    }
+  });
+
+  test("a failing logout or cookie clearing is logged by name and still releases the slot", async () => {
+    const { signIn, deps, log } = setup();
+    const queue: (() => Promise<ResponseLike>)[] = [
+      async () => okResponse({ nope: true }),
+      async () => {
+        throw new TypeError("net::ERR_FAILED SECRET");
+      },
+    ];
+    deps.fetchFor = () => () => (queue.shift() as () => Promise<ResponseLike>)();
+    deps.clearSessionCookies = async () => {
+      throw new Error("SECRET cookie store");
+    };
+    const { outcome } = signIn.begin(profile);
+    await signIn.handleCallback(callback({}));
+    await expect(outcome).resolves.toEqual({ ok: false, reason: "link_invalid" });
+    await signIn.quiesce("p1");
+    const logged = JSON.stringify(log.mock.calls);
+    expect(logged).toContain("sign-in revoke failed");
+    expect(logged).toContain("could not clear the session cookies");
+    expect(logged).not.toContain("SECRET");
+  });
+
+  test("quiesce resolves at once when nothing is in flight", async () => {
+    const { signIn } = setup();
+    await expect(signIn.quiesce("p1")).resolves.toBeUndefined();
+    signIn.begin(profile);
+    await expect(signIn.quiesce("p1")).resolves.toBeUndefined();
+  });
+
+  test("a throwing onSignedIn still settles signIn@1 as signedIn", async () => {
+    const { signIn, deps, log } = setup();
+    deps.onSignedIn = () => {
+      throw new Error("window gone");
+    };
+    const result = signIn.capability.start({ profile });
+    await flush();
+    await signIn.handleCallback(callback({}));
+    await expect(result).resolves.toBe("signedIn");
+    expect(JSON.stringify(log.mock.calls)).toContain("reloading after sign-in failed");
   });
 
   test("a second begin cancels the first; the first link cannot touch the second", async () => {
@@ -768,18 +950,78 @@ describe("cancel() and restarts", () => {
     expect(JSON.parse(fetchCalls[0]?.init.body as string).codeVerifier).toBe("verifier-2");
   });
 
-  test("a begin while the first exchange runs cancels the first", async () => {
+  test("a begin while the first exchange runs: the first is aborted, the second waits for it", async () => {
     const { signIn, deps } = setup();
-    let finish: (r: ResponseLike) => void = () => undefined;
-    deps.fetchFor = () => () => new Promise((r) => (finish = r));
+    const net = gatedNet({ ignoreAbort: true });
+    deps.fetchFor = net.fetchFor;
+    const clearSessionCookies = vi.fn();
+    deps.clearSessionCookies = clearSessionCookies;
     const first = signIn.begin(profile);
-    const handled = signIn.handleCallback(callback({}));
+    const firstHandled = signIn.handleCallback(callback({}));
     await flush();
     const second = signIn.begin(profile);
     await expect(first.outcome).resolves.toEqual({ ok: false, reason: "cancelled" });
-    finish(okResponse());
-    await handled;
+    expect(net.calls[0]?.init.signal?.aborted).toBe(true);
     expect(signIn.pendingUrl("p1")).toBe(second.url);
+    // The second callback arrives while the first exchange still holds the slot.
+    const secondHandled = signIn.handleCallback(callback({ state: "state-2" }));
+    await flush();
+    expect(net.calls).toHaveLength(1);
+    // The first exchange answers anyway: its session is logged out before the second is sent.
+    net.calls[0]?.resolve(okResponse());
+    await flush();
+    expect(net.calls.map((c) => c.url.split("/api/v1/")[1])).toEqual([
+      "app-auth/token",
+      "auth/logout",
+    ]);
+    net.calls[1]?.resolve({ ok: true, status: 204, json: async () => null });
+    await firstHandled;
+    await flush();
+    expect(clearSessionCookies).toHaveBeenCalledTimes(1);
+    expect(net.calls).toHaveLength(3);
+    expect(JSON.parse(net.calls[2]?.init.body as string).codeVerifier).toBe("verifier-2");
+    expect(net.calls[2]?.init.signal?.aborted).toBe(false);
+    net.calls[2]?.resolve(okResponse());
+    await secondHandled;
+    await expect(second.outcome).resolves.toMatchObject({ ok: true });
+    expect(clearSessionCookies).toHaveBeenCalledTimes(1);
+  });
+
+  test("an attempt cancelled while waiting for the slot sends nothing", async () => {
+    const { signIn, deps } = setup();
+    const net = gatedNet({ ignoreAbort: true });
+    deps.fetchFor = net.fetchFor;
+    signIn.begin(profile);
+    const firstHandled = signIn.handleCallback(callback({}));
+    await flush();
+    const second = signIn.begin(profile);
+    const secondHandled = signIn.handleCallback(callback({ state: "state-2" }));
+    await flush();
+    signIn.cancel("p1");
+    await expect(second.outcome).resolves.toEqual({ ok: false, reason: "cancelled" });
+    net.calls[0]?.resolve(refusal(400, "app_auth.code_invalid"));
+    await Promise.all([firstHandled, secondHandled]);
+    await signIn.quiesce("p1");
+    expect(net.calls).toHaveLength(1);
+  });
+
+  test("exchanges of different profiles do not wait for each other", async () => {
+    const { signIn, deps } = setup();
+    const net = gatedNet();
+    deps.fetchFor = net.fetchFor;
+    signIn.begin(profile);
+    const b = signIn.begin(other);
+    void signIn.handleCallback(callback({}));
+    const bHandled = signIn.handleCallback(
+      callback({ state: "state-2", iss: "https://other.example.com" }),
+    );
+    await flush();
+    expect(net.calls.map((c) => c.profileId)).toEqual(["p1", "p2"]);
+    net.calls[1]?.resolve(okResponse());
+    await bHandled;
+    await expect(b.outcome).resolves.toMatchObject({ ok: true });
+    signIn.cancel("p1");
+    await signIn.quiesce("p1");
   });
 
   test("begin and signIn@1 share one attempt per profile", async () => {
@@ -898,6 +1140,7 @@ describe("replays and stale callbacks", () => {
 describe("no tokens are kept", () => {
   const ALLOWED = [
     "appVersion",
+    "clearSessionCookies",
     "fetchFor",
     "getProfile",
     "log",

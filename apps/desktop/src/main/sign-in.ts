@@ -50,10 +50,16 @@ export interface SignInDeps {
   openExternal(url: string): Promise<unknown> | unknown;
   /** The profile partition's own fetch (`session.fromPartition(partition).fetch`). */
   fetchFor(profile: Profile): FetchLike;
-  /** The profile as stored now; undefined once it was removed. */
+  /** The profile as stored now; undefined once it was removed. Read for `signIn@1` only. */
   getProfile(id: string): Profile | undefined;
   /** Signed in through `signIn@1`: reload the profile's windows on its origin. */
   onSignedIn(profile: Profile): void;
+  /**
+   * Removes the kernel's session cookies (`cap_at`, `cap_rt`) from the profile's partition. Called
+   * after a session the app did not want (a cancelled attempt whose exchange still succeeded) was
+   * logged out, in case the logout did not clear them.
+   */
+  clearSessionCookies?(profile: Profile): Promise<unknown> | unknown;
   /** Shown on the authorize page and recorded in the session's user agent. */
   machineName: string;
   appVersion: string;
@@ -92,6 +98,8 @@ interface Attempt {
   /** Started by `signIn@1`: on success the profile's windows reload (`onSignedIn`). */
   viaCapability: boolean;
   settled: boolean;
+  /** Aborts the attempt's exchange once the attempt has settled. */
+  abort: AbortController;
   cancelTimer: () => void;
   resolve(outcome: SignInOutcome): void;
 }
@@ -115,9 +123,9 @@ async function errorCode(res: ResponseLike): Promise<string | undefined> {
   }
 }
 
-// Control characters, and the bidirectional marks that could disguise a name on screen.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
+// Control and format characters (bidirectional marks and overrides, zero-width characters, the
+// BOM), line and paragraph separators, and lone surrogates: anything that could disguise a name.
+const UNSAFE_TEXT = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
 
 /** A short display string, trimmed; undefined for anything else. */
 function shortText(value: unknown, max: number): string | undefined {
@@ -172,12 +180,16 @@ export function createSignIn(deps: SignInDeps) {
   /** Attempts whose callback was taken and whose exchange is running. */
   const exchanging = new Map<string, Attempt>();
   const staleListeners = new Set<(origin: string) => void>();
+  /** Per profile: the tail of its exchanges, in order (see `inSlot`). */
+  const slots = new Map<string, Promise<void>>();
+  const timeoutSignal = (ms: number) => (deps.timeoutSignal ?? AbortSignal.timeout)(ms);
 
   /** Ends the attempt with `outcome` once; later calls do nothing. */
   function settle(attempt: Attempt, outcome: SignInOutcome): void {
     if (attempt.settled) return;
     attempt.settled = true;
     attempt.cancelTimer();
+    attempt.abort.abort();
     pending.delete(attempt.state);
     exchanging.delete(attempt.state);
     attempt.resolve(outcome);
@@ -203,11 +215,20 @@ export function createSignIn(deps: SignInDeps) {
     return `${base}/apps/authorize?${q.toString()}`;
   }
 
+  /**
+   * One exchange. `sessionSet`: the kernel answered 2xx, so its `Set-Cookie` may have reached the
+   * partition even if the body then could not be read.
+   */
   async function exchange(
     attempt: Attempt,
     profile: Profile,
     code: string,
-  ): Promise<SignInOutcome> {
+  ): Promise<{ outcome: SignInOutcome; sessionSet: boolean }> {
+    let sessionSet = false;
+    const failed = (): { outcome: SignInOutcome; sessionSet: boolean } => ({
+      outcome: { ok: false, reason: "link_invalid" },
+      sessionSet,
+    });
     try {
       const res = await deps.fetchFor(profile)(`${attempt.base}/api/v1/app-auth/token`, {
         method: "POST",
@@ -222,7 +243,7 @@ export function createSignIn(deps: SignInDeps) {
         credentials: "include",
         redirect: "error",
         cache: "no-store",
-        signal: (deps.timeoutSignal ?? AbortSignal.timeout)(EXCHANGE_TIMEOUT_MS),
+        signal: AbortSignal.any([timeoutSignal(EXCHANGE_TIMEOUT_MS), attempt.abort.signal]),
       });
       if (!res.ok) {
         // Only the status and the kernel's error code are logged (e.g. 503 app_auth.unavailable:
@@ -230,18 +251,83 @@ export function createSignIn(deps: SignInDeps) {
         const errCode = await errorCode(res);
         log(`sign-in exchange refused (${res.status}${errCode ? ` ${errCode}` : ""})`);
         const reason = errCode === undefined ? undefined : REASON_BY_CODE.get(errCode);
-        return { ok: false, reason: reason ?? "link_invalid" };
+        return { outcome: { ok: false, reason: reason ?? "link_invalid" }, sessionSet };
       }
+      sessionSet = true;
       const account = accountFrom(await res.json());
       if (!account) {
         log("sign-in exchange answered without an account");
-        return { ok: false, reason: "link_invalid" };
+        return failed();
       }
-      return { ok: true, account };
+      return { outcome: { ok: true, account }, sessionSet };
     } catch (err) {
       log("sign-in exchange failed", err instanceof Error ? err.name : undefined);
-      return { ok: false, reason: "link_invalid" };
+      return failed();
     }
+  }
+
+  /**
+   * Ends a session the app did not want: the kernel's logout through the same partition (which
+   * revokes the session and clears its cookies), then the cookies removed locally as well.
+   */
+  async function revoke(attempt: Attempt, profile: Profile): Promise<void> {
+    try {
+      const res = await deps.fetchFor(profile)(`${attempt.base}/api/v1/auth/logout`, {
+        method: "POST",
+        headers: { "X-Capybara-Csrf": "1", "User-Agent": userAgent },
+        credentials: "include",
+        redirect: "error",
+        cache: "no-store",
+        signal: timeoutSignal(EXCHANGE_TIMEOUT_MS),
+      });
+      if (!res.ok) log(`sign-in revoke refused (${res.status})`);
+    } catch (err) {
+      log("sign-in revoke failed", err instanceof Error ? err.name : undefined);
+    }
+    try {
+      await deps.clearSessionCookies?.(profile);
+    } catch (err) {
+      log("could not clear the session cookies", err instanceof Error ? err.name : undefined);
+    }
+  }
+
+  /**
+   * Runs `work` in the profile's exchange slot: after every earlier exchange of the profile
+   * (including its revoke) has finished, so two attempts never write the partition's cookies at
+   * once. Never rejects.
+   */
+  async function inSlot(profileId: string, work: () => Promise<void>): Promise<void> {
+    const run = (slots.get(profileId) ?? Promise.resolve()).then(work).catch((err: unknown) => {
+      log("sign-in exchange slot failed", err instanceof Error ? err.name : undefined);
+    });
+    slots.set(profileId, run);
+    try {
+      await run;
+    } finally {
+      if (slots.get(profileId) === run) slots.delete(profileId);
+    }
+  }
+
+  async function finish(attempt: Attempt, profile: Profile, code: string): Promise<void> {
+    // Cancelled or replaced while an earlier exchange held the slot: nothing is sent.
+    if (attempt.settled) return;
+    const { outcome, sessionSet } = await exchange(attempt, profile, code);
+    if (outcome.ok && !attempt.settled) {
+      settle(attempt, outcome);
+      if (attempt.viaCapability) {
+        try {
+          deps.onSignedIn(profile);
+        } catch (err) {
+          log("reloading after sign-in failed", err instanceof Error ? err.name : undefined);
+        }
+      }
+      return;
+    }
+    // A failure stands; a cancel that came first stands too.
+    if (!outcome.ok) fail(attempt, outcome.reason);
+    // A session the person no longer wants (cancelled meanwhile, or an answer that could not be
+    // used) is ended before the slot is released.
+    if (sessionSet) await revoke(attempt, profile);
   }
 
   function notifyStale(iss: unknown): void {
@@ -274,6 +360,7 @@ export function createSignIn(deps: SignInDeps) {
       createdAt: now(),
       viaCapability,
       settled: false,
+      abort: new AbortController(),
       cancelTimer: () => undefined,
       resolve,
     };
@@ -285,8 +372,10 @@ export function createSignIn(deps: SignInDeps) {
   const signIn = {
     /**
      * Starts (or restarts) the attempt for `profile`; an older attempt of the same profile ends as
-     * `cancelled`. The caller opens `url` in the system browser. `outcome` resolves once and never
-     * rejects.
+     * `cancelled` (an exchange it has running is aborted, and the new exchange waits for it). The
+     * caller opens `url` in the system browser, and calls `cancel()` if that fails. The attempt
+     * keeps the profile it was given (it need not be stored yet); the caller abandons it with
+     * `cancel()`. `outcome` resolves once and never rejects.
      */
     begin(profile: Profile): { url: string; outcome: Promise<SignInOutcome> } {
       const { url, outcome } = start(profile, false);
@@ -301,7 +390,11 @@ export function createSignIn(deps: SignInDeps) {
       return undefined;
     },
 
-    /** Ends the profile's attempt (waiting or exchanging) as `cancelled`. */
+    /**
+     * Ends the profile's attempt as `cancelled`, whether it waits for its callback or its exchange
+     * runs (the request is aborted; a session it still created is logged out). Await `quiesce()`
+     * before clearing the partition.
+     */
     cancel(profileId: string): void {
       for (const attempt of attemptsOf(profileId)) fail(attempt, "cancelled");
     },
@@ -335,28 +428,39 @@ export function createSignIn(deps: SignInDeps) {
         fail(attempt, cb.error === "access_denied" ? "cancelled" : "link_invalid");
         return;
       }
-      const profile = deps.getProfile(attempt.profile.id);
-      if (!profile || profile.base !== attempt.base) {
-        // Removed, or re-pointed elsewhere, while the browser was open.
-        fail(attempt, "cancelled");
-        return;
+      let profile = attempt.profile;
+      if (attempt.viaCapability) {
+        // A web page's attempt is for a stored profile: removed or re-pointed meanwhile, it ends.
+        const stored = deps.getProfile(attempt.profile.id);
+        if (!stored || stored.base !== attempt.base) {
+          fail(attempt, "cancelled");
+          return;
+        }
+        profile = stored;
       }
       if (typeof cb.code !== "string") {
         fail(attempt, "link_invalid");
         return;
       }
+      const code = cb.code;
       exchanging.set(cb.state, attempt);
-      const result = await exchange(attempt, profile, cb.code);
-      // Cancelled or replaced while the exchange ran: that outcome stands.
-      if (attempt.settled) return;
-      if (result.ok && attempt.viaCapability) deps.onSignedIn(profile);
-      settle(attempt, result);
+      await inSlot(profile.id, () => finish(attempt, profile, code));
+    },
+
+    /**
+     * Resolves once the profile has no exchange in flight (including the logout of a session a
+     * cancelled attempt still created). The host awaits it before clearing the partition.
+     */
+    async quiesce(profileId: string): Promise<void> {
+      for (let tail = slots.get(profileId); tail; tail = slots.get(profileId)) await tail;
     },
 
     /**
      * A callback whose `state` this app does not hold (expired, used, or another run's) and whose
      * `iss` parses as an http(s) URL: listeners get that URL's origin (link invalid, spec §6.6).
      * It never touches an attempt and makes no request; the listener decides whether it waited.
+     * A listener only shows the message: it must not cancel the pending attempt, since anyone can
+     * send such a link and the real callback may still come.
      */
     onStaleCallback(listener: (origin: string) => void): () => void {
       staleListeners.add(listener);
