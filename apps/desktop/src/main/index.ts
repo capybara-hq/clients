@@ -31,7 +31,13 @@ import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
-import { BUILTIN_TOKENS, backgroundOf, resolveAppearance } from "./appearance.ts";
+import {
+  BUILTIN_TOKENS,
+  backgroundOf,
+  electronColor,
+  overlayColors,
+  resolveAppearance,
+} from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -64,7 +70,6 @@ import {
 } from "./dock.ts";
 import { createConfirmGate, createShellBridge, type IpcMainLike } from "./ipc.ts";
 import { createLocalPages } from "./local-pages.ts";
-import { localeFrom } from "./locale.ts";
 import {
   createPlistReader,
   ensureManagedProfiles,
@@ -72,6 +77,7 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createOnboarding, type OnboardingWindow, platformName } from "./onboarding.ts";
+import { type CookieJarLike, createPreferences, installPreferenceActions } from "./preferences.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
 import { hardenAnyContents, installDenyAllPermissions, LOCAL_PARTITION } from "./security.ts";
@@ -180,6 +186,42 @@ function start(): void {
       newId: () => randomUUID(),
     });
 
+    // Theme and language (spec §6.10, §12): the profile's own cb-theme / NEXT_LOCALE cookies, the
+    // app's choice before any profile, else the OS. Every page, window and menu reads them here.
+    const prefs = createPreferences({
+      file: join(app.getPath("userData"), "preferences.json"),
+      fs,
+      cookiesFor: (p) =>
+        session.fromPartition(partitionFor(p.id)).cookies as unknown as CookieJarLike,
+      osLocale: () => app.getLocale(),
+      onChange: () => preferencesChanged(),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    /** The stored profile (its last chrome@1 report) for one a caller may hold an old copy of. */
+    const freshProfile = (p?: Pick<Profile, "id">): Profile | undefined =>
+      p ? profiles.get(p.id) : undefined;
+    const appearanceOf = (p?: Pick<Profile, "id">) => {
+      const profile = freshProfile(p);
+      return resolveAppearance(
+        nativeTheme.shouldUseDarkColors,
+        profile?.appearance,
+        prefs.theme(profile),
+      );
+    };
+    const localeOf = (p?: Pick<Profile, "id">) => prefs.locale(freshProfile(p));
+    /** The menus' language: the current profile's once one exists, else the app's, else the OS. */
+    const menuLocale = () => prefs.menuLocale(freshProfile(profiles.lastUsed()), visibleProfiles());
+    /**
+     * A theme or language changed (a toggle, a cookie the web wrote, a chrome@1 report, the OS):
+     * every local page re-renders, the small window recolors, the menus follow the language.
+     */
+    function preferencesChanged(): void {
+      localPages.push();
+      onboarding.refresh();
+      ui.stateChanged();
+    }
+    nativeTheme.on("updated", () => preferencesChanged());
+
     // One dialog at a time per profile, for a page's call and the tray's click alike.
     const confirmGate = createConfirmGate();
     const control = controlClient(deviceStateDir(process.env, homedir()));
@@ -238,7 +280,7 @@ function start(): void {
       },
       // Only to each profile's own origin; the token exchange sets the same value itself.
       userAgent: desktopUserAgent(shellVersion, hostname()),
-      backgroundColor: () => (nativeTheme.shouldUseDarkColors ? "#161715" : "#f7f7f5"),
+      backgroundColor: (profile) => backgroundOf(appearanceOf(profile)),
       // Spec §6.7: the main window opens where it was, else 1280×800 centered.
       displays: () => {
         const primary = screen.getPrimaryDisplay().id;
@@ -263,7 +305,16 @@ function start(): void {
       SHELL_CAPABILITY_KEYS.openExternal,
       createOpenExternalCapability({ openExternal: (url) => shell.openExternal(url) }),
     );
-    bridge.registerCapability(CHROME_CAPABILITY_KEY, createChromeCapability());
+    bridge.registerCapability(
+      CHROME_CAPABILITY_KEY,
+      createChromeCapability({
+        // The last report per profile carries its colors to the local pages (spec §6.10).
+        onReport: (profile, appearance) => {
+          profiles.update(profile.id, { appearance });
+          preferencesChanged();
+        },
+      }),
+    );
     /** The profile partition's own fetch (its cookie jar, its webRequest listeners). */
     const partitionFetch = (profile: Profile): FetchLike => {
       const ses = session.fromPartition(partitionFor(profile.id));
@@ -319,17 +370,19 @@ function start(): void {
       preloadPath: join(dist, "preload", "local.cjs"),
       liveParent: (parent) =>
         parent instanceof BrowserWindow && !parent.isDestroyed() ? parent : undefined,
-      pageBase: () => ({
-        locale: localeFrom(app.getLocale()),
-        appearance: resolveAppearance(nativeTheme.shouldUseDarkColors),
+      pageBase: (profileId) => ({
+        locale: localeOf(profileId === undefined ? undefined : { id: profileId }),
+        appearance: appearanceOf(profileId === undefined ? undefined : { id: profileId }),
         controls: null,
         os: platform,
         appName: brand.productName,
         version: shellVersion,
       }),
       workArea: () => screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
-      backgroundColor: () =>
-        BUILTIN_TOKENS[nativeTheme.shouldUseDarkColors ? "dark" : "light"].panel,
+      backgroundColor: (profileId) => {
+        const a = appearanceOf(profileId === undefined ? undefined : { id: profileId });
+        return electronColor(a.tokens?.panel) ?? BUILTIN_TOKENS[a.scheme].panel;
+      },
       log: (message, err) => console.error(message, err ?? ""),
     });
     const showDialog = shellDialogs.show;
@@ -341,7 +394,9 @@ function start(): void {
       dialogs: createDeviceDialogs({
         showDialog,
         iconFor,
-        locale: localeFrom(app.getLocale()),
+        get locale() {
+          return menuLocale();
+        },
         platform: process.platform,
       }),
       texts: createDeviceTexts({
@@ -362,14 +417,14 @@ function start(): void {
     bridge.install(ipcMain as unknown as IpcMainLike);
     // The small window (spec §6.1): connect, found, waiting and signed-out, and the sign-in from
     // there. A profile is saved only when its first sign-in completes (spec §6.3).
-    const pageAppearance = (profile?: Profile) =>
-      resolveAppearance(nativeTheme.shouldUseDarkColors, profile?.appearance);
+    // The provisional profile whose sign-in began last: its partition gets the app's choices.
+    let begun: Profile | undefined;
     const onboarding = createOnboarding({
       localPages,
       openWindow: (colors) => windows.openSmallWindow(colors).window as unknown as OnboardingWindow,
       pageBase: (profile) => ({
-        locale: localeFrom(app.getLocale()),
-        appearance: pageAppearance(profile),
+        locale: localeOf(profile),
+        appearance: appearanceOf(profile),
         os: platform,
         appName: brand.productName,
         version: shellVersion,
@@ -377,7 +432,7 @@ function start(): void {
       controls: smallWindowControls(platform),
       colors: (appearance) => ({
         background: backgroundOf(appearance),
-        symbol: appearance.tokens?.muted ?? BUILTIN_TOKENS[appearance.scheme].muted,
+        symbol: overlayColors(appearance).symbolColor,
       }),
       discover: (base, signal) => discover(base, net.fetch as typeof fetch, signal),
       platformIcon: async (deployment, icon) => {
@@ -393,7 +448,16 @@ function start(): void {
       isAllowed: (address) => isAddressAllowed(managed, address),
       findProfile: (base) => profiles.list().find((p) => p.base === base),
       newId: () => randomUUID(),
-      signIn,
+      signIn: {
+        ...signIn,
+        // Spec §6.10: the app's choices seed the partition before the sign-in can load anything
+        // in it (a cookie it holds already stays).
+        begin: (profile) => {
+          begun = profile;
+          void prefs.seed(profile);
+          return signIn.begin(profile);
+        },
+      },
       redirectUri: REDIRECT_URI,
       openExternal: (url) => shell.openExternal(url),
       writeClipboard: (text) => clipboard.writeText(text),
@@ -409,6 +473,7 @@ function start(): void {
           ...(provisional.iconHash ? { iconHash: provisional.iconHash } : {}),
         });
         const saved = profiles.update(added.id, { signedIn: true, account }) ?? added;
+        void prefs.seed(saved).finally(() => prefs.watch(saved));
         ui.profilesChanged();
         trayDevice.refresh();
         return saved;
@@ -487,7 +552,6 @@ function start(): void {
 
     // Tray, app menu and Dock icon: one refresh after anything that changes the profiles.
     const startAtLogin = createStartAtLogin(app);
-    const locale = localeFrom(app.getLocale());
     // Spec §6.3: from the app menu or the tray; never under `lockDeployments` (the offered
     // profiles are then the managed ones).
     const removal = createProfileRemoval({
@@ -497,13 +561,18 @@ function start(): void {
       dialogParent: (id) => windows.dialogParent(id),
       showDialog,
       iconFor,
-      locale,
+      get locale() {
+        return menuLocale();
+      },
       beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
       closeProfileWindows: (id) => {
         windows.closeProfileWindows(id);
         onboarding.profileRemoved(id);
       },
-      removeProfile: (id) => profiles.remove(id),
+      removeProfile: async (id) => {
+        await profiles.remove(id);
+        prefs.forget(id);
+      },
       forgetAvailability: (id) => deviceAvailability.forget(id),
       onRemoved: () => {
         ui.profilesChanged();
@@ -522,6 +591,7 @@ function start(): void {
         shellDialogs.confirmSignOut(
           windows.dialogParent(profile.id) ?? null,
           dialogPlatformOf(profile, iconFor(profile)),
+          profile.id,
         ),
       fetchFor: partitionFetch,
       clearSessionCookies,
@@ -586,7 +656,7 @@ function start(): void {
     function render(): void {
       const visible = visibleProfiles();
       const state = {
-        locale,
+        locale: menuLocale(),
         profiles: visible.map((p) => ({ id: p.id, name: p.name, signedIn: p.signedIn })),
         activeId: profiles.lastUsed()?.id,
         lockDeployments: managed.lockDeployments === true,
@@ -643,6 +713,23 @@ function start(): void {
       if (platform !== "macos") app.quit();
     });
 
+    // The local pages' theme and language toggles (spec §6.10): the page's profile, else the app
+    // level. A provisional profile's pages are app level; its partition follows the app's choice.
+    const reseedProvisional = async () => {
+      const current = onboarding.current();
+      if (current?.provisional && begun && current.profileId === begun.id) {
+        await prefs.seed(begun, { overwrite: true });
+      }
+    };
+    installPreferenceActions({
+      localPages,
+      prefs,
+      getProfile: (id) => profiles.get(id),
+      appearanceOf,
+      afterAppLevel: reseedProvisional,
+    });
+    for (const p of profiles.list()) void prefs.watch(p);
+
     ui.profilesChanged();
     trayDevice.start();
     openDefault();
@@ -667,7 +754,11 @@ function start(): void {
           },
         };
       },
-      add: (candidate) => profiles.add(candidate),
+      add: (candidate) => {
+        const added = profiles.add(candidate);
+        void prefs.seed(added).finally(() => prefs.watch(added));
+        return added;
+      },
     }).then((added) => {
       if (added > 0) {
         ui.profilesChanged();
@@ -692,7 +783,9 @@ function start(): void {
       });
       const notice = updateNotice({
         Notification: Notification as unknown as NotificationClass,
-        locale,
+        get locale() {
+          return menuLocale();
+        },
         restart: () => updates.restart(),
       });
       app.on("will-quit", () => updates.dispose());

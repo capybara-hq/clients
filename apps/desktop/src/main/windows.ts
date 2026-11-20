@@ -190,7 +190,8 @@ export interface WindowManagerDeps {
   onFocusProfile(profile: Profile): void;
   /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
   userAgent: string;
-  backgroundColor?: () => string;
+  /** A window's ground before its page paints: the profile's appearance (desktop spec §6.10). */
+  backgroundColor?: (profile: Profile) => string;
   /** The displays' work areas, for the main window's first rectangle (`screen.getAllDisplays`). */
   displays?: () => DisplayInfo[];
   /** Remembers a main window's rectangle for its profile (spec §6.7). */
@@ -340,7 +341,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       title: profile.name,
       titleBarStyle: "hiddenInset",
       trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
-      ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
+      ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
       webPreferences: profileWebPreferences({ partition, preload: deps.preloadPath }),
     });
     const entry: Extract<Entry, { kind: "profile" }> = { kind: "profile", profile, window: win };
@@ -473,7 +474,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
         // The default title bar: the page has no inset for traffic lights.
         title: profile.name,
         ...(parentAlive ? { parent } : {}),
-        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor() } : {}),
+        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
         webPreferences: childWebPreferences({ partition: preparePartition(profile) }),
       });
       hardenProfileContents(win.webContents, {

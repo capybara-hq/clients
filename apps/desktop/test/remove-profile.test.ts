@@ -78,6 +78,7 @@ describe("removing a platform (spec 6.3)", () => {
       confirmId: 1,
       tone: "danger",
       platform: { name: "Example", host: "a.example.com" },
+      profileId: "p1",
     });
   });
 
