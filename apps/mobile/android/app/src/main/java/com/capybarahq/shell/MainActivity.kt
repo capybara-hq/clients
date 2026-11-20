@@ -70,6 +70,17 @@ class MainActivity : BridgeActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        AuthSession.attempts.onPause()
+    }
+
+    /** Decision 10: back from the Custom Tab with the attempt pending and no callback: cancelled. */
+    override fun onResume() {
+        super.onResume()
+        AuthSession.attempts.onResume()
+    }
+
     override fun onDestroy() {
         profileHost.destroy()
         super.onDestroy()

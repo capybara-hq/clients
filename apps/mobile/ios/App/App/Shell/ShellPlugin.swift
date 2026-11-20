@@ -6,6 +6,7 @@
 // `document` events (the document events let the runtime cancel a dead document's calls and
 // push the current state to a new one).
 
+import AuthenticationServices
 import Capacitor
 import Foundation
 import UIKit
@@ -24,11 +25,17 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setAppearance", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "launchOptions", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openExternal", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "signInStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "signInExchange", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "currentOrigin", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "reload", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "appInfo", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
 
     @MainActor private var host: ProfileHost?
+    @MainActor private var auth: AuthSession?
 
     @MainActor private func profileHost() -> ProfileHost? {
         if let host { return host }
@@ -125,19 +132,16 @@ extension ShellPlugin {
     @objc func open(_ call: CAPPluginCall) {
         guard let profileId = call.getString("profileId"), let origin = call.getString("origin"),
               let base = call.getString("base"), let dataStoreId = call.getString("dataStoreId"),
-              let state = call.getObject("state")
+              let state = call.getObject("state"), let blockRules = call.getString("blockRules")
         else {
-            call.reject("open needs profileId, origin, base, dataStoreId and state")
+            call.reject("open needs profileId, origin, base, dataStoreId, state and blockRules")
             return
         }
         DispatchQueue.main.async {
             guard let host = self.profileHost() else { return call.reject("no profile host") }
-            do {
-                try host.open(ProfileHost.Spec(profileId: profileId, origin: origin, base: base,
-                                               dataStoreId: dataStoreId, state: state))
-                call.resolve()
-            } catch {
-                call.reject("\(error)")
+            host.open(ProfileHost.Spec(profileId: profileId, origin: origin, base: base,
+                                       dataStoreId: dataStoreId, state: state, blockRules: blockRules)) { error in
+                if let error { call.reject("\(error)") } else { call.resolve() }
             }
         }
     }
@@ -235,5 +239,78 @@ extension ShellPlugin: ShellCallSink {
     func profileWebView(_ webView: ProfileWebView, didCall call: ShellCall) {
         remember(webView)
         notifyListeners("call", data: call.message)
+    }
+}
+
+// MARK: Sign-in (Task 17, src/runtime/sign-in.ts)
+
+extension ShellPlugin {
+    /// The brand's URL scheme (Info.plist `CFBundleURLTypes`, from Brand.xcconfig).
+    static var brandScheme: String? {
+        let types = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]]
+        return (types?.first?["CFBundleURLSchemes"] as? [String])?.first?.lowercased()
+    }
+
+    /// Shows `ASWebAuthenticationSession` on the authorize URL; resolves `{ callback }` or
+    /// `{ cancelled: true }`.
+    @objc func signInStart(_ call: CAPPluginCall) {
+        guard let raw = call.getString("url"), let url = ExternalURL.parse(raw),
+              let scheme = call.getString("scheme"), scheme == ShellPlugin.brandScheme
+        else {
+            call.reject("signInStart needs an http(s) url and the app's scheme")
+            return
+        }
+        DispatchQueue.main.async {
+            let session = self.auth ?? AuthSession(anchor: { [weak self] in
+                self?.bridge?.viewController?.view.window ?? ASPresentationAnchor()
+            })
+            self.auth = session
+            session.start(url: url, scheme: scheme) { result in
+                switch result {
+                case .success(.callback(let link)): call.resolve(["callback": link])
+                case .success(.cancelled): call.resolve(["cancelled": true])
+                case .failure(let error): call.reject("sign-in could not start (\(error))")
+                }
+            }
+        }
+    }
+
+    /// The code exchange in the profile WebView's top document (ProfileWebView.exchange).
+    @objc func signInExchange(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId"), let url = call.getString("url"),
+              let body = call.getString("body")
+        else {
+            call.reject("signInExchange needs profileId, url and body")
+            return
+        }
+        DispatchQueue.main.async {
+            guard let view = self.profileHost()?.view(for: profileId) else { return call.reject("no profile WebView") }
+            view.exchange(url: url, body: body) { call.resolve($0) }
+        }
+    }
+
+    /// The profile WebView's top-level origin when it is the profile origin, else null.
+    @objc func currentOrigin(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("currentOrigin needs profileId") }
+        DispatchQueue.main.async {
+            let origin = self.profileHost()?.view(for: profileId)?.currentProfileOrigin
+            call.resolve(["origin": origin ?? NSNull()])
+        }
+    }
+
+    @objc func reload(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("reload needs profileId") }
+        DispatchQueue.main.async {
+            self.profileHost()?.view(for: profileId)?.reloadAfterSignIn()
+            call.resolve()
+        }
+    }
+
+    /// The device's name (shown on the consent page and in the session list) and the app version.
+    @objc func appInfo(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+            call.resolve(["deviceName": UIDevice.current.name, "appVersion": version])
+        }
     }
 }

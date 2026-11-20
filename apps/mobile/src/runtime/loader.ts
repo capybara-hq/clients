@@ -13,6 +13,7 @@ import { type AppearanceStore, nativeLook } from "./appearance.ts";
 import type { DocumentEvent, HostPort, LoadEvent, ProfileHostPort } from "./host-port.ts";
 import type { ProfileRef } from "./protocol.ts";
 import type { CapabilityRegistry } from "./registry.ts";
+import { blockRulesFor } from "./sign-in-block.ts";
 import type { Splash } from "./splash.ts";
 
 /** The fields of a profile the loader reads (Task 14's `Profile` has them). */
@@ -22,7 +23,8 @@ export interface LoaderProfile extends ProfileRef {
   name: string | null;
 }
 
-export type ErrorKind = "unreachable" | "tls" | "crashed" | "wipe_owed";
+/** `too_old`: the deployment's meta has no `features.appSignIn` (mobile spec §4.3). */
+export type ErrorKind = "unreachable" | "tls" | "crashed" | "wipe_owed" | "too_old";
 
 /** What the error page shows; it is a local page, so it learns only these values. */
 export interface ErrorState {
@@ -46,6 +48,11 @@ export interface Loader {
   ready(profileId: string): void;
   /** The error page's retry: opens the shown profile again. */
   retry(): Promise<void>;
+  /**
+   * The profile's deployment is too old for app sign-in (`SignInSupport`): its capabilities are
+   * pushed again (no signIn@1) and, when it is the profile shown, the too-old state shows.
+   */
+  tooOld(profileId: string): void;
   stop(): void;
 }
 
@@ -127,6 +134,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
         base: profile.base,
         dataStoreId: profile.dataStoreId,
         state: stateOf(profile),
+        blockRules: blockRulesFor(profile.base),
       });
     } catch (err) {
       // Android single store: the wipe of the previous deployment's data is still owed, so native
@@ -143,6 +151,11 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
     },
     async retry() {
       if (shown) await open(shown);
+    },
+    tooOld(profileId) {
+      const profile = deps.profiles().find((p) => p.id === profileId) as P | undefined;
+      if (profile) deps.calls.pushState(profile.id, stateOf(profile)).catch(() => {});
+      if (shown?.id === profileId) showError("too_old");
     },
     stop() {
       for (const stop of stops) stop();

@@ -8,7 +8,9 @@
 // Start: `startRoute` picks the profile to open or the address page (a debug build launched by a
 // UI test opens the test's loopback origin instead, or the address page over an empty in-memory
 // profile list). Managed configuration (Task 18) is not read yet. The address page discovers and
-// adds a deployment through this document (src/runtime/address-bridge.ts), then it opens.
+// adds a deployment through this document (src/runtime/address-bridge.ts), then it opens and its
+// Sign in starts the browser sign-in for it (src/runtime/sign-in.ts). Each profile opened is asked
+// for its meta: a deployment too old for app sign-in gets the too-old state and no signIn@1.
 import { registerPlugin } from "@capacitor/core";
 import { Haptics } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
@@ -53,6 +55,14 @@ import {
   preloadPrefs,
 } from "../runtime/profiles.ts";
 import { createRegistry, serveCalls } from "../runtime/registry.ts";
+import {
+  appInfoFrom,
+  createSignIn,
+  createSignInSupport,
+  randomState,
+  type SignInNative,
+  signInPortsFrom,
+} from "../runtime/sign-in.ts";
 import { createSplash } from "../runtime/splash.ts";
 
 /**
@@ -67,7 +77,8 @@ interface LaunchOptions {
 
 type HostPlugin = CapybaraHostPlugin &
   ProfileHostPlugin &
-  HttpGetNative & {
+  HttpGetNative &
+  SignInNative & {
     launchOptions(): Promise<LaunchOptions>;
     openExternal(options: { url: string }): Promise<void>;
   };
@@ -163,7 +174,21 @@ async function main(): Promise<void> {
   });
   const appearance = createAppearanceStore(backend);
   let loader: ReturnType<typeof createLoader> | undefined;
+  const httpGet = httpGetPortFrom(plugin);
+  const support = createSignInSupport({ httpGet, onTooOld: (id) => loader?.tooOld(id) });
+  const info = await appInfoFrom(plugin);
+  const signIn = createSignIn<LoaderProfile>({
+    ...signInPortsFrom(plugin),
+    deviceName: info.deviceName,
+    appVersion: info.appVersion,
+    now: () => Date.now(),
+    newState: randomState,
+    scheme: brand.scheme,
+    // The stored profiles now: an attempt ends when its profile is removed or re-pointed.
+    profiles: { list: () => list() },
+  });
   registerMobileCapabilities(registry, {
+    signIn: { capability: signIn.capability, available: (p) => support.available(p) },
     chrome: createChrome({
       appearance,
       native: { setAppearance: (id, look) => profileHost.setAppearance(id, look) },
@@ -188,13 +213,21 @@ async function main(): Promise<void> {
     const message: ErrorStateMessage = { type: "error-state", state: errorState, locale: locale() };
     frames.post(message);
   };
-  const openProfile = (id: string) =>
-    void switchTo(id).then((next) => {
-      if (next) void loader?.open(next);
-    });
+  // Opens the profile, then asks its deployment whether it can do app sign-in (too old: the
+  // too-old state). Resolves whether it opened.
+  const openShown = async (profile: LoaderProfile): Promise<void> => {
+    await loader?.open(profile);
+    void support.check(profile);
+  };
+  const openProfile = async (id: string): Promise<boolean> => {
+    const next = await switchTo(id);
+    if (!next) return false;
+    await openShown(next);
+    return true;
+  };
   const showError = () => frames.show("error", "error/index.html");
   const address = createAddressHost({
-    httpGet: httpGetPortFrom(plugin),
+    httpGet,
     lockedBase: () => {
       const preset = effectivePreset(brand, null);
       return preset?.locked ? preset.base : null;
@@ -203,9 +236,13 @@ async function main(): Promise<void> {
       if (!profiles) throw new Error("no profile store");
       return profiles.add(found);
     },
+    // The person tapped Sign in: the deployment opens under the browser sign-in, which signs it
+    // in (or leaves the web's own sign-in page with signIn@1 when they cancel).
     opened: (profileId) => {
       frames.hide();
-      openProfile(profileId);
+      void openProfile(profileId)
+        .then((opened) => (opened ? signIn.begin(profileId) : undefined))
+        .catch(() => {});
     },
     closed: () => (errorState ? showError() : frames.hide()),
     post: (message) => {
@@ -221,7 +258,7 @@ async function main(): Promise<void> {
   onPageMessage = (page, data) => {
     if (page === "error" && isErrorPageMessage(data)) {
       if (data.type === "error-page-ready") sendErrorState();
-      else if (data.action === "open") openProfile(data.profileId);
+      else if (data.action === "open") void openProfile(data.profileId).catch(() => {});
       else if (data.action === "retry") void loader?.retry();
       else showAddress();
     } else if (page === "address" && isAddressPageMessage(data)) {
@@ -252,7 +289,7 @@ async function main(): Promise<void> {
   const route = await start;
   const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
   if (first) {
-    await loader.open(first);
+    await openShown(first);
   } else {
     splash.failed();
     showAddress();

@@ -11,10 +11,15 @@ const host: HostPort = {
 };
 
 describe("the capabilities the runtime offers a profile", () => {
-  test("chrome, haptics, share, menu and openExternal, never device@1 or notify@1", () => {
+  test("signIn, chrome, haptics, share, menu and openExternal, never device@1 or notify@1", () => {
     const profile = { id: "p1", origin: "https://a.example" };
-    const registry = createRegistry({ host, profiles: { list: () => [profile] } });
+    const old = { id: "p2", origin: "https://b.example" };
+    const registry = createRegistry({ host, profiles: { list: () => [profile, old] } });
     registerMobileCapabilities(registry, {
+      signIn: {
+        capability: { functions: { start: async () => "signedIn" }, confirming: ["start"] },
+        available: (p) => p.id !== old.id,
+      },
       chrome: { functions: { setAppearance: async () => {}, ready: async () => {} } },
       haptics: {
         selectionChanged: vi.fn(async () => {}),
@@ -26,11 +31,14 @@ describe("the capabilities the runtime offers a profile", () => {
       openExternal: { open: vi.fn(async () => {}) },
     });
     expect(registry.descriptors(profile).capabilities).toEqual({
+      "signIn@1": ["start"],
       "chrome@1": ["setAppearance", "ready"],
       "haptics@1": ["impact"],
       "share@1": ["share"],
       "menu@1": ["show"],
       "openExternal@1": ["open"],
     });
+    // A deployment too old for app sign-in is not offered signIn@1.
+    expect(Object.keys(registry.descriptors(old).capabilities)).not.toContain("signIn@1");
   });
 });

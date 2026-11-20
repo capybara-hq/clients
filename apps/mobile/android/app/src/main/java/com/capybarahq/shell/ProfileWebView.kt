@@ -17,6 +17,10 @@
 // commit (`didFailProvisional`, a TLS error never proceeds), a finished load, a dead render
 // process (R11: the host recreates the WebView and shows the error state).
 //
+// Sign-in (Task 17): every request of the WebView and of its profile's service workers meets
+// `SignInGuard` in `shouldInterceptRequest` (the in-WebView sign-in routes answer 403); the code
+// exchange runs `ExchangeScript` in the top document, only while it is on the profile origin.
+//
 // R9: without DOCUMENT_START_SCRIPT and WEB_MESSAGE_LISTENER (and MULTI_PROFILE for a named
 // profile; a WebView without it runs the single store, Decision 9) no profile WebView is made and
 // no remote origin loads: `create` answers Unsupported.
@@ -34,10 +38,13 @@ import android.os.Message
 import android.util.Log
 import android.webkit.JsResult
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.JavaScriptReplyProxy
@@ -195,6 +202,8 @@ class ProfileWebView private constructor(
     /** The origin the main frame is loading (a certificate error there is a main-frame failure). */
     private var mainTarget: Origin? = null
     private var gone = false
+    /** Counts main-frame documents: an exchange whose document went away never reports. */
+    private var documentGeneration = 0L
 
     private var current: JavaScriptReplyProxy? = null
     private var currentDocId: String? = null
@@ -261,9 +270,14 @@ class ProfileWebView private constructor(
             if (origin == null || origin.serialized != profileOrigin) return Result.Refused("bad_origin")
 
             val view = ProfileWebView(context, profileId, origin, base, pendingLifetimeMs)
+            // The profile's service workers meet the same sign-in guard as its pages. The single
+            // store (Decision 9) has one WebView at a time, so the process-wide client is its own.
             if (profileName != null) {
-                ProfileStore.getInstance().getOrCreateProfile(profileName)
+                val profile = ProfileStore.getInstance().getOrCreateProfile(profileName)
                 WebViewCompat.setProfile(view, profileName)
+                profile.serviceWorkerController.setServiceWorkerClient(SignInServiceWorkerClient(base))
+            } else {
+                ServiceWorkerController.getInstance().setServiceWorkerClient(SignInServiceWorkerClient(base))
             }
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
@@ -419,6 +433,57 @@ class ProfileWebView private constructor(
         super.destroy()
     }
 
+    // ---- Sign-in (Task 17) ----
+
+    /** The top document's origin when it is the profile origin, else null. */
+    fun currentProfileOrigin(): String? {
+        val now = NavUrl.parse(url ?: "")?.origin
+        return if (committedOrigin == profileOrigin && now == profileOrigin) profileOrigin.serialized else null
+    }
+
+    /** After a sign-in: the page again when it is on the profile origin, else the base. */
+    fun reloadAfterSignIn() {
+        if (currentProfileOrigin() != null) reload() else loadBase()
+    }
+
+    /**
+     * The code exchange (decision 6): `ExchangeScript` POSTs `body` to `url` from the top document,
+     * so the session cookie lands in this WebView's profile store only. Refused unless the top
+     * document and `url` are on the profile origin; the script checks the origin again in the
+     * page. `done` gets `{ ok, status, hasAccount }` once: the script's answer, a refusal, the
+     * document going away, or the deadline ([ExchangeScript.DEADLINE_MS], a total one).
+     */
+    fun exchange(url: String, body: String, done: (JSONObject) -> Unit) {
+        val failed = { status: Int -> JSONObject().put("ok", false).put("status", status).put("hasAccount", false) }
+        if (currentProfileOrigin() == null || NavUrl.parse(url)?.origin != profileOrigin) {
+            done(failed(0))
+            return
+        }
+        val key = ExchangeScript.newKey()
+        val generation = documentGeneration
+        val deadline = System.currentTimeMillis() + ExchangeScript.DEADLINE_MS
+        var finished = false
+        val finish = { result: JSONObject ->
+            if (!finished) {
+                finished = true
+                done(result)
+            }
+        }
+        lateinit var poll: Runnable
+        poll = Runnable {
+            if (finished) return@Runnable
+            if (gone || generation != documentGeneration) return@Runnable finish(failed(0))
+            if (System.currentTimeMillis() >= deadline) return@Runnable finish(failed(0))
+            evaluateJavascript(ExchangeScript.take(key)) { raw ->
+                val result = ExchangeScript.parse(raw)
+                if (result != null) finish(result) else main.postDelayed(poll, ExchangeScript.POLL_MS)
+            }
+        }
+        evaluateJavascript(ExchangeScript.source(url, body, profileOrigin.serialized, key)) {
+            main.postDelayed(poll, ExchangeScript.POLL_MS)
+        }
+    }
+
     // ---- Navigation and loading ----
 
     /** True while the main frame's last started page is not on the profile origin. */
@@ -500,6 +565,7 @@ class ProfileWebView private constructor(
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             // A new main-frame document: the one that said hello is gone.
+            documentGeneration++
             endDocument()
             NavUrl.parse(url ?: "")?.origin?.let { onOrigin?.invoke(it.serialized) }
             if (url != null && backstop(url)) return
@@ -514,6 +580,10 @@ class ProfileWebView private constructor(
                 committedOrigin = NavUrl.parse(url)?.origin
             }
         }
+
+        /** Off the main thread: the in-WebView sign-in routes answer 403 (SignInGuard.kt). */
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            SignInGuard.intercept(request.method, request.url.toString(), base, SignInGuard::forbidden)
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (mainFrameFailed || gone) return
@@ -563,5 +633,84 @@ class ProfileWebView private constructor(
     private fun report(event: Map<String, Any?>) {
         val m = monitor
         if (m != null) m.onGate(this, event) else Log.i(TAG, event.toString())
+    }
+}
+
+/** The profile's service workers: the same sign-in guard as its pages. */
+class SignInServiceWorkerClient(private val base: String) : ServiceWorkerClient() {
+    override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+        SignInGuard.intercept(request.method, request.url.toString(), base, SignInGuard::forbidden)
+}
+
+/**
+ * The code exchange, run in the profile's top document with `evaluateJavascript` (decision 6: the
+ * page world, the same trust as the page). The script is a fixed string; the only value spliced in
+ * is one JSON argument object. Its answer is left under a random key on `window` and read back by
+ * [take] (evaluateJavascript cannot await a promise); it holds only `{ ok, status, hasAccount }`.
+ */
+object ExchangeScript {
+    /** The total deadline, a little past the script's own 30 s `AbortSignal.timeout`. */
+    const val DEADLINE_MS: Long = 31_000
+    const val POLL_MS: Long = 100
+
+    internal const val PREFIX = """(function (a) {
+  "use strict";
+  var put = function (r) {
+    try {
+      Object.defineProperty(window, a.key, { value: JSON.stringify(r), configurable: true });
+    } catch (e) {}
+  };
+  var failed = { ok: false, status: 0, hasAccount: false };
+  if (location.origin !== a.origin) return put(failed);
+  var init = {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
+    body: a.body,
+    credentials: "include",
+    redirect: "error",
+    cache: "no-store"
+  };
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    init.signal = AbortSignal.timeout(30000);
+  }
+  fetch(a.url, init).then(function (res) {
+    if (!res.ok) return put({ ok: false, status: res.status, hasAccount: false });
+    return res.json().then(function (data) {
+      var account = data !== null && typeof data === "object" ? data.account : null;
+      put({ ok: true, status: res.status, hasAccount: account !== null && typeof account === "object" });
+    }, function () {
+      put({ ok: true, status: res.status, hasAccount: false });
+    });
+  }).catch(function () { put(failed); });
+})("""
+
+    fun newKey(): String = "__capybaraExchange_" + java.util.UUID.randomUUID().toString().replace("-", "")
+
+    /** The script with its one JSON argument object. */
+    fun source(url: String, body: String, origin: String, key: String): String {
+        val args = JSONObject().put("url", url).put("body", body).put("origin", origin).put("key", key)
+        return PREFIX + args.toString() + ");"
+    }
+
+    /** Reads and removes the answer under `key`: a JSON string, or null while it is not there. */
+    fun take(key: String): String {
+        val k = JSONObject.quote(key)
+        return "(function (k) { var v = window[k]; if (v === undefined) return null; " +
+            "try { delete window[k]; } catch (e) {} return v; })($k);"
+    }
+
+    /** `evaluateJavascript`'s result of [take]: the answer, or null when there is none yet. */
+    fun parse(raw: String?): JSONObject? {
+        if (raw == null || raw == "null") return null
+        return try {
+            val text = JSONArray("[$raw]").getString(0)
+            val r = JSONObject(text)
+            JSONObject()
+                .put("ok", r.optBoolean("ok", false))
+                .put("status", r.optInt("status", 0))
+                .put("hasAccount", r.optBoolean("hasAccount", false))
+        } catch (_: Exception) {
+            null
+        }
     }
 }

@@ -84,6 +84,12 @@ export interface OpenProfileRequest {
   dataStoreId: string;
   /** The document-start init: insets, capabilities and events. */
   state: ShellState;
+  /**
+   * The sign-in block rules for `base` (`blockRulesFor`, a WebKit content rule list as JSON). iOS
+   * compiles them and adds them before the first load, and opens nothing when that fails; Android
+   * blocks the same routes with its Kotlin guard and ignores this.
+   */
+  blockRules: string;
 }
 
 /** The profile WebView host on the native side (also the `CapybaraHost` plugin). */

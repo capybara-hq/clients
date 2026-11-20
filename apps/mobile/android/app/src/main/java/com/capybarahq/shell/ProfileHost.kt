@@ -56,6 +56,9 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
     /** The shown profile's WebView, for system back. */
     val current: ProfileWebView? get() = shown?.let { views[it] }
 
+    /** The profile's WebView, if it was made (sign-in runs its exchange there). */
+    fun view(profileId: String): ProfileWebView? = views[profileId]
+
     /** Shows the profile's WebView and loads its base; an error text when it cannot be made. */
     fun open(spec: Spec): String? {
         // Single store (Decision 9): one deployment at a time, so no other profile's WebView lives.

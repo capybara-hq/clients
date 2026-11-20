@@ -1,5 +1,5 @@
 // The navigation policy against the vectors vitest and XCTest read too (apps/mobile/test/fixtures/
-// navigation.json), and its sign-in guard against packages/shell's in-window-sign-in.json.
+// navigation.json). The sign-in guard's vectors are in SignInGuardTest.
 // Gradle runs unit tests in the module directory (apps/mobile/android/app).
 
 package com.capybarahq.shell
@@ -32,19 +32,6 @@ class NavigationTest {
                 v.getBoolean("fromProfileOrigin"),
             )
             assertEquals(v.getString("name"), v.getString("expect"), got.wire)
-        }
-    }
-
-    @Test
-    fun theSharedSignInVectors() {
-        val vectors = load("../../../../packages/shell/test/fixtures/in-window-sign-in.json")
-        assertTrue(vectors.length() > 100)
-        for (i in 0 until vectors.length()) {
-            val v = vectors.getJSONObject(i)
-            val method = v.getString("method")
-            val url = v.getString("url")
-            val base = v.getString("base")
-            assertEquals("$method $url on $base", v.getBoolean("blocked"), SignInGuard.isInWindowSignIn(method, url, base))
         }
     }
 

@@ -16,10 +16,12 @@ final class ProfileHost {
         let base: String
         let dataStoreId: String
         let state: [String: Any]
+        /// The sign-in block rules (`blockRulesFor(base)`), compiled before the first load.
+        let blockRules: String
     }
 
     enum OpenError: Error {
-        case noStore, noScript, notCreated(Error)
+        case noStore, noScript, notCreated(Error), noBlockRules(Error)
     }
 
     weak var controller: CAPBridgeViewController?
@@ -57,14 +59,29 @@ final class ProfileHost {
         }
     }
 
-    func open(_ spec: Spec) throws {
+    /// Shows the profile's WebView and loads its base once its sign-in block rules are in force;
+    /// when they cannot be compiled nothing loads (fail closed) and `done` gets the error.
+    func open(_ spec: Spec, done: @escaping (Error?) -> Void) {
         attachContainer()
-        let view = try views[spec.profileId] ?? make(spec)
+        let view: ProfileWebView
+        do {
+            view = try views[spec.profileId] ?? make(spec)
+        } catch {
+            return done(error)
+        }
         shown = spec.profileId
         for (id, v) in views { v.isHidden = id != spec.profileId }
         container.isHidden = false
-        view.loadBase()
+        view.installBlockRules(spec.blockRules) { [weak self, weak view] error in
+            if let error { return done(OpenError.noBlockRules(error)) }
+            guard let self, let view, self.shown == spec.profileId else { return done(nil) }
+            view.loadBase()
+            done(nil)
+        }
     }
+
+    /// The profile's WebView, if it was made (sign-in runs its exchange there).
+    func view(for profileId: String) -> ProfileWebView? { views[profileId] }
 
     /// Hides the profile's WebView: the local error page underneath shows instead of its page.
     func showError(_ profileId: String) {

@@ -12,7 +12,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
+import android.provider.Settings
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -182,6 +184,80 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
                 call.reject("nothing can open this URL")
             }
         }
+    }
+
+    // ---- Sign-in (Task 17, src/runtime/sign-in.ts) ----
+
+    /** Opens the authorize URL in a Custom Tab; resolves `{ callback }` or `{ cancelled: true }`. */
+    @PluginMethod
+    fun signInStart(call: PluginCall) {
+        val url = call.getString("url")?.let { ExternalUrl.parse(it) }
+        val scheme = call.getString("scheme")
+        if (url == null || scheme != BuildConfig.BRAND_SCHEME) {
+            call.reject("signInStart needs an http(s) url and the app's scheme")
+            return
+        }
+        main.post {
+            val activity = activity ?: return@post call.reject("no activity")
+            AuthSession.start(activity, url, scheme) { answer ->
+                when (answer) {
+                    is AuthAnswer.Callback -> call.resolve(JSObject().put("callback", answer.url))
+                    AuthAnswer.Cancelled -> call.resolve(JSObject().put("cancelled", true))
+                    AuthAnswer.Failed -> call.reject("could not open the browser")
+                }
+            }
+        }
+    }
+
+    /** The code exchange in the profile WebView's top document (ProfileWebView.exchange). */
+    @PluginMethod
+    fun signInExchange(call: PluginCall) {
+        val profileId = call.getString("profileId")
+        val url = call.getString("url")
+        val body = call.getString("body")
+        if (profileId == null || url == null || body == null) {
+            call.reject("signInExchange needs profileId, url and body")
+            return
+        }
+        main.post {
+            val view = host?.view(profileId) ?: return@post call.reject("no profile WebView")
+            view.exchange(url, body) { result -> call.resolve(JSObject.fromJSONObject(result)) }
+        }
+    }
+
+    /** The profile WebView's top-level origin when it is the profile origin, else null. */
+    @PluginMethod
+    fun currentOrigin(call: PluginCall) {
+        val profileId = call.getString("profileId") ?: return call.reject("currentOrigin needs profileId")
+        main.post {
+            val origin = host?.view(profileId)?.currentProfileOrigin()
+            call.resolve(JSObject().put("origin", origin ?: JSONObject.NULL))
+        }
+    }
+
+    @PluginMethod
+    fun reload(call: PluginCall) {
+        val profileId = call.getString("profileId") ?: return call.reject("reload needs profileId")
+        main.post {
+            host?.view(profileId)?.reloadAfterSignIn()
+            call.resolve()
+        }
+    }
+
+    /** The device's name (shown on the consent page and in the session list) and the app version. */
+    @PluginMethod
+    fun appInfo(call: PluginCall) {
+        val name = try {
+            if (Build.VERSION.SDK_INT >= 25) Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) else null
+        } catch (_: Exception) {
+            null
+        } ?: Build.MODEL ?: "Android"
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+        call.resolve(JSObject().put("deviceName", name).put("appVersion", version))
     }
 
     override fun onDocument(view: ProfileWebView, docId: String) {

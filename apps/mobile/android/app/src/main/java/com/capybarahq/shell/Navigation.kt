@@ -160,39 +160,6 @@ object PercentDecoding {
     }
 }
 
-/** The two in-WebView sign-in routes (`isInWindowSignIn` of packages/shell/src/sign-in-guard.ts). */
-object SignInGuard {
-    /** Escapes decoded per segment (a malformed one stays), `\` as `/`, doubled slashes and dot
-     *  segments resolved, no trailing slash, lower case. */
-    fun canonicalPath(path: String): String {
-        val decoded = path.split('/').joinToString("/") { PercentDecoding.strict(it) ?: it }.replace('\\', '/')
-        val out = ArrayList<String>()
-        for (part in decoded.split('/')) {
-            when (part) {
-                "", "." -> {}
-                ".." -> if (out.isNotEmpty()) out.removeAt(out.size - 1)
-                else -> out.add(part.lowercase(Locale.ROOT))
-            }
-        }
-        return if (out.isEmpty()) "" else "/" + out.joinToString("/")
-    }
-
-    fun isInWindowSignIn(method: String, url: String, base: String): Boolean {
-        val target = NavUrl.parse(url) ?: return false
-        val home = NavUrl.parse(base) ?: return false
-        if (target.origin == null || target.origin != home.origin) return false
-        val prefix = canonicalPath(home.rawPath)
-        val path = canonicalPath(target.rawPath)
-        if (!path.startsWith("$prefix/")) return false
-        val parts = path.substring(prefix.length + 1).split('/')
-        // /api/v1/auth/sso/<one or more>/start
-        if (parts.size >= 6 && parts.subList(0, 4) == listOf("api", "v1", "auth", "sso") && parts.last() == "start") {
-            return true
-        }
-        return method.uppercase(Locale.ROOT) == "POST" && parts == listOf("api", "v1", "auth", "login")
-    }
-}
-
 object NavigationPolicy {
     /** The kernel's OAuth state lives 10 minutes; so does a pending return. */
     const val OAUTH_RETURN_TTL_MS: Long = 600_000

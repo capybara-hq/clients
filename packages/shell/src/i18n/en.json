@@ -193,5 +193,6 @@
   "error.lead.tls": "The connection to {host} isn’t secure: its certificate or TLS setup is invalid. Contact your platform admin.",
   "error.lead.crashed": "The page for {host} stopped unexpectedly. Try again.",
   "error.lead.wipe_owed": "Clearing the previous platform’s data didn’t finish, so nothing is opened yet. Try again.",
+  "error.lead.too_old": "{host} runs a version too old for mobile sign-in. Ask your platform admin to upgrade it.",
   "error.code": "Error: {code}"
 }

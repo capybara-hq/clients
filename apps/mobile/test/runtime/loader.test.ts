@@ -9,6 +9,7 @@ import type {
 } from "../../src/runtime/host-port.ts";
 import { createLoader, type ErrorView, type LoaderProfile } from "../../src/runtime/loader.ts";
 import { createRegistry } from "../../src/runtime/registry.ts";
+import { blockRulesFor } from "../../src/runtime/sign-in-block.ts";
 import type { Splash } from "../../src/runtime/splash.ts";
 
 const p1: LoaderProfile = {
@@ -108,7 +109,30 @@ describe("loader", () => {
         capabilities: { "test@1": ["run"] },
         events: {},
       },
+      // iOS compiles these into the WebView's content rule list before its first load.
+      blockRules: blockRulesFor("https://a.example/team"),
     });
+  });
+
+  test("a deployment too old for app sign-in shows the too-old state with the current state", async () => {
+    const { native, errorView, pushState, splash, loader } = setup();
+    await loader.open(p1);
+    loader.tooOld("p2");
+    expect(errorView.show).not.toHaveBeenCalled();
+    loader.tooOld("p1");
+    expect(native.host.showError).toHaveBeenCalledWith("p1");
+    expect(vi.mocked(errorView.show).mock.calls[0]?.[0]).toMatchObject({
+      kind: "too_old",
+      profileId: "p1",
+      host: "a.example",
+    });
+    expect(vi.mocked(errorView.show).mock.calls[0]?.[0]).not.toHaveProperty("code");
+    // The capabilities are pushed again (signIn@1 is no longer offered to it).
+    expect(pushState).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ capabilities: { "test@1": ["run"] } }),
+    );
+    expect(splash.failed).toHaveBeenCalled();
   });
 
   test("the stored background is applied before the WebView loads", async () => {
@@ -266,11 +290,11 @@ describe("the error page model", () => {
 
   test("each kind has its own lead, in zh too", () => {
     const leads = new Set(
-      (["unreachable", "tls", "crashed", "wipe_owed"] as const).map(
+      (["unreachable", "tls", "crashed", "wipe_owed", "too_old"] as const).map(
         (kind) => errorModel({ ...base, kind }, "zh").lead,
       ),
     );
-    expect(leads.size).toBe(4);
+    expect(leads.size).toBe(5);
     for (const lead of leads) expect(lead).not.toMatch(/企业|agent/i);
   });
 });
