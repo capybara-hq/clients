@@ -17,6 +17,15 @@ describe("validateBrand", () => {
 
   test.each<[string, Partial<Brand>, RegExp]>([
     ["an app id that is not reverse DNS", { appId: "capybara" }, /appId/],
+    ["an app id with an underscore", { appId: "com.cap_ybara.app" }, /appId/],
+    ["a product name with a comment marker", { productName: "A // B" }, /productName/],
+    ["a product name with an expansion", { productName: "A $(X)" }, /productName/],
+    ["an icon with another name", { icon: "assets/logo.png" }, /icon/],
+    [
+      "a splash with another name",
+      { splash: { ...brand.splash, image: "s.png" } },
+      /splash\.image/,
+    ],
     ["a reserved scheme", { scheme: "https" }, /scheme/],
     ["an upper-case scheme", { scheme: "Cap" }, /scheme/],
     ["a non-https preset", { presetUrl: "http://x.example" }, /presetUrl/],
@@ -51,6 +60,10 @@ describe("applyBrand --check", () => {
       "brand-assets.sha256",
       "assets/icon.png",
       "assets/splash.png",
+      "ios/App/App.xcodeproj/project.pbxproj",
+      "ios/App/App/Info.plist",
+      "android/app/src/main/AndroidManifest.xml",
+      "android/app/build.gradle",
     ]) {
       await cp(`${appRoot}${file}`, `${root}${file}`, { recursive: true });
     }
@@ -79,6 +92,45 @@ describe("applyBrand --check", () => {
     const root = await copy();
     await cp(`${root}assets/splash.png`, `${root}assets/icon.png`);
     expect((await applyBrand({ check: true, root })).drift).toEqual(["brand-assets.sha256"]);
+  });
+
+  const edit = async (root: string, file: string, from: string | RegExp, to: string) => {
+    const text = await readFile(`${root}${file}`, "utf8");
+    expect(text).toMatch(from);
+    await writeFile(`${root}${file}`, text.replace(from, to));
+  };
+
+  test.each<[string, string, string | RegExp, string]>([
+    [
+      "a literal bundle id in the App target",
+      "ios/App/App.xcodeproj/project.pbxproj",
+      '"$(BRAND_APP_ID)"',
+      "com.capybarahq.mobile",
+    ],
+    ["a literal display name", "ios/App/App/Info.plist", "$(BRAND_NAME)", "Capybara"],
+    ["a literal URL scheme", "ios/App/App/Info.plist", "$(BRAND_SCHEME)", "capybara"],
+    [
+      "a literal manifest scheme",
+      "android/app/src/main/AndroidManifest.xml",
+      `android:scheme="\${brandScheme}"`,
+      'android:scheme="capybara"',
+    ],
+    [
+      "a literal application id",
+      "android/app/build.gradle",
+      /applicationId brandProperties\.getProperty\("applicationId"\)/,
+      'applicationId "com.capybarahq.mobile"',
+    ],
+    [
+      "a literal app name",
+      "android/app/build.gradle",
+      /resValue "string", "app_name", brandProperties\.getProperty\("appName"\)/,
+      'resValue "string", "app_name", "Capybara"',
+    ],
+  ])("names the native file with %s", async (_name, file, from, to) => {
+    const root = await copy();
+    await edit(root, file, from, to);
+    expect((await applyBrand({ check: true, root })).drift).toEqual([file]);
   });
 
   test("writes nothing in check mode", async () => {

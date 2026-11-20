@@ -35,7 +35,8 @@ export const brand: Brand = {
   lockToPreset: false,
 };
 
-const APP_ID = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+// No underscores: App Store Connect rejects them in a bundle id.
+const APP_ID = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9-]*)+$/;
 const SCHEME = /^[a-z][a-z0-9+.-]*$/;
 const HEX = /^#[0-9a-fA-F]{6}$/;
 // Schemes a browser or the system already owns: a callback on them could be taken by someone else.
@@ -59,8 +60,21 @@ const RESERVED_SCHEMES = new Set([
 /** The problems of a brand, empty when it is valid. */
 export function validateBrand(b: Brand): string[] {
   const problems: string[] = [];
-  if (b.productName.trim() === "" || /["\\\n\r]/.test(b.productName)) {
-    problems.push("productName must be non-empty and contain no quote, backslash or newline");
+  // The name lands in an xcconfig (`//` starts a comment, `$(` expands), a Java properties file and
+  // an Android string resource.
+  if (
+    b.productName.trim() === "" ||
+    /["'\\\n\r<>&@?]/.test(b.productName) ||
+    b.productName.includes("//") ||
+    b.productName.includes("$(")
+  ) {
+    problems.push(
+      "productName must be non-empty and contain none of: quotes, backslash, newline, < > & @ ?, // and $(",
+    );
+  }
+  if (b.icon !== "assets/icon.png") problems.push('icon must be "assets/icon.png"');
+  if (b.splash.image !== "assets/splash.png") {
+    problems.push('splash.image must be "assets/splash.png"');
   }
   if (!APP_ID.test(b.appId)) problems.push(`appId "${b.appId}" is not a reverse-DNS identifier`);
   if (!SCHEME.test(b.scheme)) {

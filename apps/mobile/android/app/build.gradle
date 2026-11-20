@@ -11,6 +11,8 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId brandProperties.getProperty("applicationId")
+        resValue "string", "app_name", brandProperties.getProperty("appName")
+        resValue "string", "title_activity_main", brandProperties.getProperty("appName")
         manifestPlaceholders = [brandScheme: brandProperties.getProperty("scheme")]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
