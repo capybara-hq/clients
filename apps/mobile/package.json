@@ -16,6 +16,7 @@
     "check:brand": "node scripts/apply-brand.ts --check"
   },
   "dependencies": {
+    "@capybara-hq/shell": "workspace:*",
     "@capacitor/android": "8.6.2",
     "@capacitor/core": "8.6.2",
     "@capacitor/ios": "8.6.2"

@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@capacitor/android@8.6.2':
+    hash: 376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3
+    path: patches/@capacitor__android@8.6.2.patch
+
 importers:
 
   .:
@@ -67,13 +72,16 @@ importers:
     dependencies:
       '@capacitor/android':
         specifier: 8.6.2
-        version: 8.6.2(@capacitor/core@8.6.2)
+        version: 8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)
       '@capacitor/core':
         specifier: 8.6.2
         version: 8.6.2
       '@capacitor/ios':
         specifier: 8.6.2
         version: 8.6.2(@capacitor/core@8.6.2)
+      '@capybara-hq/shell':
+        specifier: workspace:*
+        version: link:../../packages/shell
     devDependencies:
       '@capacitor/assets':
         specifier: 4.0.0
@@ -3016,7 +3024,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
 
-  '@capacitor/android@8.6.2(@capacitor/core@8.6.2)':
+  '@capacitor/android@8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)':
     dependencies:
       '@capacitor/core': 8.6.2
 
