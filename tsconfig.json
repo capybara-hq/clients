@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "packages/shell" }, { "path": "apps/desktop" }]
+  "references": [
+    { "path": "packages/shell" },
+    { "path": "apps/desktop" },
+    { "path": "apps/mobile" }
+  ]
 }

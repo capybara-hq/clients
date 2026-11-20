@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "out/tsc",
+    "rootDir": ".",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"],
+    "resolveJsonModule": true
+  },
+  "include": ["brand.ts", "capacitor.config.ts", "src/**/*.ts", "scripts/**/*.ts"],
+  "references": [
+    {
+      "path": "../../packages/shell"
+    }
+  ]
+}

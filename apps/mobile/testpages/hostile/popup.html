@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-doc="A-popup">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A-popup</title><script>window.__early = { shellType: typeof window.capybaraShell };</script>
+<style>button { position: fixed; inset: 0; width: 100%; height: 100%; font-size: 32px; }</style>
+</head>
+<body>
+<p>Origin A: window.open, without and with a user gesture.</p>
+<script>
+  // "same-window": the target loads in this WebView (Android, multiple windows off).
+  const describe = (w) => (w === null ? "null" : w === window ? "same-window" : typeof w);
+  window.__extraProbe = async (results) => {
+    results.popup = { noGesture: describe(window.open("/popup-child.html?via=script")) };
+  };
+  // After this document's report is out: a real tap opens the second window. On Android the target
+  // may replace this document at once, so the gesture's result goes out as a beacon of its own.
+  window.__afterProbe = () => {
+    const button = document.createElement("button");
+    button.id = "open-popup";
+    button.textContent = "Open popup";
+    button.setAttribute("aria-label", "Open popup");
+    button.addEventListener("click", () => {
+      const gesture = describe(window.open("/popup-child.html?via=gesture"));
+      navigator.sendBeacon("/report", JSON.stringify({ doc: "A-popup-gesture", results: { gesture } }));
+      button.remove();
+      location.href = "/done.html";
+    });
+    document.body.append(button);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        fetch("/report", { method: "POST", body: JSON.stringify({ doc: "popup-ready" }) }).catch(
+          () => {},
+        );
+      }),
+    );
+  };
+</script>
+<script src="/probe.js"></script>
+</body>
+</html>

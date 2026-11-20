@@ -1,0 +1,80 @@
+{
+  "profile": "A-top",
+  "popup": "A-popup",
+  "popupChild": "A-popup-child",
+  "popupResults": {
+    "ios": ["null"],
+    "android": ["null", "same-window"]
+  },
+  "sequenceEnd": "sequence-done",
+  "hostile": {
+    "B-navigated": {
+      "frame": false,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      }
+    },
+    "A-frame-same": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "yes"
+      },
+      "viaTop": "pong"
+    },
+    "A-frame-cross": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      },
+      "viaTop": "blocked"
+    },
+    "A-frame-srcdoc": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "yes"
+      },
+      "viaTop": "pong"
+    },
+    "A-frame-blank": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "any"
+      },
+      "viaTop": "pong"
+    },
+    "A-csp-sandbox": {
+      "frame": false,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      }
+    },
+    "A-plugin-ui": {
+      "frame": false,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      }
+    },
+    "B-redirected": {
+      "frame": false,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      }
+    },
+    "A-frame-sandboxed": {
+      "frame": true,
+      "endpoint": {
+        "ios": "yes",
+        "android": "no"
+      },
+      "viaTop": "blocked"
+    }
+  }
+}

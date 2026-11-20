@@ -32,6 +32,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm check:i18n
+      - run: pnpm --filter @capybara-hq/mobile check:brand
 
   typecheck:
     runs-on: ubuntu-latest
@@ -94,6 +95,63 @@ jobs:
           path: apps/desktop/e2e/test-results
           if-no-files-found: ignore
 
+  # The mobile app's native suites (apps/mobile): XCTest and XCUITest on an iPhone simulator.
+  # scripts/ios-test.sh keeps the runner's Xcode unless it has no usable iPhone simulator.
+  mobile-ios:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Swift package checkouts (Capacitor) under the script's derived data path.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: apps/mobile/ios/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/mobile/ios/**/Package.resolved') }}
+      # One build-for-testing, then test-without-building for AppTests and AppUITests.
+      - run: pnpm --filter @capybara-hq/mobile test:ios:all
+
+  # JVM unit tests, then the instrumented tests on an emulator (KVM on the Linux runner).
+  mobile-android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @capybara-hq/mobile test:android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: pnpm --filter @capybara-hq/mobile test:android:device
+
   commitlint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -121,7 +179,7 @@ jobs:
   # cancelled instead of being skipped (skipped = passed).
   ci-ok:
     if: always()
-    needs: [lint, typecheck, test, e2e, commitlint]
+    needs: [lint, typecheck, test, e2e, mobile-ios, mobile-android, commitlint]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -130,15 +188,20 @@ jobs:
           TYPECHECK: ${{ needs.typecheck.result }}
           TEST: ${{ needs.test.result }}
           E2E: ${{ needs.e2e.result }}
+          MOBILE_IOS: ${{ needs.mobile-ios.result }}
+          MOBILE_ANDROID: ${{ needs.mobile-android.result }}
           COMMITLINT: ${{ needs.commitlint.result }}
           EVENT: ${{ github.event_name }}
         run: |
           echo "lint=$LINT typecheck=$TYPECHECK test=$TEST e2e=$E2E commitlint=$COMMITLINT"
+          echo "mobile-ios=$MOBILE_IOS mobile-android=$MOBILE_ANDROID"
           fail=0
           [ "$LINT" = "success" ] || fail=1
           [ "$TYPECHECK" = "success" ] || fail=1
           [ "$TEST" = "success" ] || fail=1
           [ "$E2E" = "success" ] || fail=1
+          [ "$MOBILE_IOS" = "success" ] || fail=1
+          [ "$MOBILE_ANDROID" = "success" ] || fail=1
           if [ "$EVENT" = "pull_request" ]; then
             [ "$COMMITLINT" = "success" ] || fail=1
           else

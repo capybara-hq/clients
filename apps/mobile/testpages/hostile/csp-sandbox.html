@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en" data-doc="A-csp-sandbox">
+<head><meta charset="utf-8"><title>A-csp-sandbox</title><script>window.__early = { shellType: typeof window.capybaraShell };</script></head>
+<body>
+<p>Origin A's URL, top level, served with Content-Security-Policy: sandbox allow-scripts (opaque origin).</p>
+<script>window.__afterProbe = () => { location.href = "/plugin-ui/hostile/index.html"; };</script>
+<script src="/probe.js"></script>
+</body>
+</html>

@@ -15,7 +15,9 @@
       "!.worktrees",
       "!pnpm-lock.yaml",
       "!.changeset/*.md",
-      "!apps/desktop/design"
+      "!apps/desktop/design",
+      "!apps/mobile/ios",
+      "!apps/mobile/android"
     ]
   },
   "formatter": {

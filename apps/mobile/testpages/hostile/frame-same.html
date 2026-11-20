@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>A-frame-same outer</title></head>
+<body>
+<p>Origin A, top frame hosting the frame A-frame-same.</p>
+<script>
+  window.addEventListener("message", (event) => {
+    if (event.data?.gateDone) location.href = "/frame-cross.html";
+  });
+</script>
+<iframe title="probe frame" src="/inner.html?doc=A-frame-same"></iframe>
+</body>
+</html>
