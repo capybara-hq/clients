@@ -50,41 +50,44 @@ export async function launchApp(): Promise<Harness> {
         entry[1] !== undefined && entry[0] !== "ELECTRON_RUN_AS_NODE",
     ),
   );
-  let app: ElectronApplication;
+  let app: ElectronApplication | undefined;
   try {
     // `--use-mock-keychain`: Chromium keeps the cookie encryption key of a persistent partition in
     // the login Keychain ("Electron Safe Storage"); the run never reads or writes the real one,
     // and never waits on a Keychain prompt.
     app = await electron.launch({ args: [appDir, "--use-mock-keychain"], cwd: appDir, env });
+    // `use.trace` records nothing for `_electron.launch`: trace the app's context here and keep
+    // the trace only when a test failed.
+    await app.context().tracing.start({ screenshots: true, snapshots: true });
+    // The system browser must not open: capture what the app would have opened.
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as { __opened?: string[] }).__opened = opened;
+      shell.openExternal = async (url: string) => {
+        opened.push(url);
+      };
+    });
   } catch (err) {
+    await app?.close().catch(() => undefined);
     rmSync(userData, { recursive: true, force: true });
     throw err;
   }
-  // `use.trace` records nothing for `_electron.launch`: trace the app's context here and keep the
-  // trace only when a test failed.
-  await app.context().tracing.start({ screenshots: true, snapshots: true });
-  // The system browser must not open: capture what the app would have opened.
-  await app.evaluate(({ shell }) => {
-    const opened: string[] = [];
-    (globalThis as { __opened?: string[] }).__opened = opened;
-    shell.openExternal = async (url: string) => {
-      opened.push(url);
-    };
-  });
+  const launched = app;
 
   const windowUrls = () =>
-    app.evaluate(({ BrowserWindow }) =>
+    launched.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()),
     );
   return {
-    app,
+    app: launched,
     userData,
-    openedUrls: () => app.evaluate(() => (globalThis as { __opened?: string[] }).__opened ?? []),
+    openedUrls: () =>
+      launched.evaluate(() => (globalThis as { __opened?: string[] }).__opened ?? []),
     async windowOn(url) {
       let found: Page | undefined;
       await expect
         .poll(() => {
-          found = app.windows().find((w) => !w.isClosed() && w.url() === url);
+          found = launched.windows().find((w) => !w.isClosed() && w.url() === url);
           return found !== undefined;
         })
         .toBe(true);
@@ -92,7 +95,7 @@ export async function launchApp(): Promise<Harness> {
     },
     windowUrls,
     overlayUrls: () =>
-      app.evaluate(({ BrowserWindow }) =>
+      launched.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows().flatMap((w) =>
           w.contentView.children.map((v) => (v as Electron.WebContentsView).webContents.getURL()),
         ),
@@ -109,11 +112,11 @@ export async function launchApp(): Promise<Harness> {
       }
     },
     deepLink: (url) =>
-      app.evaluate(({ app: electronApp }, u) => {
+      launched.evaluate(({ app: electronApp }, u) => {
         electronApp.emit("open-url", { preventDefault() {} }, u);
       }, url),
     cookies: (profileId, base, name) =>
-      app.evaluate(
+      launched.evaluate(
         ({ session }, args) =>
           session
             .fromPartition(`persist:profile-${args.profileId}`)
@@ -122,10 +125,10 @@ export async function launchApp(): Promise<Harness> {
       ),
     async close(failed, tracePath) {
       try {
-        await app.context().tracing.stop(failed ? { path: tracePath } : {});
+        await launched.context().tracing.stop(failed ? { path: tracePath } : {});
       } finally {
         try {
-          await app.close();
+          await launched.close();
         } finally {
           rmSync(userData, { recursive: true, force: true });
         }

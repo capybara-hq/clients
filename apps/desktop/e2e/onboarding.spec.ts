@@ -3,12 +3,27 @@
 // session, the signed-out window, the shell dialog and the profile's theme cookie. The system
 // browser is stubbed and the callback deep link is delivered as `open-url` (see e2e/README.md).
 // Every wait is on a condition. Run: pnpm e2e
+import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import {
   type FakeDeployment,
   startFakeDeployment,
 } from "../../../packages/shell/test/fixtures/fake-deployment.ts";
 import { type Harness, launchApp } from "./harness.ts";
+
+/** A catalog message in either UI language (the app follows the system's), as an exact match. */
+const catalog = (lang: "en" | "zh") =>
+  JSON.parse(
+    readFileSync(new URL(`../../../packages/shell/src/i18n/${lang}.json`, import.meta.url), "utf8"),
+  ) as Record<string, string>;
+const en = catalog("en");
+const zh = catalog("zh");
+const message = (key: string): RegExp => {
+  const esc = (v: string | undefined) => (v ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  expect(en[key], key).toBeTruthy();
+  expect(zh[key], key).toBeTruthy();
+  return new RegExp(`^(${esc(en[key])}|${esc(zh[key])})$`);
+};
 
 const SMALL = "app://local/onboarding.html";
 const DIALOG = "app://local/dialog.html";
@@ -98,8 +113,9 @@ test("first launch: the small window on connect, 480x600, not resizable", async 
 
 test("a bad address: not_capybara inline, nothing saved", async () => {
   await connect(notCapybara.base);
-  await expect(small.locator("#address-error")).not.toBeEmpty();
-  await expect(small.locator("#address-error")).toBeVisible();
+  await expect(small.locator("#address-error")).toHaveText(
+    message("onboarding.connect.error.not_capybara"),
+  );
   await expect(small.locator("#address")).toBeVisible();
   expect(await h.windowUrls()).toEqual([SMALL]);
   expect(notCapybara.requests.some((r) => r.path === "/api/v1/meta")).toBe(true);
@@ -113,7 +129,9 @@ test("found shows the name and host; a platform that does not allow the app: not
   const opened = (await h.openedUrls()).length;
   await small.locator("main .lp-btn").first().click();
   // Refused before the browser opens: the error box shows on the found page.
-  await expect(small.locator(".lp-alert--box")).toBeVisible();
+  await expect(small.locator(".lp-alert--box")).toHaveText(
+    message("onboarding.signIn.error.not_allowed"),
+  );
   expect(await h.openedUrls()).toHaveLength(opened);
   expect(notAllowed.authorize).toEqual([]);
   // 换一个地址 goes back to connect.
@@ -146,7 +164,9 @@ test("connect, sign in in the browser, access_denied: cancelled; again: the main
   await expect(small.locator(".lp-steps")).toBeVisible();
   // The person denied it in the browser: the callback carries `error=access_denied`.
   await callback(good, { error: "access_denied", state: denied });
-  await expect(small.locator(".lp-alert--box")).toBeVisible();
+  await expect(small.locator(".lp-alert--box")).toHaveText(
+    message("onboarding.signIn.error.cancelled"),
+  );
   await expect(small.locator(".lp-steps")).toHaveCount(0);
   expect(good.accepted).toBe(0);
   expect(h.profiles()).toEqual([]);

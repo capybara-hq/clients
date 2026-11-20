@@ -7,8 +7,10 @@
 Electron app through Playwright's `_electron` (no browser is downloaded; `harness.ts` is the shared
 launcher) against `packages/shell/test/fixtures/fake-deployment.ts`, a dependency-free fake
 deployment. Its switches: `meta` / `features` / `metaStatus` / `metaRaw` (meta shapes, including
-`appRedirectUris`), `tokenError` (every token exchange refused with that kernel code), `down` (503),
-`holdLogoutBody`, and `GET /protected` (a 302 to `/login?returnTo=%2Fprotected` without a session). It needs no network and no real sign-in. Run it from the repository root:
+`appRedirectUris`), `tokenError` (every token exchange refused with that kernel code), `down`
+(503), `holdLogoutBody`, and `GET /protected` (a 302 to `/login?returnTo=%2Fprotected` without a
+session). It needs no network and no real sign-in. Run it from the repository
+root:
 
 ```bash
 pnpm e2e
