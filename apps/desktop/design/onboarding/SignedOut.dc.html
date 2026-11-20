@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>已退出登录</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#FF8240}a:hover{color:#FF6A13}
+</style>
+</helmet>
+<div style="width: 480px; height: 600px; box-sizing: border-box; position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 0 56px; background: #0A0A0A; color: #E6E6E3; font-family: 'Noto Sans SC', system-ui, sans-serif; overflow: hidden;">
+  <div style="position: absolute; left: 0; top: 0; right: 0; height: 44px; display: flex; align-items: center; gap: 8px; padding-left: 16px; box-sizing: border-box;">
+    <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57;"></span>
+    <span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E;"></span>
+    <span style="width: 12px; height: 12px; border-radius: 50%; background: #3A3A37;"></span>
+    <div style="position: absolute; right: 14px; top: 558px; display: flex; align-items: center; gap: 6px;">
+      <button type="button" aria-label="语言" style="height: 26px; padding: 0 8px; border: 1px solid #2A2A28; border-radius: 6px; background: transparent; color: #8E8E89; font-family: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">中文<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button>
+      <div role="group" aria-label="外观" style="display: inline-flex; height: 26px; border: 1px solid #2A2A28; border-radius: 6px; overflow: hidden;">
+        <button type="button" aria-label="浅色" style="width: 28px; border: 0; background: transparent; color: #5A5A56; display: inline-flex; align-items: center; justify-content: center;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg></button>
+        <button type="button" aria-label="深色" aria-pressed="true" style="width: 28px; border: 0; background: #1A1A18; color: #E6E6E3; display: inline-flex; align-items: center; justify-content: center;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13 9.5A5.5 5.5 0 016.5 3a5.5 5.5 0 106.5 6.5z"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 22px; width: 100%; margin-top: -16px;">
+    <div style="width: 72px; height: 72px; border-radius: 16px; background: #2F5FD0; display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 600; opacity: 0.85;">M1</div>
+    <div style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
+      <h1 style="margin: 0; font-size: 22px; font-weight: 600; line-height: 1.35;">已退出 Meta1 智能体平台</h1>
+      <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #8E8E89;">grant@meta1.top · 这台电脑仍作为设备连接着</p>
+    </div>
+    <a href="Waiting.dc.html" style="width: 100%; height: 44px; box-sizing: border-box; border-radius: 8px; background: #FF6A13; color: #0A0A0A; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none;">在浏览器中重新登录
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 3h4v4M13 3L7 9M12 9.5V13H3V4h3.5"/></svg>
+    </a>
+    <div style="display: flex; gap: 16px; font-size: 13px;">
+      <a href="Main.dc.html" style="color: #8E8E89; text-decoration: none;">添加其他平台</a>
+      <span style="color: #2A2A28;">|</span>
+      <a href="Main.dc.html" style="color: #8E8E89; text-decoration: none;">移除这个平台</a>
+    </div>
+  </div>
+  <div style="position: absolute; left: 0; right: 0; bottom: 20px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #5A5A56;">capybara.meta1.top</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":480,"height":600}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

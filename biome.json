@@ -14,7 +14,8 @@
       "!.superpowers",
       "!.worktrees",
       "!pnpm-lock.yaml",
-      "!.changeset/*.md"
+      "!.changeset/*.md",
+      "!apps/desktop/design"
     ]
   },
   "formatter": {

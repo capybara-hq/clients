@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录后出错</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+SC:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#FF8240}a:hover{color:#FF6A13}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; position: relative; background: #0A0A0A; color: #E6E6E3; font-family: 'Noto Sans SC', system-ui, sans-serif; overflow: hidden;">
+  <sc-if value="{{isOffline}}" hint-placeholder-val="{{ true }}">
+    <div style="position: absolute; inset: 0; display: flex; font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;">
+      <aside style="flex: 0 0 248px; background: #111110; border-right: 1px solid #1C1C1A; display: flex; flex-direction: column;">
+        <div style="height: 52px; display: flex; align-items: center; padding-left: 20px; gap: 8px;">
+          <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57;"></span>
+          <span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E;"></span>
+          <span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840;"></span>
+        </div>
+        <div style="padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: #8E8E89;">
+          <div style="height: 34px; padding: 0 10px; display: flex; align-items: center;">新会话</div>
+          <div style="height: 34px; padding: 0 10px; display: flex; align-items: center;">智能体</div>
+          <div style="margin: 16px 10px 6px; font-size: 11px; color: #5A5A56;">会话</div>
+          <div style="height: 32px; padding: 0 10px; display: flex; align-items: center; background: #1A1A18; border-radius: 6px; color: #E6E6E3;">沙箱内 pnpm 安装失败</div>
+        </div>
+      </aside>
+      <main style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+        <div style="height: 52px; display: flex; align-items: center; padding: 0 20px; font-size: 13px; color: #8E8E89; border-bottom: 1px solid #1C1C1A;">沙箱内 pnpm 安装失败</div>
+        <div role="status" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 20px; background: rgba(254,188,46,0.08); border-bottom: 1px solid rgba(254,188,46,0.25); font-family: 'Noto Sans SC', sans-serif; font-size: 13px; color: #F5C76B;">
+          <span style="width: 12px; height: 12px; border: 2px solid rgba(245,199,107,0.35); border-top-color: #F5C76B; border-radius: 50%; animation: spin 0.9s linear infinite;"></span>
+          <span>和平台的连接断了，正在重连…已有内容照常可看。</span>
+          <button type="button" style="margin-left: auto; height: 24px; padding: 0 10px; border: 1px solid rgba(245,199,107,0.4); border-radius: 6px; background: transparent; color: #F5C76B; font-family: inherit; font-size: 12px;">立即重试</button>
+        </div>
+        <div style="flex: 1; padding: 28px 80px; display: flex; flex-direction: column; gap: 18px; font-family: 'Noto Sans SC', sans-serif; font-size: 14px; line-height: 1.7;">
+          <div style="align-self: flex-end; max-width: 520px; padding: 10px 14px; border-radius: 10px; background: #1A1A18;">沙箱里 pnpm install 报错，帮我看看</div>
+          <div style="max-width: 640px; color: #C9C9C5;">pnpm 在沙箱的家目录里找不到数据目录，所以把 store 放进了仓库……</div>
+        </div>
+      </main>
+      <div style="position: absolute; left: 270px; bottom: 64px; width: 330px; padding: 10px 12px; border: 1px solid rgba(255,106,19,0.4); border-radius: 6px; background: rgba(10,10,10,0.92); font-size: 12px; line-height: 1.7; color: #FF8240;">短暂断网：页面还在，由网页自己提示并自动重连（流式输出从断点续上）。</div>
+    </div>
+  </sc-if>
+  <sc-if value="{{isLocal}}" hint-placeholder-val="{{ false }}">
+    <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
+      <div style="position: absolute; left: 0; top: 0; right: 0; height: 52px; display: flex; align-items: center; gap: 8px; padding-left: 20px; box-sizing: border-box;">
+        <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57;"></span>
+        <span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E;"></span>
+        <span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840;"></span>
+      </div>
+      <div style="width: 380px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px; margin-top: -24px;">
+        <div style="width: 72px; height: 72px; border-radius: 16px; background: #2F5FD0; display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 600;">M1</div>
+        <div style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5A5A56;">{{cur.meta}}</div>
+          <h1 style="margin: 0; font-size: 22px; font-weight: 600; line-height: 1.35;">{{cur.title}}</h1>
+          <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #8E8E89;">{{cur.text}}</p>
+        </div>
+        <button type="button" style="width: 100%; height: 44px; border: 0; border-radius: 8px; background: #FF6A13; color: #0A0A0A; font-family: inherit; font-size: 14px; font-weight: 600;">{{cur.primary}}</button>
+        <div style="display: flex; gap: 16px; font-size: 13px; color: #8E8E89;">
+          <span>{{cur.second}}</span><span style="color: #2A2A28;">|</span><span>切换平台</span>
+        </div>
+      </div>
+      <div style="position: absolute; right: 24px; top: 72px; width: 280px; padding: 10px 12px; border: 1px solid rgba(255,106,19,0.4); border-radius: 6px; background: rgba(10,10,10,0.92); font-size: 12px; line-height: 1.7; color: #FF8240;">{{cur.note}}</div>
+    </div>
+  </sc-if>
+  <div style="position: absolute; right: 16px; bottom: 16px; display: flex; gap: 6px;">
+    <sc-for list="{{kinds}}" as="k" hint-placeholder-count="3">
+      <button type="button" onClick="{{k.pick}}" style="{{k.style}}">{{k.label}}</button>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { i: 0 }; }
+  renderVals() {
+    const labels = ['登录过期', '短暂断网', '长时间连不上'];
+    const local = [
+      { meta: 'capybara.meta1.top', title: '登录已过期', text: '重新登录后，会回到刚才的页面。', primary: '在浏览器中重新登录', second: '退出登录',
+        note: '本地页面：网页发现会话失效、要跳去平台登录页时，桌面端拦下这次跳转，在主窗口里换成这个本地页（不显示网页侧栏）。窗口大小不变。' },
+      null,
+      { meta: 'capybara.meta1.top · 5 分钟无响应', title: '平台暂时连不上', text: '可能在升级或维护，也可能是网络、VPN 断了。恢复后自动回到刚才的页面。', primary: '重试', second: '退出登录',
+        note: '本地页面：网页加载失败或长时间无响应时，桌面端在主窗口里显示这个本地页，后台继续探测，恢复后自动重新载入。' }
+    ];
+    const i = this.state.i;
+    const base = 'height: 26px; padding: 0 10px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer; ';
+    return {
+      isOffline: i === 1, isLocal: i !== 1,
+      cur: local[i] || local[0],
+      kinds: labels.map((l, j) => ({
+        label: l,
+        pick: () => this.setState({ i: j }),
+        style: base + (j === i ? 'border: 1px solid #3A3A37; background: #1A1A18; color: #E6E6E3;' : 'border: 1px solid #2A2A28; background: #0A0A0A; color: #8E8E89;')
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

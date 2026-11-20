@@ -1,0 +1,27 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-11-20T23:05:00+08:00" },
+  "title": "Capybara 桌面端接入流程",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 480, "h": 600, "title": "1 · 连接平台（首次启动）", "radius": 12 },
+    "Found.dc.html": { "x": 560, "y": 0, "w": 480, "h": 600, "title": "2 · 找到平台，发起登录", "radius": 12 },
+    "Waiting.dc.html": { "x": 1120, "y": 0, "w": 480, "h": 600, "title": "3 · 等待浏览器完成登录", "radius": 12 },
+    "FoundLight.dc.html": { "x": 1680, "y": 0, "w": 480, "h": 600, "title": "2 · 浅色外观", "radius": 12 },
+    "Errors.dc.html": { "x": 0, "y": 720, "w": 480, "h": 600, "title": "出错 · 连接阶段（底部切换示例）", "radius": 12, "is_interactive": true },
+    "ErrorsSignIn.dc.html": { "x": 560, "y": 720, "w": 480, "h": 600, "title": "出错 · 登录阶段（底部切换示例）", "radius": 12, "is_interactive": true },
+    "SignedOut.dc.html": { "x": 1120, "y": 720, "w": 480, "h": 600, "title": "6 · 退出后：回到小窗口", "radius": 12 },
+    "FoundWindows.dc.html": { "x": 1680, "y": 720, "w": 480, "h": 600, "title": "2 · Windows：控制按钮在右上", "radius": 8 },
+    "Landed.dc.html": { "x": 0, "y": 1440, "w": 1280, "h": 800, "title": "4 · 登录完成：主窗口，可自由调整大小", "radius": 12 },
+    "SignOut.dc.html": { "x": 1360, "y": 1440, "w": 1280, "h": 800, "title": "5 · 退出登录：网页原入口 + 菜单栏，确认框自绘", "radius": 12 },
+    "MainErrors.dc.html": { "x": 2720, "y": 1440, "w": 1280, "h": 800, "title": "出错 · 登录之后：留在主窗口", "radius": 12, "is_interactive": true }
+  },
+  "order": ["Main.dc.html", "Found.dc.html", "Waiting.dc.html", "FoundLight.dc.html", "Errors.dc.html", "ErrorsSignIn.dc.html", "SignedOut.dc.html", "FoundWindows.dc.html", "Landed.dc.html", "SignOut.dc.html", "MainErrors.dc.html"],
+  "notes": {
+    "flow": { "x": 0, "y": -300, "text": "桌面端接入：连接 → 浏览器登录 → 新会话 → 退出", "kind": "title1", "maxW": 2160 },
+    "rules": { "x": 2240, "y": 0, "w": 400, "text": "规则\n· 登录前和退出后是桌面端自己的小窗口：固定 480×600，不能缩放、不能全屏（绿灯置灰）\n· 登录成功后关闭小窗口，打开主窗口：可自由调整大小，记住上次的大小和位置（首次 1280×800）\n· 登录前的出错：在同一个小窗口里就地提示\n· 登录后的出错（过期、断网）：留在主窗口里提示，不切回小窗口\n· 平台网页的登录页不在 App 里出现\n· 小窗口不放 Capybara 大品牌：平台图标和名称来自部署方配置，没设置时显示地址和默认图标\n· 整条顶栏可拖动；跟随系统深浅色\n· 多个平台：菜单栏「平台」里切换和添加，不做列表页\n· 弹窗都由我们自己绘制，不用系统原生弹窗；需要防网页伪造的确认（连接本机、放宽权限）由桌面端单独开一个自绘的小窗口，网页无法画也点不到" },
+    "theme": { "x": 2240, "y": 760, "w": 400, "color": "blue", "text": "主题和语言：一份设置，两边联动\n· 小窗口右下角：语言 + 浅/深切换（和网页登录页那组一样）。窗口顶部两角都不放控件：macOS 红绿灯在左上，Windows 最小化/最大化/关闭在右上；桌面端按 Shell 环境报来的 controls 区域避让\n· 唯一的来源是平台网页自己的 Cookie（cb-theme、NEXT_LOCALE），存在这个平台的会话里；本地页读写的就是它\n· 在本地页切换 → 桌面端写这个 Cookie → 主窗口打开网页时直接按它渲染\n· 在网页里切换 → 网页照常写 Cookie，并通过 chrome@1 告诉桌面端 → 本地页、窗口底色、标题栏立刻跟着变\n· 还没添加平台时（第 1 页）：先跟随系统；选过之后作为新平台的初始值\n· 平台用了只有一种配色的主题（如 cyberpunk）：两边都不显示切换，本地页用网页报来的这套颜色" }
+  },
+  "designSystems": []
+}
