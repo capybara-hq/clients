@@ -368,6 +368,7 @@ describe("requestCeiling", () => {
         ctx.window,
         { outsideSandbox: true, network: true, projectReach: true },
         [TEXTS.ceilingWidening, TEXTS.outsideSandboxRisk],
+        ctx.profile,
       ],
     });
     expect(s.cli.writes()).toEqual([
@@ -378,7 +379,7 @@ describe("requestCeiling", () => {
   test("widening the network alone names only it and shows the widening text alone", async () => {
     const s = setup({ status: loggedIn() });
     await s.device.impl.requestCeiling(ctxFor(), { network: "open" });
-    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+    expect(s.dialogs.asked[0]?.args.slice(1, 3)).toEqual([
       { outsideSandbox: false, network: true, projectReach: false },
       [TEXTS.ceilingWidening],
     ]);
@@ -394,7 +395,7 @@ describe("requestCeiling", () => {
       outsideSandbox: false,
       projectReach: "os-user",
     });
-    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+    expect(s.dialogs.asked[0]?.args.slice(1, 3)).toEqual([
       { outsideSandbox: false, network: false, projectReach: true },
       [TEXTS.ceilingWidening],
     ]);
@@ -406,7 +407,7 @@ describe("requestCeiling", () => {
   test("in docker mode widening outside the sandbox still names it, without the os risk text", async () => {
     const s = setup({ status: loggedIn({ mode: "docker" }) });
     await s.device.impl.requestCeiling(ctxFor(), { outsideSandbox: true });
-    expect(s.dialogs.asked[0]?.args.slice(1)).toEqual([
+    expect(s.dialogs.asked[0]?.args.slice(1, 3)).toEqual([
       { outsideSandbox: true, network: false, projectReach: false },
       [TEXTS.ceilingWidening],
     ]);
@@ -561,7 +562,7 @@ describe("setKeepAwake", () => {
     expect(ctx.confirm).toHaveBeenCalledOnce();
     expect(s.dialogs.asked[0]).toEqual({
       name: "confirmRaiseKeepAwake",
-      args: [ctx.window, "connected"],
+      args: [ctx.window, "connected", ctx.profile],
     });
     expect(s.cli.writes()).toEqual(["keep-awake connected --yes"]);
   });

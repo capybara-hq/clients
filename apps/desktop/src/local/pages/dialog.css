@@ -1,0 +1,68 @@
+/*
+ * The shell dialog (desktop spec §7.4, board SignOut): the window is the card. A 40 px platform
+ * icon beside the title, the muted detail, the buttons right-aligned (cancel, then the confirming
+ * button). The window fits its height to the card; past the maximum the detail scrolls.
+ */
+body {
+  background: var(--cb-panel);
+}
+
+.dlg {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 100vh;
+  padding: 24px;
+}
+
+/* A standalone dialog (no parent) is frameless: its head drags it. */
+.dlg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  -webkit-app-region: drag;
+}
+
+.dlg-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dlg-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.dlg-host {
+  font-family: var(--lp-mono);
+  font-size: 12px;
+  color: var(--cb-faint);
+  overflow-wrap: anywhere;
+}
+
+.dlg-detail {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cb-muted);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.dlg-actions {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}

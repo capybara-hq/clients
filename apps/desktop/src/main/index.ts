@@ -12,7 +12,6 @@ import { fetchMeta } from "@capybara-hq/shell";
 import {
   app,
   BrowserWindow,
-  dialog,
   ipcMain,
   Menu,
   Notification,
@@ -20,6 +19,7 @@ import {
   nativeTheme,
   net,
   protocol,
+  screen,
   session,
   shell,
   Tray,
@@ -37,6 +37,7 @@ import {
 import { createAddressHost, discoverDeployment, localeFrom } from "./address.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
+import { BUILTIN_TOKENS, resolveAppearance } from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -53,12 +54,12 @@ import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
 import { controlClient, deviceStateDir } from "./device/control.ts";
-import { createDeviceDialogs, type MessageBoxOptions } from "./device/dialogs.ts";
+import { createDeviceDialogs } from "./device/dialogs.ts";
 import { readKeepAwake, readMachine } from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
 import { createTrayDevice } from "./device/tray-device.ts";
-import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
+import { createDockIcon, createDockIconCache, type DockCacheFs, isPng } from "./dock.ts";
 import { createConfirmGate, createShellBridge, type IpcMainLike } from "./ipc.ts";
 import { createLocalPages } from "./local-pages.ts";
 import {
@@ -75,6 +76,7 @@ import {
   installDenyAllPermissions,
   LOCAL_PARTITION,
 } from "./security.ts";
+import { createShellDialogs, type DialogWindow } from "./shell-dialog.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
@@ -182,7 +184,7 @@ function start(): void {
       newId: () => randomUUID(),
     });
 
-    // One native dialog at a time per profile, for a page's call and the tray's click alike.
+    // One dialog at a time per profile, for a page's call and the tray's click alike.
     const confirmGate = createConfirmGate();
     const control = controlClient(deviceStateDir(process.env, homedir()));
     const bridge = createShellBridge<ProfileTarget>({
@@ -264,18 +266,56 @@ function start(): void {
     bridge.registerCapability(SHELL_CAPABILITY_KEYS.signIn, signIn.capability, {
       activation: ["start"],
     });
-    // Electron's message box, attached to `parent` while that window lives (else app-modal).
-    const showMessageBox = (parent: unknown, options: MessageBoxOptions) =>
-      parent instanceof BrowserWindow && !parent.isDestroyed()
-        ? dialog.showMessageBox(parent, options)
-        : dialog.showMessageBox(options);
+    // The local pages (small window, error overlay, shell dialogs) register here with their kind;
+    // the features that own their actions install the handlers.
+    const localPages = createLocalPages({
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    localPages.install(ipcMain as unknown as IpcMainLike);
+    // The cached platform icons (by the hash in the icon URL); the dialogs show them as data: URLs.
+    const iconCache = createDockIconCache(
+      join(app.getPath("userData"), "dock-icons"),
+      fs as DockCacheFs,
+    );
+    const iconFor = (profile: Profile): string | undefined => {
+      const png = profile.iconHash ? iconCache.readCache(profile.iconHash) : null;
+      return isPng(png)
+        ? `data:image/png;base64,${Buffer.from(png).toString("base64")}`
+        : undefined;
+    };
+    // The shell dialogs (spec §7.4): no OS message box anywhere. A sheet of `parent` while that
+    // window lives, else a standalone window on the active display, above the others.
+    const shellDialogs = createShellDialogs({
+      createWindow: (options) =>
+        new BrowserWindow(
+          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+        ) as unknown as DialogWindow,
+      localPages,
+      preloadPath: join(dist, "preload", "local.cjs"),
+      liveParent: (parent) =>
+        parent instanceof BrowserWindow && !parent.isDestroyed() ? parent : undefined,
+      pageBase: () => ({
+        locale: localeFrom(app.getLocale()),
+        appearance: resolveAppearance(nativeTheme.shouldUseDarkColors),
+        controls: null,
+        os: platform,
+        appName: brand.productName,
+        version: shellVersion,
+      }),
+      workArea: () => screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
+      backgroundColor: () =>
+        BUILTIN_TOKENS[nativeTheme.shouldUseDarkColors ? "dark" : "light"].panel,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    const showDialog = shellDialogs.show;
     // device@1 (spec §8, §9): native confirmations attached to the calling window.
     const device = createDeviceCapability({
       cli: deviceCli,
       service: deviceService,
       control,
       dialogs: createDeviceDialogs({
-        showMessageBox,
+        showDialog,
+        iconFor,
         locale: localeFrom(app.getLocale()),
         platform: process.platform,
       }),
@@ -314,13 +354,6 @@ function start(): void {
       closeSender: (sender) => windows.closeSender(sender),
     });
     addressHost.install(ipcMain as unknown as IpcMainLike);
-
-    // The local pages (small window, error overlay, shell dialogs) register here with their kind;
-    // the features that own their actions install the handlers.
-    const localPages = createLocalPages({
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-    localPages.install(ipcMain as unknown as IpcMainLike);
 
     // Under `lockDeployments` the app offers only the managed profiles (an older saved one stays
     // on disk but is not offered).
@@ -364,7 +397,8 @@ function start(): void {
       isRemovable: () => managed.lockDeployments !== true,
       gate: confirmGate,
       dialogParent: (id) => windows.dialogParent(id),
-      showMessageBox,
+      showDialog,
+      iconFor,
       locale,
       beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
       closeProfileWindows: (id) => windows.closeProfileWindows(id),
@@ -427,7 +461,7 @@ function start(): void {
         const file = iconFile("icon.png");
         if (fs.existsSync(file)) app.dock?.setIcon(nativeImage.createFromPath(file));
       },
-      ...createDockIconCache(join(app.getPath("userData"), "dock-icons"), fs as DockCacheFs),
+      ...iconCache,
       log: (message, err) => console.error(message, err ?? ""),
     });
     function render(): void {

@@ -1,29 +1,13 @@
-// The native confirmations of device@1 (spec §9.1, §9.3, §9.5, §9.7, §6.3): drawn by the OS,
-// attached to the profile's window, so the page can neither draw nor click them. Every dialog has
-// two buttons; the second (取消 / 否) is both the default and the cancel button, so Enter and
-// Escape refuse and only a deliberate click allows. `showMessageBox` is Electron's
-// `dialog.showMessageBox`, injected so tests answer it.
+// The confirmations of device@1 (spec §9.1, §9.3, §9.5, §9.7, §6.3): shell dialogs (§7.4), drawn
+// by the app in a window of its own attached to the profile's window, so the page can neither draw
+// nor click them. Every dialog has two buttons, cancel first (取消 / 否: the cancel button, where
+// the focus starts, so Enter and Escape refuse) and the confirming one last; only a deliberate
+// click allows. `showDialog` is the shell dialog, injected so tests answer it.
 
 import type { KeepAwakeMode } from "@capybara-hq/plugin-sdk";
 import { type Locale, t } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
-
-export interface MessageBoxOptions {
-  type: "question" | "warning";
-  message: string;
-  detail: string;
-  buttons: string[];
-  defaultId: number;
-  cancelId: number;
-  /** macOS: plain buttons, never command links. */
-  noLink: true;
-}
-
-/** `parent` is the profile's window, or null when none is open (the box is then app-modal). */
-export type ShowMessageBox = (
-  parent: unknown,
-  options: MessageBoxOptions,
-) => Promise<{ response: number }>;
+import type { ShellDialogOptions, ShowShellDialog } from "../shell-dialog.ts";
 
 export interface DeviceDialogs {
   /** 「允许 <平台名称>（<host>）在这台电脑上运行命令吗？」 */
@@ -39,8 +23,13 @@ export interface DeviceDialogs {
     parent: unknown,
     widened: { outsideSandbox: boolean; network: boolean; projectReach: boolean },
     texts: string[],
+    profile?: Profile,
   ): Promise<boolean>;
-  confirmRaiseKeepAwake(parent: unknown, mode: Exclude<KeepAwakeMode, "off">): Promise<boolean>;
+  confirmRaiseKeepAwake(
+    parent: unknown,
+    mode: Exclude<KeepAwakeMode, "off">,
+    profile?: Profile,
+  ): Promise<boolean>;
   /** Removing a profile this machine is connected to: disconnect and log the device out too? */
   confirmRemoveDevice(parent: unknown, profile: Profile): Promise<boolean>;
 }
@@ -59,36 +48,49 @@ export function platformLabel(profile: Pick<Profile, "name" | "origin">): {
   return { name: isHost ? null : name, host: url.host };
 }
 
+/** The platform a dialog names, with its icon as a data: URL when main has one cached. */
+export function dialogPlatformOf(
+  profile: Pick<Profile, "name" | "origin">,
+  iconUrl?: string,
+): NonNullable<ShellDialogOptions["platform"]> {
+  const { name, host } = platformLabel(profile);
+  return { name: name ?? host, host, ...(iconUrl ? { iconUrl } : {}) };
+}
+
 export function createDeviceDialogs(deps: {
-  showMessageBox: ShowMessageBox;
+  showDialog: ShowShellDialog;
   locale: Locale;
+  /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
+  iconFor?: (profile: Profile) => string | undefined;
   /** `process.platform`: the keep-awake limits differ on Linux (the lid switch, spec §9.7). */
   platform: string;
 }): DeviceDialogs {
   const { locale } = deps;
   const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
 
-  /** Asks; true only for the first (allowing) button. */
+  /** Asks; true only for the confirming (last) button. */
   async function ask(
     parent: unknown,
     o: {
-      type?: "question" | "warning";
       message: string;
       detail: string;
       confirm: string;
       cancel?: string;
+      tone?: "primary" | "danger";
+      profile?: Profile | undefined;
     },
   ): Promise<boolean> {
-    const { response } = await deps.showMessageBox(parent, {
-      type: o.type ?? "question",
-      message: o.message,
+    const { response } = await deps.showDialog(parent, {
+      title: o.message,
       detail: o.detail,
-      buttons: [o.confirm, o.cancel ?? tr("device.cancel")],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
+      buttons: [o.cancel ?? tr("device.cancel"), o.confirm],
+      defaultId: 0,
+      cancelId: 0,
+      confirmId: 1,
+      tone: o.tone ?? "primary",
+      ...(o.profile ? { platform: dialogPlatformOf(o.profile, deps.iconFor?.(o.profile)) } : {}),
     });
-    return response === 0;
+    return response === 1;
   }
 
   /** A message key with `{name}` and `{host}`, or its `_host` variant when there is no name. */
@@ -103,11 +105,12 @@ export function createDeviceDialogs(deps: {
         message: named("device.connect.message", profile),
         detail: tr("device.connect.detail"),
         confirm: tr("device.allow"),
+        profile,
       }),
 
     confirmDisconnectOther: (parent, origin) =>
       ask(parent, {
-        type: "warning",
+        tone: "danger",
         message: tr("device.disconnect_other.message", { origin }),
         detail: tr("device.disconnect_other.detail"),
         confirm: tr("device.disconnect_other.confirm"),
@@ -118,11 +121,12 @@ export function createDeviceDialogs(deps: {
         message: named("device.resume.message", profile),
         detail: tr("device.resume.detail"),
         confirm: tr("device.resume.confirm"),
+        profile,
       }),
 
-    confirmWidenCeiling: (parent, widened, texts) =>
+    confirmWidenCeiling: (parent, widened, texts, profile) =>
       ask(parent, {
-        type: "warning",
+        profile,
         message: tr("device.ceiling.message"),
         detail: [
           [
@@ -135,8 +139,9 @@ export function createDeviceDialogs(deps: {
         confirm: tr("device.ceiling.confirm"),
       }),
 
-    confirmRaiseKeepAwake: (parent, mode) =>
+    confirmRaiseKeepAwake: (parent, mode, profile) =>
       ask(parent, {
+        profile,
         message: tr("device.keep_awake.message"),
         detail: `${tr(`device.keep_awake.detail.${mode}`)}\n\n${tr(
           deps.platform === "linux" ? "device.keep_awake.limits_linux" : "device.keep_awake.limits",
@@ -151,6 +156,8 @@ export function createDeviceDialogs(deps: {
         detail: tr("device.remove.detail", { platform: name ?? host }),
         confirm: tr("device.remove.yes"),
         cancel: tr("device.remove.no"),
+        tone: "danger",
+        profile,
       });
     },
   };
