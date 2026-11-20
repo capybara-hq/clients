@@ -282,7 +282,7 @@ describe("the app:// protocol", () => {
     if (v === undefined) throw new Error("ENOENT");
     return Buffer.from(v);
   });
-  const handle = createAppProtocolHandler({ dir: "/dist/address-page", readFile });
+  const handle = createAppProtocolHandler({ host: "address", dir: "/dist/address-page", readFile });
 
   test("serves the three files with types and a strict CSP", async () => {
     for (const [url, type] of [

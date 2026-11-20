@@ -52,16 +52,16 @@ const notFound = () => new Response("Not found", { status: 404 });
 
 function lookup(
   url: URL,
-  deps: { dir: string; localDir?: string },
+  deps: { dir: string; localDir?: string; host: string },
 ): { path: string; type: string; csp: string } | undefined {
   // The raw pathname, compared as is: "%2e%2e" or "..%2f" match no entry and no pattern.
-  if (url.host === ADDRESS_HOST) {
+  if (deps.host === ADDRESS_HOST && url.host === ADDRESS_HOST) {
     const entry = Object.hasOwn(FILES, url.pathname) ? FILES[url.pathname] : undefined;
     return entry
       ? { path: join(deps.dir, entry.file), type: entry.type, csp: ADDRESS_CSP }
       : undefined;
   }
-  if (url.host === LOCAL_HOST && deps.localDir !== undefined) {
+  if (deps.host === LOCAL_HOST && url.host === LOCAL_HOST && deps.localDir !== undefined) {
     const m = LOCAL_FILE.exec(url.pathname);
     if (!m) return undefined;
     const [, name, ext] = m as unknown as [string, string, string];
@@ -75,6 +75,8 @@ function lookup(
 }
 
 export function createAppProtocolHandler(deps: {
+  /** The only host this registration serves: each partition serves its own pages. */
+  host: typeof ADDRESS_HOST | typeof LOCAL_HOST;
   /** The directory holding the built address page files. */
   dir: string;
   /** The directory holding the built local pages (dist/local); absent = app://local is 404. */

@@ -27,7 +27,13 @@ import {
 import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
-import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
+import {
+  ADDRESS_HOST,
+  APP_SCHEME,
+  chromeState,
+  LOCAL_HOST,
+  platformFrom,
+} from "../shared/protocol.ts";
 import { createAddressHost, discoverDeployment, localeFrom } from "./address.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
@@ -63,7 +69,12 @@ import {
 } from "./managed.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
-import { ADDRESS_PARTITION, hardenAnyContents, LOCAL_PARTITION } from "./security.ts";
+import {
+  ADDRESS_PARTITION,
+  hardenAnyContents,
+  installDenyAllPermissions,
+  LOCAL_PARTITION,
+} from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
@@ -128,14 +139,25 @@ function start(): void {
       readPlist: createPlistReader({ existsSync: fs.existsSync, execFileSync }),
     });
 
-    // One app:// handler for the address partition and the local pages' partition alike.
-    const appProtocol = createAppProtocolHandler({
+    // Each partition serves only its own app:// host.
+    const protocolDeps = {
       dir: join(dist, "address-page"),
       localDir: join(dist, "local"),
       readFile,
-    });
-    session.fromPartition(ADDRESS_PARTITION).protocol.handle(APP_SCHEME, appProtocol);
-    session.fromPartition(LOCAL_PARTITION).protocol.handle(APP_SCHEME, appProtocol);
+    };
+    session
+      .fromPartition(ADDRESS_PARTITION)
+      .protocol.handle(
+        APP_SCHEME,
+        createAppProtocolHandler({ ...protocolDeps, host: ADDRESS_HOST }),
+      );
+    const localSession = session.fromPartition(LOCAL_PARTITION);
+    localSession.protocol.handle(
+      APP_SCHEME,
+      createAppProtocolHandler({ ...protocolDeps, host: LOCAL_HOST }),
+    );
+    // The local pages ask for no permission, ever.
+    installDenyAllPermissions(localSession);
 
     // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
     // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
