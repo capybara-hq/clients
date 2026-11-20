@@ -89,8 +89,11 @@ function escapeLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** ASCII characters a URL keeps literal; any other character appears only as `%XX` bytes. */
-const LITERAL_OK = /[-._~]/;
+/**
+ * ASCII characters the URL parser leaves unescaped in a path (they may also arrive as `%XX`); any
+ * other character (a space, quotes, `<>`, a backtick, braces, non-ASCII) appears only as `%XX` bytes.
+ */
+const LITERAL_OK = /[-._~+,:;=@!$&'()*]/;
 
 /**
  * `login` -> `[l%][46]?c?...`: each letter or digit, or `%` and its two hex digits. Other
