@@ -7,6 +7,7 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
 const profile = (n: number, over: Partial<Profile> = {}): Profile => ({
   id: `p${n}`,
+  signedIn: true,
   base: `https://p${n}.example.com`,
   origin: `https://p${n}.example.com`,
   name: `P${n}`,

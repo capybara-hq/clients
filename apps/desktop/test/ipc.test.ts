@@ -5,6 +5,7 @@ import { fakeFrame } from "./fakes.ts";
 
 const profile: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://capybara.example.com",
   origin: "https://capybara.example.com",
   name: "Example",

@@ -7,12 +7,14 @@ import { machineNameFrom } from "../src/main/user-agent.ts";
 
 const profile: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://capybara.example.com/team",
   origin: "https://capybara.example.com",
   name: "Example",
 };
 const other: Profile = {
   id: "p2",
+  signedIn: true,
   base: "https://other.example.com",
   origin: "https://other.example.com",
   name: "Other",

@@ -6,12 +6,14 @@ import { fakeEmitter, fakeSession, fakeWebContents } from "./fakes.ts";
 
 const p1: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://a.example.com/team",
   origin: "https://a.example.com",
   name: "A",
 };
 const p2: Profile = {
   id: "p2",
+  signedIn: true,
   base: "https://b.example.com",
   origin: "https://b.example.com",
   name: "B",

@@ -140,6 +140,7 @@ function host(
 ): ReturnType<typeof createAddressHost> & { deps: Parameters<typeof createAddressHost>[0] } {
   const profile: Profile = {
     id: "p1",
+    signedIn: true,
     base: "https://capybara.example.com",
     origin: "https://capybara.example.com",
     name: "Example Corp",

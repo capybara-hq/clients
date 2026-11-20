@@ -6,6 +6,7 @@ import { createProfileRemoval, type ProfileRemovalDeps } from "../src/main/remov
 
 const p1: Profile = {
   id: "p1",
+  signedIn: true,
   base: "https://a.example.com/team",
   origin: "https://a.example.com",
   name: "Example",
