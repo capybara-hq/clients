@@ -42,6 +42,8 @@ final class HttpGetter: NSObject, URLSessionDataDelegate {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
+        // A total deadline: timeoutInterval alone is an idle timeout that every byte resets.
+        configuration.timeoutIntervalForResource = timeout
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)

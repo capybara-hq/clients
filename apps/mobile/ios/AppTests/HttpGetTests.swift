@@ -24,6 +24,21 @@ final class HttpGetTests: XCTestCase {
                 self.requests.append(path)
                 let reply = self.routes[path]
                 self.lock.unlock()
+                if path == "/drip" {
+                    // Headers now, then one byte every 100 ms: the idle timeout never fires.
+                    connection.send(
+                        content: "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n".data(using: .utf8),
+                        completion: .contentProcessed { _ in })
+                    let timer = DispatchSource.makeTimerSource(queue: .global())
+                    timer.schedule(deadline: .now(), repeating: .milliseconds(100))
+                    timer.setEventHandler {
+                        connection.send(content: Data("x".utf8), completion: .contentProcessed { error in
+                            if error != nil { timer.cancel() }
+                        })
+                    }
+                    timer.resume()
+                    return
+                }
                 guard let reply else { return }
                 connection.send(content: reply.data(using: .utf8), completion: .contentProcessed { _ in
                     connection.cancel()
@@ -77,6 +92,13 @@ final class HttpGetTests: XCTestCase {
     func testAStalledServerTimesOut() async {
         let result = await get("/never", getter: HttpGetter(timeout: 0.5))
         XCTAssertEqual(result, .failure(.unreachable))
+    }
+
+    func testASlowDripEndsAtTheTotalDeadline() async {
+        let started = Date()
+        let result = await get("/drip", getter: HttpGetter(timeout: 0.6))
+        XCTAssertEqual(result, .failure(.unreachable))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
     }
 
     func testARefusedConnectionIsUnreachable() async {

@@ -41,7 +41,15 @@ class HttpGetTest {
                         val path = socket.getInputStream().bufferedReader().readLine().split(" ")[1]
                         seen.add(path)
                         val reply = routes[path]
-                        if (reply == null) {
+                        if (path == "/drip") {
+                            // Headers now, then one byte every 100 ms: no read ever idles out.
+                            val out = socket.getOutputStream()
+                            out.write("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n".toByteArray())
+                            try {
+                                while (true) { out.write('x'.code); out.flush(); Thread.sleep(100) }
+                            } catch (e: java.io.IOException) {
+                            }
+                        } else if (reply == null) {
                             stalled.add(socket) // never answers; closed in stop()
                         } else {
                             socket.getOutputStream().write(reply.toByteArray())
@@ -87,6 +95,19 @@ class HttpGetTest {
         } catch (e: HttpGetFailure) {
             assertEquals(HttpGetFailure.Unreachable, e)
         }
+    }
+
+    @Test
+    fun aSlowDripEndsAtTheTotalDeadline() {
+        val started = System.nanoTime()
+        try {
+            HttpGet.get("$base/drip", timeoutMs = 600)
+            fail("expected a failure")
+        } catch (e: HttpGetFailure) {
+            assertEquals(HttpGetFailure.Unreachable, e)
+        }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertTrue("took $ms ms", ms < 3000)
     }
 
     @Test

@@ -9,6 +9,7 @@ allowBuilds:
   esbuild: true
 # Capacitor's CapacitorCookies wipes the default WebView profile's session cookies on every Android
 # Activity start and destroy even when disabled; the patch makes that depend on `enabled` (Android
-# single-store mode keeps a deployment's session there; apps/mobile DefaultProfileCookiesTest).
+# single-store mode keeps a deployment's session there; apps/mobile DefaultProfileCookiesTest). It also
+# installs a process-wide CookieHandler into that profile only when enabled (HttpGetCookiesTest).
 patchedDependencies:
   "@capacitor/android@8.6.2": patches/@capacitor__android@8.6.2.patch
