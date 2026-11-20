@@ -37,6 +37,8 @@ describe("the platform label", () => {
     expect(platformLabel(named)).toEqual({ name: "Acme 平台", host: "a.example.com" });
     expect(platformLabel(unnamed)).toEqual({ name: null, host: "b.example.com:8443" });
     expect(platformLabel({ ...named, name: "  " })).toEqual({ name: null, host: "a.example.com" });
+    // Control and bidi characters never reach a confirmation.
+    expect(platformLabel({ ...named, name: "Ac\u202Eme" }).name).toBe("Acme");
     expect(platformLabel({ ...named, name: "a.example.com" })).toEqual({
       name: null,
       host: "a.example.com",

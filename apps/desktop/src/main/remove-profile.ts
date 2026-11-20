@@ -52,7 +52,7 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
       platform: dialogPlatformOf(profile, deps.iconFor?.(profile)),
     };
     const { response } = await deps.showDialog(parent, options);
-    return response === 1;
+    return response === options.confirmId;
   }
 
   return {

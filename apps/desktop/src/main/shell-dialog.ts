@@ -3,9 +3,11 @@
 // page can neither draw nor click. Its content comes from the main process only; the answer comes
 // back only as `dialog.answer` from that dialog's own webContents (the local page registry checks
 // the sender), with the index checked against the dialog's buttons. The first answer wins; Esc,
-// closing the window and the parent closing answer `cancelId`; the confirming button takes no
-// answer in the first 500 ms after the window shows (enforced here, not only in the page).
-// Electron objects come in as parameters.
+// closing the window, the parent closing, a crashed, hung or failed page and a page that never
+// shows all answer `cancelId`. Every button but cancel takes no answer while the dialog is not
+// focused, and for 500 ms after it shows, gains focus or is restored (enforced here, not only in
+// the page). The window stays hidden until the page reported its height, so the lockout starts
+// when the person can actually see the final dialog. Electron objects come in as parameters.
 import { type Locale, t } from "@capybara-hq/shell";
 import type { DialogState } from "../local/dialog-model.ts";
 import { isIconDataUrl } from "../local/icon-url.ts";
@@ -21,8 +23,8 @@ export interface ShellDialogOptions {
   /** In visual order: cancel first, the confirming button last (spec §7.4). */
   buttons: string[];
   /**
-   * Kept for the native message box contract; the dialog always starts with the focus on `cancelId`,
-   * so a stray Enter never confirms (spec §7.4).
+   * Kept for the native message box contract; the dialog always starts with the focus on
+   * `cancelId`, so a stray Enter never confirms (spec §7.4).
    */
   defaultId: number;
   cancelId: number;
@@ -40,9 +42,16 @@ export type ShowShellDialog = (
 export const DIALOG_WIDTH = 400;
 export const DIALOG_MIN_HEIGHT = 160;
 export const DIALOG_MAX_HEIGHT = 560;
-/** The confirming button takes no answer this long after the dialog shows. */
+/** Every button but cancel takes no answer this long after the dialog shows or gains focus. */
 export const CONFIRM_LOCKOUT_MS = 500;
+/** After ready-to-show, a page that never reports its height is shown anyway after this long. */
+export const SHOW_FALLBACK_MS = 2_000;
+/** A dialog not shown this long after it was created is cancelled (a page that hangs). */
+export const SHOW_TIMEOUT_MS = 10_000;
+/** A parented dialog off macOS (no sheets) sits this far below the parent's top edge. */
+export const PARENT_TOP_OFFSET = 64;
 export const MAX_BUTTONS = 16;
+export const MAX_PLATFORM_NAME = 64;
 
 export interface DialogContents extends ContentsLike {
   id: number;
@@ -53,19 +62,32 @@ export interface DialogContents extends ContentsLike {
 
 export interface DialogWindow {
   webContents: DialogContents;
+  // biome-ignore lint/suspicious/noExplicitAny: Electron's window events are overloaded per event.
+  on(event: string, listener: (...args: any[]) => void): unknown;
   once(event: "ready-to-show" | "closed", listener: () => void): unknown;
   show(): void;
   close(): void;
   isDestroyed(): boolean;
+  isFocused(): boolean;
   setContentSize(width: number, height: number): void;
   setPosition(x: number, y: number): void;
   loadURL(url: string): Promise<void>;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** A calling window that still lives. */
 export interface DialogParent {
   once(event: "closed", listener: () => void): unknown;
   removeListener(event: "closed", listener: () => void): unknown;
+  isVisible(): boolean;
+  isMinimized(): boolean;
+  getBounds(): Rect;
 }
 
 export interface DialogWindowOptions {
@@ -91,15 +113,36 @@ export interface ShellDialogDeps {
   createWindow(options: DialogWindowOptions): DialogWindow;
   localPages: Pick<LocalPages, "register" | "handle">;
   preloadPath: string;
-  /** `parent` as a live window to attach the dialog to, else undefined (standalone). */
+  /** `parent` as a live window, else undefined (standalone). */
   liveParent(parent: unknown): DialogParent | undefined;
   /** Every field of the page state but the page and the platform: locale, appearance, … */
   pageBase(): Omit<BasePageState, "page" | "platform">;
   /** The work area of the active display, for a standalone dialog. */
-  workArea?(): { x: number; y: number; width: number; height: number };
+  workArea?(): Rect;
   backgroundColor?(): string;
   now?(): number;
+  /** `setTimeout`, returning its cancel; injected so tests run the timers. */
+  setTimer?(fn: () => void, ms: number): () => void;
   log?: (message: string, err?: unknown) => void;
+}
+
+// Control and format characters (bidi overrides and isolates, zero-width marks): a platform name
+// could reorder or hide the words around it in a confirmation.
+const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
+
+/**
+ * A platform name as a dialog may show it: control and format characters (bidi) removed,
+ * whitespace collapsed, at most 64 characters (an ellipsis marks a cut).
+ */
+export function cleanPlatformName(name: string): string {
+  const clean = name.replace(/\s+/g, " ").replace(UNSAFE_CHARS, "").trim();
+  const chars = [...clean];
+  return chars.length <= MAX_PLATFORM_NAME
+    ? clean
+    : `${chars
+        .slice(0, MAX_PLATFORM_NAME - 1)
+        .join("")
+        .trimEnd()}…`;
 }
 
 /** The platform as the dialog shows it; an icon that is not a data: image URL is dropped. */
@@ -109,8 +152,8 @@ export function dialogPlatform(o: {
   iconUrl?: string | undefined;
 }): PagePlatform {
   return {
-    name: o.name,
-    host: o.host,
+    name: cleanPlatformName(o.name),
+    host: cleanPlatformName(o.host),
     ...(isIconDataUrl(o.iconUrl) ? { iconUrl: o.iconUrl } : {}),
   };
 }
@@ -142,14 +185,25 @@ export function clampHeight(height: number): number {
 interface OpenDialog {
   window: DialogWindow;
   options: ShellDialogOptions;
-  shownAt: number | undefined;
   parent: DialogParent | undefined;
   height: number;
+  /** show() was called. */
+  visible: boolean;
+  /** When the lockout last (re)started: the window showed, gained focus or was restored. */
+  armedAt: number | undefined;
+  /** Places the window and shows it, once. */
+  reveal(): void;
   settle(response: number): void;
 }
 
+const defaultTimer = (fn: () => void, ms: number) => {
+  const handle = setTimeout(fn, ms);
+  return () => clearTimeout(handle);
+};
+
 export function createShellDialogs(deps: ShellDialogDeps) {
   const now = deps.now ?? Date.now;
+  const setTimer = deps.setTimer ?? defaultTimer;
   /** Open dialogs by their webContents id. */
   const open = new Map<number, OpenDialog>();
   /** Parents with a dialog showing: a second dialog for one of them is refused. */
@@ -158,7 +212,22 @@ export function createShellDialogs(deps: ShellDialogDeps) {
   function place(d: OpenDialog): void {
     if (d.window.isDestroyed()) return;
     d.window.setContentSize(DIALOG_WIDTH, d.height);
-    const area = d.parent ? undefined : deps.workArea?.();
+    if (d.parent) {
+      // macOS shows a modal child as a sheet and places it itself.
+      if (deps.pageBase().os === "macos") return;
+      let b: Rect;
+      try {
+        b = d.parent.getBounds();
+      } catch {
+        return;
+      }
+      d.window.setPosition(
+        Math.round(b.x + (b.width - DIALOG_WIDTH) / 2),
+        Math.round(b.y + PARENT_TOP_OFFSET),
+      );
+      return;
+    }
+    const area = deps.workArea?.();
     if (area) {
       d.window.setPosition(
         Math.round(area.x + (area.width - DIALOG_WIDTH) / 2),
@@ -172,9 +241,11 @@ export function createShellDialogs(deps: ShellDialogDeps) {
     if (!d || d.window.webContents !== ctx.contents) return false;
     const index = args.index;
     if (!isIndex(index, d.options.buttons.length)) return false;
-    if (index === d.options.confirmId) {
-      // Not shown yet, or shown less than 500 ms ago: a click aimed at the page lands here.
-      if (d.shownAt === undefined || now() - d.shownAt < CONFIRM_LOCKOUT_MS) return false;
+    if (index !== d.options.cancelId) {
+      // Every button but cancel: only on a dialog the person sees, has in focus, and has had in
+      // focus for 500 ms, so a click or key press aimed at the page cannot land on it.
+      if (d.armedAt === undefined || now() - d.armedAt < CONFIRM_LOCKOUT_MS) return false;
+      if (d.window.isDestroyed() || !d.window.isFocused()) return false;
     }
     d.settle(index);
     return true;
@@ -184,13 +255,22 @@ export function createShellDialogs(deps: ShellDialogDeps) {
     const d = open.get(ctx.contents.id);
     if (!d || d.window.webContents !== ctx.contents || typeof args.height !== "number") return null;
     d.height = clampHeight(args.height);
-    place(d);
+    // The first height shows the dialog: it now has its final size and content.
+    if (d.visible) place(d);
+    else d.reveal();
     return null;
   });
 
   const show: ShowShellDialog = (parentArg, options) => {
     checkOptions(options);
-    const parent = deps.liveParent(parentArg);
+    const live = deps.liveParent(parentArg);
+    let parent: DialogParent | undefined;
+    try {
+      // A hidden or minimized parent would hide the sheet: the dialog then stands alone.
+      parent = live?.isVisible() && !live.isMinimized() ? live : undefined;
+    } catch {
+      parent = undefined;
+    }
     if (parent && busyParents.has(parent)) {
       deps.log?.("a shell dialog is already open for this window");
       return Promise.resolve({ response: options.cancelId });
@@ -239,16 +319,29 @@ export function createShellDialogs(deps: ShellDialogDeps) {
       const contents = window.webContents;
       let settled = false;
       let unregister: () => void = () => undefined;
-      const onParentClosed = () => d.settle(options.cancelId);
+      const timers: Array<() => void> = [];
+      const cancel = (why?: string) => {
+        if (why && !settled) deps.log?.(`shell dialog cancelled: ${why}`);
+        d.settle(options.cancelId);
+      };
+      const onParentClosed = () => cancel();
       const d: OpenDialog = {
         window,
         options,
-        shownAt: undefined,
         parent,
         height: DIALOG_MIN_HEIGHT,
+        visible: false,
+        armedAt: undefined,
+        reveal() {
+          if (settled || d.visible || window.isDestroyed()) return;
+          d.visible = true;
+          place(d);
+          window.show();
+        },
         settle(response) {
           if (settled) return;
           settled = true;
+          for (const stop of timers) stop();
           open.delete(contents.id);
           if (parent) {
             busyParents.delete(parent);
@@ -275,20 +368,36 @@ export function createShellDialogs(deps: ShellDialogDeps) {
       contents.on(
         "before-input-event",
         (_e: unknown, input: { type?: string; key?: string } | undefined) => {
-          if (input?.type === "keyDown" && input.key === "Escape") d.settle(options.cancelId);
+          if (input?.type === "keyDown" && input.key === "Escape") cancel();
         },
       );
-      contents.once("destroyed", () => d.settle(options.cancelId));
-      window.once("closed", () => d.settle(options.cancelId));
-      window.once("ready-to-show", () => {
-        if (settled || window.isDestroyed()) return;
-        place(d);
-        window.show();
-        d.shownAt = now();
+      contents.once("destroyed", () => cancel());
+      contents.on("render-process-gone", () => cancel("the page's renderer is gone"));
+      contents.on("did-fail-load", (...a: unknown[]) => {
+        // (event, errorCode, errorDescription, validatedURL, isMainFrame)
+        if (a[4] !== false) cancel("the page did not load");
       });
+      window.on("unresponsive", () => cancel("the page does not respond"));
+      window.once("closed", () => cancel());
+      // The lockout (re)starts whenever the dialog shows, gains focus or comes back.
+      const arm = () => {
+        if (d.visible) d.armedAt = now();
+      };
+      window.on("show", arm);
+      window.on("focus", arm);
+      window.on("restore", arm);
+      window.once("ready-to-show", () => {
+        // The page normally shows the dialog with its first height; this is only the fallback.
+        timers.push(setTimer(() => d.reveal(), SHOW_FALLBACK_MS));
+      });
+      timers.push(
+        setTimer(() => {
+          if (!d.visible) cancel("the dialog never showed");
+        }, SHOW_TIMEOUT_MS),
+      );
       window.loadURL(localPageUrl("dialog")).catch((err: unknown) => {
         deps.log?.("the shell dialog page did not load", err);
-        d.settle(options.cancelId);
+        cancel();
       });
     });
   };
@@ -311,7 +420,9 @@ export function signOutDialogOptions(
 ): ShellDialogOptions {
   const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
   return {
-    title: tr("signOut.title", { platform: platform.name || platform.host }),
+    title: tr("signOut.title", {
+      platform: cleanPlatformName(platform.name) || cleanPlatformName(platform.host),
+    }),
     detail: tr("signOut.detail"),
     buttons: [tr("signOut.cancel"), tr("signOut.confirm")],
     defaultId: 0,

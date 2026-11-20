@@ -7,7 +7,11 @@
 import type { KeepAwakeMode } from "@capybara-hq/plugin-sdk";
 import { type Locale, t } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
-import type { ShellDialogOptions, ShowShellDialog } from "../shell-dialog.ts";
+import {
+  cleanPlatformName,
+  type ShellDialogOptions,
+  type ShowShellDialog,
+} from "../shell-dialog.ts";
 
 export interface DeviceDialogs {
   /** 「允许 <平台名称>（<host>）在这台电脑上运行命令吗？」 */
@@ -43,7 +47,8 @@ export function platformLabel(profile: Pick<Profile, "name" | "origin">): {
   host: string;
 } {
   const url = new URL(profile.origin);
-  const name = profile.name.trim();
+  // Cleaned of control and bidi characters and capped: it is shown inside a confirmation.
+  const name = cleanPlatformName(profile.name);
   const isHost = name === "" || name === url.host || name === url.hostname;
   return { name: isHost ? null : name, host: url.host };
 }
@@ -80,7 +85,7 @@ export function createDeviceDialogs(deps: {
       profile?: Profile | undefined;
     },
   ): Promise<boolean> {
-    const { response } = await deps.showDialog(parent, {
+    const options: ShellDialogOptions = {
       title: o.message,
       detail: o.detail,
       buttons: [o.cancel ?? tr("device.cancel"), o.confirm],
@@ -89,8 +94,9 @@ export function createDeviceDialogs(deps: {
       confirmId: 1,
       tone: o.tone ?? "primary",
       ...(o.profile ? { platform: dialogPlatformOf(o.profile, deps.iconFor?.(o.profile)) } : {}),
-    });
-    return response === 1;
+    };
+    const { response } = await deps.showDialog(parent, options);
+    return response === options.confirmId;
   }
 
   /** A message key with `{name}` and `{host}`, or its `_host` variant when there is no name. */

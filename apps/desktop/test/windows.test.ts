@@ -292,7 +292,7 @@ describe("profile windows", () => {
     expect(windows.hasWindows()).toBe(false);
   });
 
-  test("dialogParent: the profile's window (the front one if it is), else the front one", () => {
+  test("dialogParent: the profile's window (the front one if it is), never another's", () => {
     const { windows, created } = setup();
     expect(windows.dialogParent("p1")).toBeUndefined();
     windows.openProfileWindow(p1);
@@ -304,10 +304,10 @@ describe("profile windows", () => {
     // p1 is not in front: its newest window.
     expect(windows.dialogParent("p1")).toBe(created[1]);
     expect(windows.dialogParent("p2")).toBe(created[2]);
-    // No window of that profile: the window in front.
-    expect(windows.dialogParent("p3")).toBe(created[2]);
+    // No window of that profile: none (the dialog stands alone), not another profile's window.
+    expect(windows.dialogParent("p3")).toBeUndefined();
     windows.closeProfileWindows("p2");
-    expect(windows.dialogParent("p3")).toBe(created[1]);
+    expect(windows.dialogParent("p3")).toBeUndefined();
   });
 });
 
@@ -362,10 +362,11 @@ describe("the small window", () => {
     expect(away.preventDefault).toHaveBeenCalled();
   });
 
-  test("focusLast and dialogParent include it", () => {
+  test("focusLast and dialogParent include it (dialogParent while it is in front)", () => {
     const { windows, created } = setup();
     windows.openSmallWindow(COLORS);
     expect(windows.focusLast(() => false)).toBe(true);
+    created[0]?.emit("focus");
     expect(windows.dialogParent("p1")).toBe(created[0]);
   });
 

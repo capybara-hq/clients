@@ -507,16 +507,19 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
     /**
      * The window a dialog about a profile attaches to: that profile's last focused (or newest)
-     * window, else the most recently focused window, else the newest one; undefined when none.
+     * window, else the small window when it is in front (it shows that profile's pages); else
+     * undefined, and the dialog stands alone. Never another profile's window: a dialog about one
+     * platform must not sit on another's, nor be refused because that window is busy.
      */
     dialogParent(profileId: string): WindowLike | undefined {
-      const own = profileEntries(profileId);
       if (lastFocused?.kind === "profile" && lastFocused.profile.id === profileId) {
         return lastFocused.window;
       }
-      const all = entries();
-      return (own.at(-1) ?? (lastFocused && all.includes(lastFocused) ? lastFocused : all.at(-1)))
-        ?.window;
+      const own = profileEntries(profileId).at(-1);
+      if (own) return own.window;
+      return lastFocused?.kind === "small" && entries().includes(lastFocused)
+        ? lastFocused.window
+        : undefined;
     },
 
     hasWindows(): boolean {
