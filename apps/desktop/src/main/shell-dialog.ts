@@ -32,6 +32,11 @@ export interface ShellDialogOptions {
   confirmId?: number;
   tone?: "primary" | "danger";
   platform?: { name: string; host: string; iconUrl?: string };
+  /**
+   * The profile the dialog is about: its page follows that profile's theme and colors (desktop
+   * spec §6.10); absent = the app level (the app's choice, else the OS).
+   */
+  profileId?: string;
 }
 
 export type ShowShellDialog = (
@@ -115,11 +120,14 @@ export interface ShellDialogDeps {
   preloadPath: string;
   /** `parent` as a live window, else undefined (standalone). */
   liveParent(parent: unknown): DialogParent | undefined;
-  /** Every field of the page state but the page and the platform: locale, appearance, … */
-  pageBase(): Omit<BasePageState, "page" | "platform">;
+  /**
+   * Every field of the page state but the page and the platform: locale, appearance, … of the
+   * profile the dialog is about (none: app level).
+   */
+  pageBase(profileId?: string): Omit<BasePageState, "page" | "platform">;
   /** The work area of the active display, for a standalone dialog. */
   workArea?(): Rect;
-  backgroundColor?(): string;
+  backgroundColor?(profileId?: string): string;
   now?(): number;
   /** `setTimeout`, returning its cancel; injected so tests run the timers. */
   setTimer?(fn: () => void, ms: number): () => void;
@@ -277,7 +285,7 @@ export function createShellDialogs(deps: ShellDialogDeps) {
     }
 
     const state = (): DialogState => ({
-      ...deps.pageBase(),
+      ...deps.pageBase(options.profileId),
       page: "dialog",
       ...(options.platform ? { platform: dialogPlatform(options.platform) } : {}),
       title: options.title,
@@ -290,7 +298,7 @@ export function createShellDialogs(deps: ShellDialogDeps) {
 
     let window: DialogWindow;
     try {
-      const bg = deps.backgroundColor?.();
+      const bg = deps.backgroundColor?.(options.profileId);
       window = deps.createWindow({
         width: DIALOG_WIDTH,
         height: DIALOG_MIN_HEIGHT,
@@ -363,7 +371,11 @@ export function createShellDialogs(deps: ShellDialogDeps) {
       }
 
       hardenLocalContents(contents);
-      unregister = deps.localPages.register(contents, { kind: "dialog", state });
+      unregister = deps.localPages.register(contents, {
+        kind: "dialog",
+        ...(options.profileId === undefined ? {} : { profileId: options.profileId }),
+        state,
+      });
       // Esc cancels in main, whatever the page's script does.
       contents.on(
         "before-input-event",

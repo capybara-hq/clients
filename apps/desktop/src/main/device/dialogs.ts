@@ -70,8 +70,8 @@ export function createDeviceDialogs(deps: {
   /** `process.platform`: the keep-awake limits differ on Linux (the lid switch, spec §9.7). */
   platform: string;
 }): DeviceDialogs {
-  const { locale } = deps;
-  const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
+  // `deps.locale` is read at each call: main passes a getter that follows the chosen language.
+  const tr = (key: string, vars?: Record<string, string>) => t(deps.locale, key, vars);
 
   /** Asks; true only for the confirming (last) button. */
   async function ask(
@@ -93,7 +93,12 @@ export function createDeviceDialogs(deps: {
       cancelId: 0,
       confirmId: 1,
       tone: o.tone ?? "primary",
-      ...(o.profile ? { platform: dialogPlatformOf(o.profile, deps.iconFor?.(o.profile)) } : {}),
+      ...(o.profile
+        ? {
+            platform: dialogPlatformOf(o.profile, deps.iconFor?.(o.profile)),
+            profileId: o.profile.id,
+          }
+        : {}),
     };
     const { response } = await deps.showDialog(parent, options);
     return response === options.confirmId;

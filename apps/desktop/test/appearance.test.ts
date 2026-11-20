@@ -3,7 +3,9 @@ import {
   type Appearance,
   BUILTIN_TOKENS,
   backgroundOf,
+  electronColor,
   isColor,
+  overlayColors,
   resolveAppearance,
   type Tokens,
   validTokens,
@@ -120,5 +122,32 @@ describe("resolveAppearance", () => {
     expect(backgroundOf(dark)).toBe("#101820");
     expect(backgroundOf({ scheme: "light" })).toBe("#FAF9F6");
     expect(backgroundOf({ scheme: "dark" })).toBe("#0A0A0A");
+  });
+});
+
+describe("electronColor", () => {
+  test("hex stays; rgb() and rgba() become #rrggbb with the alpha dropped", () => {
+    expect(electronColor("#abc")).toBe("#abc");
+    expect(electronColor("#A0B1C2")).toBe("#A0B1C2");
+    expect(electronColor("rgb(16, 20, 24)")).toBe("#101418");
+    expect(electronColor("rgb(0,0,0)")).toBe("#000000");
+    expect(electronColor("rgba(255, 255, 255, 0.5)")).toBe("#ffffff");
+    expect(electronColor("rgba( 1 , 2 , 3 , 1 )")).toBe("#010203");
+  });
+
+  test("anything that is not a color is undefined", () => {
+    for (const v of ["red", "#11223344", "rgb(256,0,0)", "var(--x)", "", 5, null]) {
+      expect(electronColor(v)).toBeUndefined();
+    }
+  });
+
+  test("the window background and the overlay colors are Electron colors", () => {
+    const rgb: Appearance = { scheme: "dark", tokens: { ...TOKENS, bg: "rgb(1, 2, 3)" } };
+    expect(backgroundOf(rgb)).toBe("#010203");
+    expect(overlayColors(rgb)).toEqual({ color: "#010203", symbolColor: "#ffffff" });
+    expect(overlayColors({ scheme: "light" })).toEqual({
+      color: BUILTIN_TOKENS.light.bg,
+      symbolColor: BUILTIN_TOKENS.light.muted,
+    });
   });
 });

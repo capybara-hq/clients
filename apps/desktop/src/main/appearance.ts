@@ -1,10 +1,11 @@
 // The appearance a profile's local pages and windows use (desktop spec §6.10). The source of truth
 // is the web's own `cb-theme` cookie in the profile's partition; the last chrome@1 report carries
 // the platform's colors (and whether its theme has one scheme only); before any profile the OS
-// decides. K8 adds the cookie reads and writes; this module only resolves.
+// decides. The cookie reads and writes are preferences.ts; this module only resolves.
 import {
   type Appearance,
   BUILTIN_TOKENS,
+  isColor as isColorValue,
   type Scheme,
   validAppearance,
 } from "../shared/appearance.ts";
@@ -40,7 +41,32 @@ export function resolveAppearance(
   return { scheme, ...(tokens ? { tokens } : {}) };
 }
 
-/** The window background for an appearance: the reported `bg`, else the built-in one. */
+/** The window background for an appearance, as Electron takes it: the reported `bg`, else built-in. */
 export function backgroundOf(appearance: Appearance): string {
-  return appearance.tokens?.bg ?? BUILTIN_TOKENS[appearance.scheme].bg;
+  return electronColor(appearance.tokens?.bg) ?? BUILTIN_TOKENS[appearance.scheme].bg;
+}
+
+/**
+ * A validated color (`isColor`) as Electron takes it: `#rgb` / `#rrggbb` stay, `rgb()` / `rgba()`
+ * become `#rrggbb` with the alpha dropped (Electron reads 8 hex digits alpha first, CSS alpha
+ * last, so no alpha form is ever handed over). Undefined for anything that is not a color.
+ */
+export function electronColor(color: unknown): string | undefined {
+  if (!isColorValue(color)) return undefined;
+  if (color.startsWith("#")) return color;
+  const parts = color.slice(color.indexOf("(") + 1, -1).split(",");
+  const hex = parts
+    .slice(0, 3)
+    .map((p) => Number(p.trim()).toString(16).padStart(2, "0"))
+    .join("");
+  return `#${hex}`;
+}
+
+/** The title bar overlay's colors (Windows / Linux) for an appearance. */
+export function overlayColors(appearance: Appearance): { color: string; symbolColor: string } {
+  const tokens = appearance.tokens ?? BUILTIN_TOKENS[appearance.scheme];
+  return {
+    color: electronColor(tokens.bg) ?? BUILTIN_TOKENS[appearance.scheme].bg,
+    symbolColor: electronColor(tokens.muted) ?? BUILTIN_TOKENS[appearance.scheme].muted,
+  };
 }

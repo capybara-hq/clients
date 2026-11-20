@@ -50,6 +50,7 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
       confirmId: 1,
       tone: "danger",
       platform: dialogPlatformOf(profile, deps.iconFor?.(profile)),
+      profileId: profile.id,
     };
     const { response } = await deps.showDialog(parent, options);
     return response === options.confirmId;

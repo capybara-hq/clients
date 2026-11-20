@@ -96,6 +96,9 @@ interface ShellReport {
   capabilities: string[];
 }
 
+/** The theme chosen in the small window before the first sign-in. */
+let chosenTheme = "";
+
 const shellReport = async (p: Page): Promise<ShellReport> =>
   JSON.parse((await p.locator("#shell").textContent()) ?? "{}") as ShellReport;
 
@@ -115,6 +118,13 @@ test("the small window: connect, found, sign-in in the browser, the main window"
   await expect(page.locator("h1")).toContainText("Fake Deployment");
   await expect(page.locator("img.lp-icon")).toHaveAttribute("src", /^data:image\/png;base64,/);
   expect(fake.requests.some((r) => r.path === "/api/v1/meta")).toBe(true);
+
+  // The theme toggle of the small window (spec §6.10): before any profile it is the app's choice,
+  // which seeds the new profile's cb-theme cookie (checked after the sign-in below).
+  const shown = await page.locator("html").getAttribute("data-theme");
+  chosenTheme = shown === "dark" ? "light" : "dark";
+  await page.locator('.lp-theme button[aria-pressed="false"]').click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", chosenTheme);
 
   // 在浏览器中登录: the authorize URL goes to the system browser (captured), the page waits.
   await page.locator("main .lp-btn").click();
@@ -142,6 +152,23 @@ test("the small window: connect, found, sign-in in the browser, the main window"
       ),
     )
     .toEqual([`${fake.base}/`]);
+});
+
+test("the theme chosen in the small window is the profile partition's cb-theme", async () => {
+  const profiles = JSON.parse(readFileSync(join(userData, "app", "profiles.json"), "utf8")) as {
+    profiles: { id: string; base: string }[];
+  };
+  const profile = profiles.profiles.find((p) => p.base === fake.base);
+  expect(profile).toBeDefined();
+  const cookies = await app.evaluate(
+    ({ session }, args) =>
+      session.fromPartition(args.partition).cookies.get({ url: args.base, name: "cb-theme" }),
+    { partition: `persist:profile-${profile?.id}`, base: fake.base },
+  );
+  expect(cookies.map((c) => ({ value: c.value, path: c.path, httpOnly: c.httpOnly }))).toEqual([
+    { value: chosenTheme, path: "/", httpOnly: false },
+  ]);
+  expect(cookies[0]?.sameSite).toBe("lax");
 });
 
 test("the deployment page sees capybaraShell with its capabilities", async () => {

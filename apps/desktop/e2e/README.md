@@ -31,6 +31,8 @@ What it covers:
 - The small window's frame origin is `app://local` (read in main), and the local page registry
   accepts its actions, so connect -> meta discovery -> icon -> 在浏览器中登录 -> callback -> the main
   window on `/` works, and the small window closes.
+- The small window's theme toggle before any profile is the app's choice and seeds the new
+  profile's `cb-theme` cookie (path `/`, `SameSite=Lax`, not HttpOnly) in its partition.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{28,0,0,0}`, controls `{0,0,80,28}`) with `signIn@1`, `notify@1`, `openExternal@1`,
   `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
