@@ -1,8 +1,8 @@
-// The app menu (macOS): the app's own items, the platform switcher (spec §6.3) and the standard
+// The app menu (macOS): the app's own items, the 「平台」 menu (spec §6.9) and the standard
 // edit, view and window menus, every item labelled from the shell catalog (zh, en). 「登录时启动」 is off by default (spec §9.4): it is checked only when
 // the OS says the app is a login item, and toggling it calls `setLoginItemSettings`.
 import { type Locale, t } from "@capybara-hq/shell";
-import { type MenuItemModel, platformItems, type TrayActions, type TrayState } from "./tray.ts";
+import type { MenuItemModel, TrayState } from "./tray.ts";
 
 const SEPARATOR: MenuItemModel = { type: "separator" };
 
@@ -27,13 +27,78 @@ export function createStartAtLogin(app: LoginItemApp) {
   };
 }
 
-export interface AppMenuState extends TrayState {
+/** What the 「平台」 menu shows (spec §6.9). */
+export interface PlatformMenuState {
+  locale: Locale;
+  /** The offered profiles, in order (the first nine get ⌘1…⌘9). */
+  profiles: { id: string; name: string; signedIn: boolean }[];
+  /** The current profile (the last used one), shown checked. */
+  activeId?: string | undefined;
+  /** Managed `lockDeployments`: neither adding nor removing is offered. */
+  lockDeployments: boolean;
+}
+
+export interface PlatformMenuActions {
+  /** Shows the profile: its main window, else its signed-out or found page. */
+  showProfile(id: string): void;
+  addPlatform(): void;
+  /** The shell dialog, then the logout (sign-out.ts `confirmAndSignOut`). */
+  signOut(id: string): void;
+  /** Asks, then removes the platform (remove-profile.ts). */
+  removeProfile(id: string): void;
+}
+
+/**
+ * The 「平台」 menu (spec §6.9): the profiles as radio items (⌘1…⌘9), 「添加平台…」,
+ * 「退出登录 <平台>…」 (the current profile, enabled only while it is signed in) and 「移除这个平台…」.
+ * The app menu shows it; K9's 「切换平台」 pops the same template up
+ * (`Menu.buildFromTemplate(platformMenuTemplate(...)).popup()`).
+ */
+export function platformMenuTemplate(
+  state: PlatformMenuState,
+  actions: PlatformMenuActions,
+): MenuItemModel[] {
+  const tr = (key: string, vars?: Record<string, string>) => t(state.locale, key, vars);
+  const items: MenuItemModel[] = state.profiles.map((p, i) => ({
+    label: p.name,
+    type: "radio",
+    checked: p.id === state.activeId,
+    ...(i < 9 ? { accelerator: `CmdOrCtrl+${i + 1}` } : {}),
+    click: () => actions.showProfile(p.id),
+  }));
+  const current = state.profiles.find((p) => p.id === state.activeId);
+  const tail: MenuItemModel[] = [];
+  if (!state.lockDeployments) {
+    tail.push({ label: tr("menu.platform.add"), click: () => actions.addPlatform() });
+  }
+  tail.push({
+    label: tr("menu.platform.signOut", { platform: current?.name ?? "" }).replace(/\s+…$/, "…"),
+    enabled: current?.signedIn === true,
+    click: () => {
+      if (current?.signedIn) actions.signOut(current.id);
+    },
+  });
+  if (!state.lockDeployments) {
+    tail.push({
+      label: tr("menu.platform.remove"),
+      enabled: current !== undefined,
+      click: () => {
+        if (current) actions.removeProfile(current.id);
+      },
+    });
+  }
+  if (items.length > 0) items.push(SEPARATOR);
+  return [...items, ...tail];
+}
+
+export interface AppMenuState extends TrayState, PlatformMenuState {
   productName: string;
   locale: Locale;
   startAtLogin: boolean;
+  profiles: { id: string; name: string; signedIn: boolean }[];
 }
 
-export interface AppMenuActions extends TrayActions {
+export interface AppMenuActions extends PlatformMenuActions {
   setStartAtLogin(on: boolean): void;
 }
 
@@ -62,7 +127,7 @@ export function appMenuTemplate(state: AppMenuState, actions: AppMenuActions): M
         role("quit", "menu.quit"),
       ],
     },
-    { label: tr("menu.platforms"), submenu: platformItems(state, actions) },
+    { label: tr("menu.platform.title"), submenu: platformMenuTemplate(state, actions) },
     {
       label: tr("menu.edit"),
       submenu: [

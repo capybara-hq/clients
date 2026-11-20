@@ -2,7 +2,6 @@
   "platform.add": "添加平台",
   "tray.open_window": "打开窗口",
   "tray.quit": "退出",
-  "menu.platforms": "平台",
   "menu.start_at_login": "登录时启动",
   "device.allow": "允许",
   "device.cancel": "取消",

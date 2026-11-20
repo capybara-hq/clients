@@ -46,6 +46,8 @@ What it covers:
   another origin gets Chromium's own user agent, and the Shell environment is absent there.
 - A `device@1` event subscription returns an unsubscribe function across `contextBridge`, and
   calling it (twice) does not throw.
+- The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
+  the main window and shows the small window's signed-out page; the profile stays, signed out.
 
 ## Manual acceptance on a real Mac with a dev kernel
 

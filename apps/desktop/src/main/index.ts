@@ -48,7 +48,7 @@ import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
 import { controlClient, deviceStateDir } from "./device/control.ts";
-import { createDeviceDialogs } from "./device/dialogs.ts";
+import { createDeviceDialogs, dialogPlatformOf } from "./device/dialogs.ts";
 import { readKeepAwake, readMachine } from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
@@ -77,6 +77,13 @@ import { createProfileRemoval } from "./remove-profile.ts";
 import { hardenAnyContents, installDenyAllPermissions, LOCAL_PARTITION } from "./security.ts";
 import { createShellDialogs, type DialogWindow } from "./shell-dialog.ts";
 import { createSignIn, type FetchLike, REDIRECT_URI } from "./sign-in.ts";
+import {
+  type CompletedSession,
+  createSignOut,
+  signOutOnLogin,
+  watchLoginNavigations,
+  watchLogout,
+} from "./sign-out.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
 import { setupUpdates, updateNotice } from "./updates.ts";
@@ -216,6 +223,15 @@ function start(): void {
       // Each load of a deployment window asks its discovery again whether device@1 is offered.
       onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
+      // Sign-out (spec §6.9): the partition's logout completion and the window's /login.
+      onPartitionPrepared: (profile, partition) =>
+        watchLogout(
+          session.fromPartition(partition) as unknown as CompletedSession,
+          profile.base,
+          () => signOut.noteLoggedOut(profile.id),
+        ),
+      onProfileWindow: (profile, win) =>
+        watchLoginNavigations(win.webContents, profile, signOutOnLogin(signOut, profile.id)),
       onFocusProfile: (profile) => {
         profiles.setLastUsed(profile.id);
         ui.stateChanged();
@@ -248,22 +264,26 @@ function start(): void {
       createOpenExternalCapability({ openExternal: (url) => shell.openExternal(url) }),
     );
     bridge.registerCapability(CHROME_CAPABILITY_KEY, createChromeCapability());
+    /** The profile partition's own fetch (its cookie jar, its webRequest listeners). */
+    const partitionFetch = (profile: Profile): FetchLike => {
+      const ses = session.fromPartition(partitionFor(profile.id));
+      return ses.fetch.bind(ses) as unknown as FetchLike;
+    };
+    /** Removes the session cookies from the profile partition's jar. */
+    const clearSessionCookies = async (profile: Profile): Promise<void> => {
+      const jar = session.fromPartition(partitionFor(profile.id)).cookies;
+      await jar.remove(`${profile.base}/`, "cap_at");
+      await jar.remove(`${profile.base}/`, "cap_rt");
+    };
     // signIn@1 needs a user activation but confirms nothing natively (spec §8).
     const signIn = createSignIn({
       openExternal: (url) => shell.openExternal(url),
       // The partition's own fetch: the kernel's Set-Cookie lands in the profile's cookie jar.
-      fetchFor: (profile) => {
-        const ses = session.fromPartition(partitionFor(profile.id));
-        return ses.fetch.bind(ses) as unknown as FetchLike;
-      },
+      fetchFor: partitionFetch,
       getProfile: (id) => profiles.get(id),
       onSignedIn: (profile) => windows.reloadProfile(profile),
       // A session the app did not want: its cookies go from the partition's jar as well.
-      clearSessionCookies: async (profile) => {
-        const jar = session.fromPartition(partitionFor(profile.id)).cookies;
-        await jar.remove(`${profile.base}/`, "cap_at");
-        await jar.remove(`${profile.base}/`, "cap_rt");
-      },
+      clearSessionCookies,
       machineName: hostname(),
       appVersion: shellVersion,
       log: (message, err) => console.error(message, err ?? ""),
@@ -410,6 +430,10 @@ function start(): void {
       },
       removeProfile: (id) => void removal.remove(id),
       canRemove: () => managed.lockDeployments !== true,
+      deviceConnected: (id) => {
+        const d = trayDevice.current();
+        return d.icon !== "not_connected" && d.profileId === id;
+      },
       machineName: machineNameFrom(hostname()),
       log: (message, err) => console.error(message, err ?? ""),
     });
@@ -451,7 +475,11 @@ function start(): void {
       impl: device.impl,
       gate: confirmGate,
       openDevicePage: (profile, path) => windows.showProfile(profile, profile.base + path),
-      onChange: () => ui.stateChanged(),
+      onChange: () => {
+        ui.stateChanged();
+        // The signed-out page's device note follows the device.
+        onboarding.refresh();
+      },
       log: (message, err) => console.error(message, err ?? ""),
     });
     // Quitting ends the UI only: the tray's subscription ends, the service keeps running.
@@ -483,6 +511,24 @@ function start(): void {
       },
       log: (message, err) => console.error(message, err ?? ""),
     });
+    // Sign-out (spec §6.9): the web's own 「退出登录」 (seen through the partition's logout and the
+    // next /login) and the 「平台」 menu's entry (a shell dialog, then the logout POST).
+    const signOut = createSignOut({
+      getProfile: (id) => profiles.get(id),
+      markSignedOut: (id) => profiles.update(id, { signedIn: false }),
+      showSignedOut: (profile) => onboarding.showSignedOut(profile),
+      closeProfileWindows: (id) => windows.closeProfileWindows(id),
+      confirm: (profile) =>
+        shellDialogs.confirmSignOut(
+          windows.dialogParent(profile.id) ?? null,
+          dialogPlatformOf(profile, iconFor(profile)),
+        ),
+      fetchFor: partitionFetch,
+      clearSessionCookies,
+      onSignedOut: () => ui.stateChanged(),
+      gate: confirmGate,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
     const uiActions = {
       showProfile: (id: string) => {
         const profile = visibleProfiles().find((p) => p.id === id);
@@ -494,6 +540,7 @@ function start(): void {
         onboarding.openConnect();
       },
       removeProfile: (id: string) => void removal.remove(id),
+      signOut: (id: string) => void signOut.confirmAndSignOut(id),
       openWindow: () => {
         if (!windows.focusLast(isVisible)) openDefault();
       },
@@ -540,7 +587,7 @@ function start(): void {
       const visible = visibleProfiles();
       const state = {
         locale,
-        profiles: visible.map((p) => ({ id: p.id, name: p.name })),
+        profiles: visible.map((p) => ({ id: p.id, name: p.name, signedIn: p.signedIn })),
         activeId: profiles.lastUsed()?.id,
         lockDeployments: managed.lockDeployments === true,
         device: trayDevice.current(),
