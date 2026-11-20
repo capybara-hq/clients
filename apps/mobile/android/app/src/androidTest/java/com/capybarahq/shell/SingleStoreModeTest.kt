@@ -198,6 +198,53 @@ class SingleStoreModeTest {
     }
 
     @Test
+    fun aColdStartOpenWaitsForTheOwedWipeAndOpensOnceItSucceeds() {
+        HostileServer(instrumentation.context.assets, "singlestore").use { server ->
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val id = UUID.randomUUID().toString()
+                val spec = ProfileHost.Spec("a", server.originA, server.originA, id, state)
+                lateinit var core: DataStoreCore
+                lateinit var host: ProfileHost
+                scenario.onActivity { activity ->
+                    core = DataStores.get(activity)
+                    host = activity.profileHost
+                    core.beginWipe(setOf(server.originA))
+                }
+                try {
+                    // The wipe times out: nothing opens, the answer is the state the runtime shows.
+                    val failed = CompletableFuture<String?>()
+                    scenario.onActivity { activity ->
+                        DataStores.openWhenWipeSettled(activity, core, timeoutMs = 1, open = { host.open(spec) }) {
+                            failed.complete(it)
+                        }
+                    }
+                    assertEquals("wipe_owed", failed.get(120, TimeUnit.SECONDS))
+                    scenario.onActivity {
+                        assertEquals(0, host.viewCount)
+                        assertEquals(1, core.wipeFailures())
+                        assertTrue(core.owedWipe() != null)
+                    }
+                    // The retry (the error page's retry opens again) finishes the wipe, then opens.
+                    val opened = CompletableFuture<String?>()
+                    scenario.onActivity { activity ->
+                        DataStores.openWhenWipeSettled(activity, core, open = { host.open(spec) }) {
+                            opened.complete(it)
+                        }
+                    }
+                    assertEquals(null, opened.get(120, TimeUnit.SECONDS))
+                    scenario.onActivity {
+                        assertEquals(1, host.viewCount)
+                        assertEquals(null, core.owedWipe())
+                        assertEquals(0, core.wipeFailures())
+                    }
+                } finally {
+                    scenario.onActivity { core.endWipe() }
+                }
+            }
+        }
+    }
+
+    @Test
     fun theHostKeepsOneDeploymentAtATimeAndClosesAllBeforeClearing() {
         HostileServer(instrumentation.context.assets, "singlestore").use { server ->
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->

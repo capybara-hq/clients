@@ -22,7 +22,7 @@ export interface LoaderProfile extends ProfileRef {
   name: string | null;
 }
 
-export type ErrorKind = "unreachable" | "tls" | "crashed";
+export type ErrorKind = "unreachable" | "tls" | "crashed" | "wipe_owed";
 
 /** What the error page shows; it is a local page, so it learns only these values. */
 export interface ErrorState {
@@ -120,13 +120,20 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
     deps.errorView.hide();
     const stored = await deps.appearance.load(profile.id);
     if (stored) await deps.host.setAppearance(profile.id, nativeLook(stored)).catch(() => {});
-    await deps.host.open({
-      profileId: profile.id,
-      origin: profile.origin,
-      base: profile.base,
-      dataStoreId: profile.dataStoreId,
-      state: stateOf(profile),
-    });
+    try {
+      await deps.host.open({
+        profileId: profile.id,
+        origin: profile.origin,
+        base: profile.base,
+        dataStoreId: profile.dataStoreId,
+        state: stateOf(profile),
+      });
+    } catch (err) {
+      // Android single store: the wipe of the previous deployment's data is still owed, so native
+      // loads nothing. Opening again (retry) retries the wipe first.
+      if (err instanceof Error && err.message === "wipe_owed") return showError("wipe_owed");
+      throw err;
+    }
   };
 
   return {

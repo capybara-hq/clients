@@ -129,6 +129,25 @@ describe("loader", () => {
     expect(native.host.setAppearance).not.toHaveBeenCalled();
   });
 
+  test("an owed single-store wipe shows its own error state and retry opens again", async () => {
+    // Native refuses to load while a wipe of the shared store is owed (and retries it inside open).
+    const { native, errorView, loader } = setup();
+    native.host.open.mockRejectedValueOnce(new Error("wipe_owed"));
+    await loader.open(p1);
+    const shown = vi.mocked(errorView.show).mock.calls[0]?.[0];
+    expect(shown).toMatchObject({ kind: "wipe_owed", profileId: "p1", host: "a.example" });
+    expect(native.host.showError).toHaveBeenCalledWith("p1");
+    await loader.retry();
+    expect(native.host.open).toHaveBeenCalledTimes(2);
+    expect(errorView.hide).toHaveBeenCalledTimes(2);
+  });
+
+  test("any other open failure still rejects", async () => {
+    const { native, loader } = setup();
+    native.host.open.mockRejectedValueOnce(new Error("not_created"));
+    await expect(loader.open(p1)).rejects.toThrow("not_created");
+  });
+
   test("the main-frame load finishing starts the splash fallback", async () => {
     const { native, splash, loader } = setup();
     await loader.open(p1);
@@ -247,11 +266,11 @@ describe("the error page model", () => {
 
   test("each kind has its own lead, in zh too", () => {
     const leads = new Set(
-      (["unreachable", "tls", "crashed"] as const).map(
+      (["unreachable", "tls", "crashed", "wipe_owed"] as const).map(
         (kind) => errorModel({ ...base, kind }, "zh").lead,
       ),
     );
-    expect(leads.size).toBe(3);
+    expect(leads.size).toBe(4);
     for (const lead of leads) expect(lead).not.toMatch(/企业|agent/i);
   });
 });

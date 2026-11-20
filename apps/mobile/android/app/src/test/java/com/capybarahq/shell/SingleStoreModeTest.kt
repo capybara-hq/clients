@@ -149,3 +149,85 @@ class SingleStoreWipeTest {
         assertTrue(!single(wipes).usable(a))
     }
 }
+
+class OwedWipeRecoveryTest {
+    private class Memory(var origins: Set<String>? = null, var failures: Int = 0) : PendingDeletions {
+        override fun load(): Set<String> = emptySet()
+
+        override fun save(ids: Set<String>) {}
+
+        override fun loadWipe(): Set<String>? = origins
+
+        override fun saveWipe(origins: Set<String>?) {
+            this.origins = origins
+        }
+
+        override fun loadWipeFailures(): Int = failures
+
+        override fun saveWipeFailures(count: Int) {
+            failures = count
+        }
+    }
+
+    private fun webViewDir(): java.io.File {
+        val dir = java.nio.file.Files.createTempDirectory("webview").toFile()
+        for (name in listOf("Service Worker/CacheStorage", "Cache Storage", "Local Storage")) {
+            java.io.File(dir, "$name/x").apply { parentFile.mkdirs() }.writeText("x")
+        }
+        return dir
+    }
+
+    private fun core(pending: PendingDeletions) =
+        DataStoreCore({ it == WebViewFeature.DOCUMENT_START_SCRIPT }, object : ProfileBackend {
+            override fun create(name: String) {}
+
+            override fun delete(name: String) = false
+
+            override fun clear(name: String, done: () -> Unit) = done()
+
+            override fun clearDefault(done: () -> Unit) = done()
+
+            override fun names(): List<String> = emptyList()
+        }, pending)
+
+    @Test
+    fun failuresAreCountedAndAnEndedWipeResetsThem() {
+        val pending = Memory()
+        val core = core(pending)
+        core.beginWipe(setOf("https://a.example"))
+        core.wipeFailed()
+        core.wipeFailed()
+        assertEquals(2, core.wipeFailures())
+        core.endWipe()
+        assertEquals(0, core.wipeFailures())
+        assertEquals(null, pending.origins)
+    }
+
+    @Test
+    fun belowTheLimitNothingIsDeleted() {
+        val dir = webViewDir()
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES - 1)
+        assertTrue(!OwedWipeRecovery.run(dir, pending))
+        assertTrue(java.io.File(dir, "Service Worker").exists())
+        assertEquals(setOf("https://a.example"), pending.origins)
+    }
+
+    @Test
+    fun noDebtDeletesNothing() {
+        val dir = webViewDir()
+        assertTrue(!OwedWipeRecovery.run(dir, Memory(null, 99)))
+        assertTrue(java.io.File(dir, "Cache Storage").exists())
+    }
+
+    @Test
+    fun atTheLimitWorkersAndCachesAreDeletedAndTheDebtIsCleared() {
+        val dir = webViewDir()
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        assertTrue(OwedWipeRecovery.run(dir, pending))
+        assertTrue(!java.io.File(dir, "Service Worker").exists())
+        assertTrue(!java.io.File(dir, "Cache Storage").exists())
+        assertTrue("other data is the regular clear's job", java.io.File(dir, "Local Storage/x").exists())
+        assertEquals(null, pending.origins)
+        assertEquals(0, pending.failures)
+    }
+}

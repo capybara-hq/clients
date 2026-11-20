@@ -55,8 +55,11 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         main.post {
             val h = host ?: return@post call.reject("no profile host")
             h.sink = this
-            val error = h.open(ProfileHost.Spec(profileId, origin, base, dataStoreId, state))
-            if (error == null) call.resolve() else call.reject(error)
+            val spec = ProfileHost.Spec(profileId, origin, base, dataStoreId, state)
+            // An owed wipe of the single store finishes first (cold start after a timed-out one).
+            DataStores.openWhenWipeSettled(
+                context, DataStores.get(context), open = { h.open(spec) },
+            ) { error -> if (error == null) call.resolve() else call.reject(error) }
         }
     }
 

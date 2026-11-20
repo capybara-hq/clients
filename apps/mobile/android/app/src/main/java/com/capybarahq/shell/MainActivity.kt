@@ -13,6 +13,8 @@ class MainActivity : BridgeActivity() {
     val profileHost: ProfileHost by lazy { ProfileHost(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A single-store wipe that kept failing: end it before any WebView exists.
+        OwedWipeRecovery.run(this)
         // Plugins register before the bridge starts.
         registerPlugins(ShellPlugins.all)
         super.onCreate(savedInstanceState)

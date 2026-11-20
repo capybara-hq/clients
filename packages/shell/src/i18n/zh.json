@@ -192,5 +192,6 @@
   "error.lead.unreachable": "无法连接 {host}。请检查网络或 VPN 后重试。",
   "error.lead.tls": "与 {host} 的连接不安全：它的证书或 TLS 设置无效。请联系平台管理员。",
   "error.lead.crashed": "{host} 的页面意外停止了。请重试。",
+  "error.lead.wipe_owed": "上一个平台的数据还没有清理完，所以暂时不会打开任何平台。请重试。",
   "error.code": "错误：{code}"
 }
