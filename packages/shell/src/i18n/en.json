@@ -2,7 +2,6 @@
   "platform.add": "Add a platform",
   "tray.open_window": "Open window",
   "tray.quit": "Quit",
-  "menu.platforms": "Platforms",
   "menu.start_at_login": "Start at login",
   "device.allow": "Allow",
   "device.cancel": "Cancel",

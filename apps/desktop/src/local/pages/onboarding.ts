@@ -251,7 +251,7 @@ function waitingView(ctx: Ctx): HTMLElement {
 
 function signedOutView(ctx: Ctx): HTMLElement {
   const { state, t } = ctx;
-  const line = accountLine(state.account, t);
+  const line = accountLine(state.account, t, state.deviceConnected);
   const actions = [link(t("onboarding.signedOut.addOther"), () => act(ctx, "signedOut.addOther"))];
   if (state.canRemove) {
     actions.push(link(t("onboarding.signedOut.remove"), () => act(ctx, "signedOut.remove")));

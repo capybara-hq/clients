@@ -174,6 +174,16 @@ export interface WindowManagerDeps {
   describeEvents?: (profile: Profile) => CapabilityDescriptors;
   /** A profile window committed a main-frame navigation: what is offered may be decided again. */
   onProfileLoad?: (profile: Profile) => void;
+  /**
+   * A profile partition was prepared (once per partition, before its first window loads): the
+   * sign-out's `webRequest.onCompleted` listener goes here (sign-out.ts `watchLogout`).
+   */
+  onPartitionPrepared?: (profile: Profile, partition: string) => void;
+  /**
+   * A profile window was created, before its first load: the login navigation watch goes here
+   * (sign-out.ts `watchLoginNavigations`; K9's session watch takes it over).
+   */
+  onProfileWindow?: (profile: Profile, window: WindowLike) => void;
   /** A profile window closed: its event subscriptions can go. */
   onProfileClosed?: (webContentsId: number) => void;
   /** A profile window was focused: the last-used profile. */
@@ -289,7 +299,10 @@ export function createWindowManager(deps: WindowManagerDeps) {
     }
   }
 
-  /** Permissions, the sign-in guard and the user agent, once per profile partition. */
+  /**
+   * Permissions, the sign-in guard, the user agent and the logout watch, once per profile
+   * partition.
+   */
   function preparePartition(profile: Profile): string {
     const partition = partitionFor(profile.id);
     if (!permissionsInstalled.has(partition)) {
@@ -298,6 +311,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       blockInWindowSignIn(ses, profile.base);
       installDesktopUserAgent(ses, profile.origin, deps.userAgent);
       permissionsInstalled.add(partition);
+      deps.onPartitionPrepared?.(profile, partition);
     }
     return partition;
   }
@@ -337,6 +351,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       openProfileWindow: (target) => openProfileWindow(profile, target),
     });
     win.webContents.on("did-navigate", () => deps.onProfileLoad?.(profile));
+    deps.onProfileWindow?.(profile, win);
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
     const save = deps.saveBounds;

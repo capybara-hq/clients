@@ -112,6 +112,25 @@ describe("profile windows", () => {
     expect(created[0]?.loadURL).toHaveBeenCalledWith("https://a.example.com/team");
   });
 
+  test("the sign-out hooks: once per partition, once per profile window", () => {
+    const onPartitionPrepared = vi.fn();
+    const onProfileWindow = vi.fn();
+    const { windows, created } = setup({ onPartitionPrepared, onProfileWindow });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    windows.openSmallWindow(COLORS);
+    expect(onPartitionPrepared.mock.calls).toEqual([
+      [p1, "persist:profile-p1"],
+      [p2, "persist:profile-p2"],
+    ]);
+    expect(onProfileWindow.mock.calls).toEqual([
+      [p1, created[0]],
+      [p1, created[1]],
+      [p2, created[2]],
+    ]);
+  });
+
   test("permission handlers are installed once per partition", () => {
     const { windows, sessions } = setup();
     windows.openProfileWindow(p1);

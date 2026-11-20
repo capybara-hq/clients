@@ -4,6 +4,8 @@
 //   GET  /apps/authorize             records the query (the test reads state and challenge)
 //   POST /api/v1/app-auth/token      X-Capybara-Csrf: 1, PKCE S256, one use; sets a cookie
 //   POST /api/v1/auth/login          counts the hit (the app must never let it reach here)
+//   POST /api/v1/auth/logout         X-Capybara-Csrf: 1; ends the session, clears the cookie (204)
+//   GET  /login                      the web's sign-in page (the end of the web's sign-out)
 //   GET  /                           prints the Shell environment the page sees, signed in or out
 //   GET  /frame, /plugin-ui/x/frame  iframes that report whether they see window.capybaraShell
 //   GET  /ua, /hop?to=<url>          the user agent the server saw; a redirect to another origin
@@ -43,6 +45,8 @@ export interface FakeDeployment {
   refused: string[];
   /** `POST /api/v1/auth/login` requests that arrived. */
   loginHits: number;
+  /** Accepted `POST /api/v1/auth/logout` requests. */
+  logouts: number;
   /** Issues a one-use code bound to the `state` of a recorded authorize request. */
   issueCode(state: string): string;
   close(): Promise<void>;
@@ -94,6 +98,12 @@ document.getElementById("login").addEventListener("click", () => {
     () => { result.textContent = "blocked"; },
   );
 });
+// The web's account menu 「退出登录」: the logout POST, then the sign-in page.
+document.getElementById("logout").addEventListener("click", () => {
+  fetch("/api/v1/auth/logout", { method: "POST", headers: { "X-Capybara-Csrf": "1" } }).then(
+    () => { window.location.href = "/login"; },
+  );
+});
 document.getElementById("hop").addEventListener("click", () => {
   window.location.href = "/hop?to=" + encodeURIComponent(window.__peer || "");
 });
@@ -106,6 +116,7 @@ function rootPage(signedIn: boolean, peer: string): string {
 <button id="signin">sign in</button><span id="signin-result"></span>
 <button id="login">login</button><span id="login-result"></span>
 <button id="hop">hop</button>
+<button id="logout">logout</button>
 <iframe id="same" src="/frame"></iframe>
 <iframe id="plugin" src="/plugin-ui/x/frame"></iframe>`,
     `window.__peer = ${JSON.stringify(peer)};${ROOT_SCRIPT}`,
@@ -142,6 +153,7 @@ export async function startFakeDeployment(
     accepted: 0,
     refused: [],
     loginHits: 0,
+    logouts: 0,
     issueCode(state) {
       const challenge = challenges.get(state);
       if (challenge === undefined) throw new Error(`no authorize request with state ${state}`);
@@ -240,6 +252,19 @@ export async function startFakeDeployment(
     if (url.pathname === "/api/v1/auth/login") {
       fake.loginHits += 1;
       return send(res, 200, "{}", { "content-type": "application/json" });
+    }
+    if (url.pathname === "/api/v1/auth/logout" && method === "POST") {
+      if (req.headers["x-capybara-csrf"] !== "1") return send(res, 403, "");
+      for (const s of sessions) if (cookie.includes(`${COOKIE_NAME}=${s}`)) sessions.delete(s);
+      fake.logouts += 1;
+      return send(res, 204, "", {
+        "set-cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+      });
+    }
+    if (url.pathname === "/login") {
+      return send(res, 200, html(`<h1 id="login-page">login</h1>`), {
+        "content-type": "text/html",
+      });
     }
     if (url.pathname === "/ua") {
       return send(res, 200, String(req.headers["user-agent"] ?? ""), {

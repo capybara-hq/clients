@@ -363,3 +363,28 @@ test("a redirect hop to another origin gets Chromium's user agent and no shell",
     ),
   ).toBe("undefined");
 });
+
+test("the web's own sign-out ends in the small window's signed-out page", async () => {
+  // Back on the deployment (the previous test hopped to the peer).
+  await page.goto(`${fake.base}/`);
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  const next = app.waitForEvent("window");
+  // The web's 「退出登录」: POST /api/v1/auth/logout (seen on the partition), then /login.
+  await page.locator("#logout").click();
+  const small = await next;
+  await expect(small).toHaveURL("app://local/onboarding.html");
+  await expect(small.locator("h1")).toHaveText(/^(已退出|Signed out of) Fake Deployment$/);
+  expect(fake.logouts).toBe(1);
+  // The main window closed: only the small window is left; the profile stays, signed out.
+  await expect
+    .poll(() =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()),
+      ),
+    )
+    .toEqual(["app://local/onboarding.html"]);
+  const profiles = JSON.parse(readFileSync(join(userData, "app", "profiles.json"), "utf8")) as {
+    profiles: { base: string; signedIn: boolean }[];
+  };
+  expect(profiles.profiles.find((p) => p.base === fake.base)?.signedIn).toBe(false);
+});
