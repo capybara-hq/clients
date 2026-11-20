@@ -114,6 +114,30 @@ function profilesFake(initial: string[] = []) {
   };
 }
 
+describe("discovery deadline", () => {
+  const dripping: HttpGetPort = { get: () => new Promise(() => {}) };
+
+  test("an aborted signal ends a native request that never answers as unreachable", async () => {
+    const controller = new AbortController();
+    const pending = discover("capybara.example.com", {
+      httpGet: dripping,
+      signal: controller.signal,
+    });
+    controller.abort();
+    expect(await pending).toEqual({ error: "unreachable" });
+  });
+
+  test("an already aborted signal never reaches the port", async () => {
+    const httpGet = fakeGet({ [META_URL]: ok(META) });
+    const controller = new AbortController();
+    controller.abort();
+    expect(await discover("capybara.example.com", { httpGet, signal: controller.signal })).toEqual({
+      error: "unreachable",
+    });
+    expect(httpGet.urls).toEqual([]);
+  });
+});
+
 describe("startRoute", () => {
   const preset = { ...officialBrand, presetUrl: "https://acme.example.com", lockToPreset: false };
 

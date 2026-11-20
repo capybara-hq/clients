@@ -48,10 +48,24 @@ export type AddressErrorKind =
   | "sign_in_unavailable"
   | "locked";
 
-/** A `fetch` over the port with `redirect: "error"` semantics: a 3xx rejects. */
+/**
+ * A `fetch` over the port with `redirect: "error"` semantics: a 3xx rejects. The request's signal
+ * (`fetchMeta`'s 10 s deadline, the caller's) rejects with an AbortError whatever the native side
+ * is doing, so a slow-drip server cannot hold discovery open.
+ */
 function fetchOver(port: HttpGetPort): typeof fetch {
-  return async (input) => {
-    const res = await port.get(String(input));
+  return async (input, init) => {
+    const signal = init?.signal;
+    signal?.throwIfAborted();
+    const answer = port.get(String(input));
+    const res = await (signal
+      ? Promise.race([
+          answer,
+          new Promise<never>((_, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+        ])
+      : answer);
     if (res.status >= 300 && res.status < 400) throw new TypeError("redirect");
     // An oversized body is never parsed: an unparseable stand-in makes it not_capybara.
     return new Response(res.truncated ? "truncated" : res.body, { status: res.status });
@@ -60,11 +74,11 @@ function fetchOver(port: HttpGetPort): typeof fetch {
 
 export async function discover(
   input: string,
-  deps: { httpGet: HttpGetPort },
+  deps: { httpGet: HttpGetPort; signal?: AbortSignal },
 ): Promise<{ base: string; meta: Meta } | { error: AddressErrorKind }> {
   const address = normalizeAddress(input);
   if (!address.ok) return { error: address.reason };
-  const meta = await fetchMeta(address.base, fetchOver(deps.httpGet));
+  const meta = await fetchMeta(address.base, fetchOver(deps.httpGet), deps.signal);
   if ("error" in meta) return { error: meta.error };
   return { base: address.base, meta };
 }

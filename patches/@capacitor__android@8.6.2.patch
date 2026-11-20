@@ -1,19 +1,22 @@
 diff --git a/capacitor/src/main/java/com/getcapacitor/plugin/CapacitorCookies.java b/capacitor/src/main/java/com/getcapacitor/plugin/CapacitorCookies.java
-index 6ba4605f34b54cbde7788c4b9c65e27acf2052a4..e89be0aa55a1887728aec06d6958f9724974a65a 100644
+index 6ba4605f34b54cbde7788c4b9c65e27acf2052a4..700595556d0eb9aa3bd79b30c778a6d1b0bb2e55 100644
 --- a/capacitor/src/main/java/com/getcapacitor/plugin/CapacitorCookies.java
 +++ b/capacitor/src/main/java/com/getcapacitor/plugin/CapacitorCookies.java
-@@ -22,7 +22,9 @@ public class CapacitorCookies extends Plugin {
+@@ -22,15 +22,19 @@ public class CapacitorCookies extends Plugin {
      public void load() {
          this.bridge.getWebView().addJavascriptInterface(this, "CapacitorCookiesAndroidInterface");
          this.cookieManager = new CapacitorCookieManager(null, java.net.CookiePolicy.ACCEPT_ALL, this.bridge);
 -        this.cookieManager.removeSessionCookies();
+-        CookieHandler.setDefault(this.cookieManager);
 +        // Capybara: only when enabled. Disabled, the default WebView profile's session cookies
 +        // (Android single-store mode keeps a deployment's session there) survive Activity starts.
 +        if (isEnabled()) this.cookieManager.removeSessionCookies();
-         CookieHandler.setDefault(this.cookieManager);
++        // Capybara: the process-wide handler would carry the default WebView profile's cookies on
++        // every HttpURLConnection (native HttpGet included) and store what any host sets there.
++        if (isEnabled()) CookieHandler.setDefault(this.cookieManager);
          super.load();
      }
-@@ -30,7 +32,7 @@ public class CapacitorCookies extends Plugin {
+ 
      @Override
      protected void handleOnDestroy() {
          super.handleOnDestroy();

@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@capacitor/android@8.6.2':
-    hash: 376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3
+    hash: bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9
     path: patches/@capacitor__android@8.6.2.patch
 
 importers:
@@ -72,7 +72,7 @@ importers:
     dependencies:
       '@capacitor/android':
         specifier: 8.6.2
-        version: 8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)
+        version: 8.6.2(patch_hash=bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9)(@capacitor/core@8.6.2)
       '@capacitor/core':
         specifier: 8.6.2
         version: 8.6.2
@@ -92,9 +92,6 @@ importers:
       '@capybara-hq/plugin-sdk':
         specifier: 0.1.0-rc.41
         version: 0.1.0-rc.41
-      '@capybara-hq/shell':
-        specifier: workspace:*
-        version: link:../../packages/shell
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -3024,7 +3021,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
 
-  '@capacitor/android@8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)':
+  '@capacitor/android@8.6.2(patch_hash=bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9)(@capacitor/core@8.6.2)':
     dependencies:
       '@capacitor/core': 8.6.2
 
