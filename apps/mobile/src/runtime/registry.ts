@@ -16,9 +16,17 @@ import {
 } from "./protocol.ts";
 
 export interface CapabilityImpl<P extends ProfileRef = ProfileRef> {
+  /**
+   * Named functions. `ctx.docId` and `ctx.activation` are page-asserted: never authorize on them.
+   * A function resolving `undefined` answers `null` (the value crosses JSON).
+   */
   functions: Record<string, (ctx: CallContext<P>, ...args: unknown[]) => Promise<unknown>>;
   events?: readonly string[];
-  /** Need a user activation and the per-profile dialog gate (`busy`). */
+  /**
+   * Need a user activation and the per-profile dialog gate (`busy`). A confirming function holds
+   * the profile's slot until it settles, so it must settle (reject with `cancelled`) when its
+   * document ends or its dialog is dismissed; native also expires an unanswered call.
+   */
   confirming?: readonly string[];
 }
 
@@ -110,7 +118,9 @@ export function createRegistry<P extends ProfileRef>(deps: {
         if (decision !== "ok") return { ok: false, code: decision };
       }
       try {
-        return { ok: true, value: await fn(ctx, ...msg.args) };
+        const value = await fn(ctx, ...msg.args);
+        // JSON drops an undefined property: the page would see `{ ok: true }` and fail it.
+        return { ok: true, value: value === undefined ? null : value };
       } catch (err) {
         return { ok: false, code: toCode(err) };
       } finally {

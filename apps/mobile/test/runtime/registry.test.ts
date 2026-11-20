@@ -88,6 +88,14 @@ describe("dispatch", () => {
     );
   });
 
+  test("an implementation resolving undefined answers null, which survives JSON", async () => {
+    const { registry } = setup();
+    registry.register("haptics@1", { functions: { impact: async () => undefined } });
+    const result = await registry.dispatch(msg({ key: "haptics@1", fn: "impact" }));
+    expect(result).toEqual({ ok: true, value: null });
+    expect(JSON.parse(JSON.stringify(result))).toEqual({ ok: true, value: null });
+  });
+
   test("an unknown key or function fails, prototype names included", async () => {
     const { registry } = setup();
     registry.register("test@1", { functions: { run: async () => 1 } });
