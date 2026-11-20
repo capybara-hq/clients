@@ -168,6 +168,21 @@ class NavigationPageTest {
             assertTrue("${h.url()}", h.url()!!.startsWith(h.server.originA))
         }
 
+    @Test
+    fun aBeforeUnloadPromptOffTheOriginNeverHoldsBackTheBase() =
+        run("unload-start.html", base = "/back.html") { h ->
+            assertTrue("never ready: ${h.server.requests()}", h.server.await("unload-start-ready", 120))
+            tap(h.view, 0.5f)
+            assertTrue("never left: ${h.server.requests()}", h.server.await("unload-ready", 60))
+            tap(h.view, 0.5f)
+            assertTrue("no activation: ${h.server.requests()}", h.server.await("unload-armed", 30))
+            // Off the origin (a provider page): going back to the base must not wait on its prompt.
+            h.scenario.onActivity { h.view.loadBase() }
+            assertTrue("held back by the prompt: ${h.server.requests()} ${h.events.toList()}", h.server.await("back-ready", 60))
+            assertTrue("${h.seen}", h.awaitEvent { it["event"] == "beforeunload-confirmed" } != null)
+            assertTrue("${h.url()}", h.url()!!.startsWith(h.server.originA))
+        }
+
     private fun tap(view: ProfileWebView, fraction: Float) {
         val location = IntArray(2)
         instrumentation.runOnMainSync { view.getLocationOnScreen(location) }

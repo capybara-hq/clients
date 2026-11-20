@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Origin B with a beforeunload prompt. While the main frame is off the profile origin the shell
+     confirms it, so the backstop's (or any) loadBase can never be cancelled by a "stay" dialog. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body { margin: 0; height: 100%; }
+      div { display: flex; height: 100%; align-items: center; justify-content: center; font: 24px system-ui; }
+    </style>
+  </head>
+  <body>
+    <div id="area">Stay?</div>
+    <script>
+      window.addEventListener("beforeunload", (event) => {
+        event.preventDefault();
+        event.returnValue = "";
+      });
+      // A tap gives the page the user activation a beforeunload prompt needs.
+      document.getElementById("area").addEventListener("click", () => {
+        fetch("/report", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ doc: "unload-armed", results: {} }),
+        });
+      });
+      fetch("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: "unload-ready", results: {} }),
+      });
+    </script>
+  </body>
+</html>

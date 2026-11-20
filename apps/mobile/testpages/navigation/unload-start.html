@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Wave T1 wiring (N5): leave for origin B through an OAuth authorization URL (a tap); the page
+     there holds a beforeunload prompt. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body { margin: 0; height: 100%; }
+      a { display: flex; height: 100%; align-items: center; justify-content: center; font: 24px system-ui; }
+    </style>
+  </head>
+  <body>
+    <a href="__ORIGIN_B__/unload.html?response_type=code&amp;client_id=c&amp;state=s&amp;redirect_uri=__ORIGIN_A__%2Fcb">Connect</a>
+    <script>
+      fetch("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: "unload-start-ready", results: {} }),
+      });
+    </script>
+  </body>
+</html>

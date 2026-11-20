@@ -167,13 +167,16 @@ extension ShellPlugin {
         }
     }
 
-    /// Debug builds only: the loopback address a UI test asks the runtime to open.
+    /// Debug builds only: the loopback address a UI test asks the runtime to open (or, with
+    /// `testAddress`, the server the test's address page discovers).
     @objc func launchOptions(_ call: CAPPluginCall) {
         var result: [String: Any] = [:]
         #if DEBUG
         if let log = LoaderTestLog.current {
             result["testOrigin"] = log.origin
             result["testBase"] = log.base
+            // `-loaderTestAddress YES`: start on the address page with an empty in-memory list.
+            if UserDefaults.standard.bool(forKey: "loaderTestAddress") { result["testAddress"] = true }
         }
         #endif
         call.resolve(result)

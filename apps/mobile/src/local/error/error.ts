@@ -1,7 +1,8 @@
 // The error state (mobile spec §4.3, §4.4): a local page shown instead of a profile page that could
 // not load. It offers retry and the profile switcher; on a TLS error there is no way to proceed.
-// The runtime frames it over its own document (index.html) and talks to it with `postMessage` on
-// the local origin only: the runtime sends the state, the page sends the person's choice back. It
+// The runtime frames it over its own document (index.html) and talks to it over the port it hands
+// the page (src/runtime/local-channel.ts): the runtime sends the state, the page sends the
+// person's choice back. It
 // has no Capacitor plugin of its own and no Shell environment: it is not a profile document.
 import {
   type ErrorModel,
@@ -9,6 +10,7 @@ import {
   type ErrorStateMessage,
   errorModel,
 } from "../../runtime/error-page.ts";
+import { createRuntimeLink } from "../../runtime/local-channel.ts";
 
 function render(doc: Document, model: ErrorModel, send: (m: ErrorPageMessage) => void): void {
   const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string) => {
@@ -65,15 +67,18 @@ function isErrorStateMessage(v: unknown): v is ErrorStateMessage {
 }
 
 function boot(): void {
-  const own = window.location.origin;
-  const parent = window.parent;
-  if (parent === window) return;
-  const send = (m: ErrorPageMessage) => parent.postMessage(m, own);
-  window.addEventListener("message", (event) => {
-    if (event.source !== parent || event.origin !== own || !isErrorStateMessage(event.data)) return;
-    document.documentElement.lang = event.data.locale === "zh" ? "zh-CN" : "en";
-    render(document, errorModel(event.data.state, event.data.locale), send);
+  if (window.parent === window) return;
+  const link = createRuntimeLink({
+    parent: window.parent,
+    origin: window.location.origin,
+    onMessage: (data) => {
+      if (!isErrorStateMessage(data)) return;
+      document.documentElement.lang = data.locale === "zh" ? "zh-CN" : "en";
+      render(document, errorModel(data.state, data.locale), send);
+    },
   });
+  const send = (m: ErrorPageMessage) => link.post(m);
+  window.addEventListener("message", (event) => link.receive(event));
   send({ type: "error-page-ready" });
 }
 

@@ -29,7 +29,6 @@
     "@capacitor/assets": "4.0.0",
     "@capacitor/cli": "8.6.2",
     "@capybara-hq/plugin-sdk": "0.1.0-rc.44",
-    "@capybara-hq/shell": "workspace:*",
     "esbuild": "^0.28.2"
   }
 }
