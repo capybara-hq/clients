@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed configurations (mobile spec §4.3): the brand file's preset keys, so an MDM can pin the
+     app to one deployment. Read by ManagedConfig.kt; parsed strictly in src/runtime/managed.ts. -->
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+    <restriction
+        android:key="presetUrl"
+        android:title="@string/restriction_preset_url_title"
+        android:description="@string/restriction_preset_url_description"
+        android:restrictionType="string" />
+    <restriction
+        android:key="lockToPreset"
+        android:title="@string/restriction_lock_title"
+        android:description="@string/restriction_lock_description"
+        android:restrictionType="bool"
+        android:defaultValue="false" />
+</restrictions>

@@ -26,7 +26,10 @@ interface ProfileBackend {
     /** `ProfileStore.getOrCreateProfile`. */
     fun create(name: String)
 
-    /** `ProfileStore.deleteProfile`: false when absent; throws IllegalStateException when in use. */
+    /**
+     * `ProfileStore.deleteProfile`: false when absent; throws IllegalStateException when in use
+     * (any other RuntimeException is treated the same: the deletion stays scheduled).
+     */
     fun delete(name: String): Boolean
 
     /** Clears a named profile's cookies and web storage now; [done] runs when the cookies are gone. */
@@ -138,15 +141,21 @@ class DataStoreCore(
         if (started) return
         started = true
         if (mode != DataStoreMode.MULTI) return
+        // Any failure (not only "in use") keeps the id recorded for the next cold start: a
+        // throwing WebView must neither crash the start nor forget a scheduled deletion.
         val left = pending.load().filterTo(mutableSetOf()) { id ->
             try {
                 backend.delete(id)
                 false
-            } catch (e: IllegalStateException) {
+            } catch (e: RuntimeException) {
                 true
             }
         }
-        pending.save(left)
+        try {
+            pending.save(left)
+        } catch (e: RuntimeException) {
+            // The record stays as it was (a superset): the deletions run again next time.
+        }
     }
 
     private fun requireId(id: String): String {
@@ -209,7 +218,9 @@ class DataStoreCore(
         val deleted = try {
             backend.delete(name)
             true
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
+            // In use (IllegalStateException) or any other failure: cleared now, deleted at the
+            // next cold start.
             false
         }
         if (deleted) {

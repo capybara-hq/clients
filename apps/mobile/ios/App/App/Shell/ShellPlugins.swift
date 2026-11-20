@@ -10,6 +10,7 @@ enum ShellPlugins {
             ShellPlugin(),
             DataStoresPlugin(),
             MenuHostPlugin(),
+            ManagedConfigPlugin(),
         ]
     }
 }

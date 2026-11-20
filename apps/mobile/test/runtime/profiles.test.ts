@@ -66,6 +66,40 @@ function setup(
   return { store, prefs, values, calls, asked, cleared };
 }
 
+/** A store over shared prefs values whose native removal or prefs writes can fail. */
+function setupWith(opts: {
+  values: Map<string, string>;
+  removeFails?: () => boolean;
+  saveFails?: boolean;
+}) {
+  const calls: string[] = [];
+  const prefs: PrefsPort = {
+    get: (key) => opts.values.get(key) ?? null,
+    set: async (key, value) => {
+      if (opts.saveFails) throw new Error("disk full");
+      opts.values.set(key, value);
+    },
+  };
+  const stores: DataStorePort = {
+    mode: async () => "multi",
+    create: async (id) => void calls.push(`create:${id}`),
+    remove: async (id) => {
+      calls.push(`remove:${id}`);
+      if (opts.removeFails?.()) throw new Error("native down");
+    },
+    clearAll: async () => void calls.push("clearAll"),
+  };
+  let n = 100;
+  const store = createProfileStore({
+    prefs,
+    stores,
+    confirm: async () => true,
+    newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+    now: () => n,
+  });
+  return { store, calls };
+}
+
 const A = { base: "https://a.example", name: "A", iconUrl: null };
 const B = { base: "https://b.example/team", name: null, iconUrl: "https://b.example/icon.png" };
 const C = { base: "https://c.example", name: "C", iconUrl: null };
@@ -185,6 +219,62 @@ describe("remove", () => {
     const a = await store.add(A);
     await store.remove(a.id);
     expect(store.current()).toBeNull();
+  });
+
+  test("a store removal that rejects still forgets the profile; sweep retries it", async () => {
+    const values = new Map<string, string>();
+    let fail = false;
+    const { store, calls } = setupWith({ values, removeFails: () => fail });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    fail = true;
+    await store.remove(a.id);
+    expect(store.list().map((p) => p.id)).toEqual([b.id]);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([a.dataStoreId]);
+    // A later process reads the orphan back and retries it.
+    fail = false;
+    const later = setupWith({ values });
+    await later.store.sweep();
+    expect(calls).toContain(`remove:${a.dataStoreId}`);
+    expect(later.calls).toEqual([`remove:${a.dataStoreId}`]);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([]);
+    expect(later.store.list().map((p) => p.id)).toEqual([b.id]);
+  });
+
+  test("sweep with no orphans touches nothing", async () => {
+    const values = new Map<string, string>();
+    const { store, calls } = setupWith({ values });
+    await store.add(A);
+    await store.sweep();
+    expect(calls.some((c) => c.startsWith("remove:"))).toBe(false);
+  });
+
+  test("a save that fails keeps the profile and never schedules its store's deletion", async () => {
+    const values = new Map<string, string>();
+    const ok = setupWith({ values });
+    const a = await ok.store.add(A);
+    const broken = setupWith({ values, saveFails: true });
+    await expect(broken.store.remove(a.id)).rejects.toThrow("disk full");
+    expect(broken.store.list().map((p) => p.id)).toEqual([a.id]);
+    expect(broken.calls).not.toContain(`remove:${a.dataStoreId}`);
+  });
+
+  test("a removed profile's store is gone before anything is saved without the orphan", async () => {
+    const { store, values, calls } = setup();
+    const a = await store.add(A);
+    const saved: unknown[] = [];
+    const orig = values.set.bind(values);
+    values.set = (k: string, v: string) => {
+      saved.push({ calls: [...calls], orphans: JSON.parse(v).orphans });
+      return orig(k, v);
+    };
+    await store.remove(a.id);
+    // First the profile goes with its store recorded as an orphan, then the store's deletion is
+    // scheduled, then the orphan entry is dropped.
+    expect(saved).toEqual([
+      { calls: [`create:${a.dataStoreId}`], orphans: [a.dataStoreId] },
+      { calls: [`create:${a.dataStoreId}`, `remove:${a.dataStoreId}`], orphans: [] },
+    ]);
   });
 
   test("removing an unknown id does nothing", async () => {
@@ -311,6 +401,16 @@ describe("setCurrent", () => {
     const a = await store.add(A);
     expect(await store.setCurrent(a.id)).toBe("switched");
     expect(asked).toEqual([]);
+  });
+
+  test("forced: single mode clears the shared store without asking", async () => {
+    const { store, asked, calls } = setup({ mode: "single", confirm: false });
+    await store.add(A);
+    const b = await store.add(B);
+    expect(await store.setCurrent(b.id, { forced: true })).toBe("switched");
+    expect(asked).toEqual([]);
+    expect(calls).toContain("clearAll");
+    expect(store.current()?.id).toBe(b.id);
   });
 
   test("an unknown id rejects", async () => {

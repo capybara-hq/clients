@@ -6,6 +6,7 @@
 // adapts the native port to the `fetch` shape `fetchMeta` takes.
 import { fetchMeta, type Meta, normalizeAddress } from "@capybara-hq/shell";
 import type { Brand } from "../../brand.ts";
+import { effectivePreset, enforcePolicy, type ManagedValues } from "./managed.ts";
 import type { ProfileStore } from "./profiles.ts";
 
 /** What native `HttpGet` returns. A 3xx status is reported as is: native never follows it. */
@@ -90,55 +91,23 @@ export async function discover(
   return { base: address.base, meta };
 }
 
-/** The managed configuration the start route sees (Task 18 reads it from the OS). */
-export interface ManagedConfig {
-  presetUrl?: string | null;
-  lockToPreset?: boolean;
-}
-
 /**
- * The preset in force (Decision 8): a brand with `lockToPreset` wins; otherwise a valid managed
- * `presetUrl` / `lockToPreset` overrides the brand's. A bad managed field is ignored.
- */
-export function effectivePreset(
-  brand: Brand,
-  managed: ManagedConfig | null,
-): { base: string; locked: boolean } | null {
-  const fromBrand = brand.presetUrl ? normalizeAddress(brand.presetUrl) : null;
-  if (brand.lockToPreset && fromBrand?.ok) return { base: fromBrand.base, locked: true };
-  const fromManaged =
-    typeof managed?.presetUrl === "string" ? normalizeAddress(managed.presetUrl) : null;
-  // Only https presets (the brand validator's rule too); the loopback http exception is for typing.
-  const usable = (a: ReturnType<typeof normalizeAddress> | null) =>
-    a?.ok === true && a.origin.startsWith("https:") ? a : null;
-  const managedOk = usable(fromManaged);
-  if (managedOk) {
-    return { base: managedOk.base, locked: managed?.lockToPreset === true };
-  }
-  const brandOk = usable(fromBrand);
-  return brandOk ? { base: brandOk.base, locked: false } : null;
-}
-
-/**
- * Where the app starts: a profile to open, or the address page. A preset with no profile is added
- * (discovery fills its name and icon later); a locked preset always opens its own profile.
+ * Where the app starts: a profile to open, or the address page. A locked preset (brand or managed,
+ * `effectivePreset`) always opens its own profile, made current (`enforcePolicy`); otherwise the
+ * current profile; else an unlocked preset is added (discovery fills its name and icon later).
  */
 export async function startRoute(
-  brand: Brand,
-  managed: ManagedConfig | null,
+  brand: Pick<Brand, "presetUrl" | "lockToPreset">,
+  managed: ManagedValues | null,
   profiles: ProfileStore,
 ): Promise<"address" | { profileId: string }> {
-  const preset = effectivePreset(brand, managed);
-  if (preset?.locked) {
-    const own =
-      profiles.list().find((p) => p.base === preset.base) ??
-      (await profiles.add({ base: preset.base, name: null, iconUrl: null }));
-    return { profileId: own.id };
-  }
+  const policy = effectivePreset(brand, managed);
+  const locked = await enforcePolicy(policy, profiles);
+  if (locked) return { profileId: locked.profile.id };
   const current = profiles.current() ?? profiles.list()[0] ?? null;
   if (current) return { profileId: current.id };
-  if (preset) {
-    const added = await profiles.add({ base: preset.base, name: null, iconUrl: null });
+  if (policy.presetUrl !== null) {
+    const added = await profiles.add({ base: policy.presetUrl, name: null, iconUrl: null });
     return { profileId: added.id };
   }
   return "address";

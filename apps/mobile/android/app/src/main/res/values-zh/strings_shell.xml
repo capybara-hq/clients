@@ -3,4 +3,9 @@
 <resources>
     <string name="unsupported_title">这台设备的 WebView 版本太旧</string>
     <string name="unsupported_body">请在应用商店更新 Android System WebView（或 Chrome），然后重新打开应用。更新之前，这里无法打开任何平台。</string>
+    <!-- 托管配置（res/xml/app_restrictions.xml），显示在 MDM 控制台中。 -->
+    <string name="restriction_preset_url_title">平台地址</string>
+    <string name="restriction_preset_url_description">应用打开的 Capybara 平台的 https 地址。</string>
+    <string name="restriction_lock_title">仅限此平台</string>
+    <string name="restriction_lock_description">隐藏其他平台，并禁止添加其他平台。需要设置平台地址。</string>
 </resources>

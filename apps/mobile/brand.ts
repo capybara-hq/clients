@@ -35,8 +35,10 @@ export const brand: Brand = {
   lockToPreset: false,
 };
 
-// No underscores: App Store Connect rejects them in a bundle id.
-const APP_ID = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9-]*)+$/;
+// One id serves both stores: Android's applicationId allows letters, digits and underscores, each
+// segment starting with a letter; App Store Connect rejects underscores in a bundle id. So letters
+// and digits only, every segment starting with a letter (no "-", no "_").
+const APP_ID = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)+$/;
 const SCHEME = /^[a-z][a-z0-9+.-]*$/;
 const HEX = /^#[0-9a-fA-F]{6}$/;
 // Schemes a browser or the system already owns: a callback on them could be taken by someone else.

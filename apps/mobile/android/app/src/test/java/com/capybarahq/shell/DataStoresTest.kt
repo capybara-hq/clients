@@ -10,6 +10,8 @@ import org.junit.Test
 
 private class FakeBackend : ProfileBackend {
     val log = mutableListOf<String>()
+    /** Names whose delete throws something other than "in use". */
+    val broken = mutableSetOf<String>()
     val inUse = mutableSetOf<String>()
     val existing = mutableSetOf<String>()
 
@@ -20,6 +22,10 @@ private class FakeBackend : ProfileBackend {
     }
 
     override fun delete(name: String): Boolean {
+        if (name in broken) {
+            log += "delete-broken:$name"
+            throw RuntimeException("WebView went away")
+        }
         if (name in inUse) {
             log += "delete-in-use:$name"
             throw IllegalStateException("Cannot delete in-use profile $name")
@@ -134,6 +140,44 @@ class DataStoresTest {
         val backend = FakeBackend().apply { inUse += a }
         core(backend = backend, pending = pending).startUp()
         assertEquals(setOf(a), pending.ids)
+    }
+
+    @Test
+    fun startUpSurvivesAnyDeleteFailureAndKeepsTheIdRecorded() {
+        val pending = MemoryPending(setOf(a, b))
+        val backend = FakeBackend().apply {
+            existing += setOf(a, b)
+            broken += a
+        }
+        core(backend = backend, pending = pending).startUp()
+        assertEquals(setOf(a), pending.ids)
+        assertEquals(listOf("delete-broken:$a", "delete:$b"), backend.log)
+    }
+
+    @Test
+    fun startUpSurvivesAFailingSave() {
+        val pending = object : PendingDeletions {
+            override fun load(): Set<String> = setOf(a)
+
+            override fun save(ids: Set<String>) = throw IllegalStateException("pending deletions not saved")
+        }
+        val backend = FakeBackend().apply { existing += a }
+        DataStoreCore({ true }, backend, pending).startUp()
+        assertEquals(listOf("delete:$a"), backend.log)
+    }
+
+    @Test
+    fun removeTreatsAnyDeleteFailureAsInUse() {
+        val pending = MemoryPending()
+        val backend = FakeBackend().apply {
+            existing += a
+            broken += a
+        }
+        var done = false
+        core(backend = backend, pending = pending).remove(a) { done = true }
+        assertTrue(done)
+        assertEquals(setOf(a), pending.ids)
+        assertEquals(listOf("delete-broken:$a", "clear:$a"), backend.log)
     }
 
     @Test

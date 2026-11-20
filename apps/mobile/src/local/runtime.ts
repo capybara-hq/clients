@@ -7,10 +7,13 @@
 //
 // Start: `startRoute` picks the profile to open or the address page (a debug build launched by a
 // UI test opens the test's loopback origin instead, or the address page over an empty in-memory
-// profile list). Managed configuration (Task 18) is not read yet. The address page discovers and
-// adds a deployment through this document (src/runtime/address-bridge.ts), then it opens and its
-// Sign in starts the browser sign-in for it (src/runtime/sign-in.ts). Each profile opened is asked
-// for its meta: a deployment too old for app sign-in gets the too-old state and no signIn@1.
+// profile list). Managed configuration (src/runtime/managed.ts) decides which profiles are
+// visible: under a lock only the preset's, everywhere the runtime offers or loads a profile (the
+// error page's switcher, switching, the registry, the address page's add). A lock that arrives
+// while the app runs opens the preset. The address page discovers and adds a deployment through
+// this document (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser
+// sign-in for it (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment
+// too old for app sign-in gets the too-old state and no signIn@1.
 import { registerPlugin } from "@capacitor/core";
 import { Haptics } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
@@ -28,12 +31,7 @@ import {
   menuHostPortFrom,
 } from "../runtime/capabilities/menu.ts";
 import { openExternalPortFrom } from "../runtime/capabilities/open-external.ts";
-import {
-  effectivePreset,
-  type HttpGetNative,
-  httpGetPortFrom,
-  startRoute,
-} from "../runtime/discovery.ts";
+import { type HttpGetNative, httpGetPortFrom, startRoute } from "../runtime/discovery.ts";
 import { type ErrorStateMessage, isErrorPageMessage } from "../runtime/error-page.ts";
 import {
   type CapybaraHostPlugin,
@@ -44,6 +42,13 @@ import {
 } from "../runtime/host-port.ts";
 import { createLoader, type ErrorState, type LoaderProfile } from "../runtime/loader.ts";
 import { createLocalFrames, type FrameHandle, type LocalPage } from "../runtime/local-frames.ts";
+import {
+  createManagedPolicy,
+  MANAGED_CONFIG_PLUGIN,
+  type ManagedConfigNative,
+  type ManagedPolicy,
+  managedSourceFrom,
+} from "../runtime/managed.ts";
 import {
   createProfileStore,
   DATA_STORES_PLUGIN,
@@ -134,6 +139,9 @@ async function main(): Promise<void> {
 
   let list: () => LoaderProfile[];
   let profiles: ProfileStore | null = null;
+  let managed: ManagedPolicy | null = null;
+  // A lock that arrives at runtime shows the preset (set once the frames and the loader exist).
+  let showLocked: (profile: LoaderProfile) => void = () => {};
   let switchTo: (id: string) => Promise<LoaderProfile | null>;
   let start: Promise<"address" | { profileId: string }>;
   if (options.testOrigin && options.testBase && !options.testAddress) {
@@ -160,9 +168,22 @@ async function main(): Promise<void> {
     });
     profiles = store;
     removeBlockRulesOnRemoval(store, plugin);
-    list = () => store.list();
-    switchTo = async (id) => ((await store.setCurrent(id)) === "switched" ? store.current() : null);
-    start = startRoute(brand, null, store);
+    // Orphaned stores of earlier removals whose native deletion failed.
+    void store.sweep().catch(() => {});
+    const policy = await createManagedPolicy({
+      brand,
+      source: managedSourceFrom(registerPlugin<ManagedConfigNative>(MANAGED_CONFIG_PLUGIN)),
+      profiles: store,
+      open: (profile) => showLocked(profile),
+    });
+    managed = policy;
+    // Hidden profiles are never offered, switched to or loaded; their stores stay.
+    list = () => policy.visible();
+    switchTo = async (id) => {
+      if (!policy.visible().some((p) => p.id === id)) return null;
+      return (await store.setCurrent(id)) === "switched" ? store.current() : null;
+    };
+    start = startRoute(brand, policy.values(), store);
   }
 
   const registry = createRegistry<LoaderProfile>({ host, profiles: { list: () => list() } });
@@ -232,11 +253,13 @@ async function main(): Promise<void> {
   const address = createAddressHost({
     httpGet,
     lockedBase: () => {
-      const preset = effectivePreset(brand, null);
-      return preset?.locked ? preset.base : null;
+      const policy = managed?.policy();
+      return policy?.locked ? policy.presetUrl : null;
     },
     add: async (found) => {
       if (!profiles) throw new Error("no profile store");
+      // The lock may have arrived after discovery answered.
+      if (managed && !managed.canAdd(found.base)) throw new Error("locked to the preset");
       return profiles.add(found);
     },
     // The person tapped Sign in: the deployment opens under the browser sign-in, which signs it
@@ -288,6 +311,9 @@ async function main(): Promise<void> {
     errorView,
     profiles: () => list(),
   });
+
+  // Opening hides the error state and any framed page (the loader's errorView.hide).
+  showLocked = (profile) => void loader?.open(profile);
 
   const route = await start;
   const first = route === "address" ? null : list().find((p) => p.id === route.profileId);

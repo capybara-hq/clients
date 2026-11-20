@@ -10,5 +10,6 @@ object ShellPlugins {
         ShellPlugin::class.java,
         DataStoresPlugin::class.java,
         MenuHostPlugin::class.java,
+        ManagedConfigPlugin::class.java,
     )
 }

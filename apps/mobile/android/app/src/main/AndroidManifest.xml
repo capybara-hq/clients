@@ -40,6 +40,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Managed configurations: presetUrl and lockToPreset (ManagedConfig.kt). -->
+        <meta-data
+            android:name="android.content.APP_RESTRICTIONS"
+            android:resource="@xml/app_restrictions" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

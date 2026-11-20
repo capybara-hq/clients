@@ -55,14 +55,21 @@ export interface ProfileStore {
   current(): Profile | null;
   /** Adds a deployment and creates its data store; the same base again returns the first one. */
   add(input: { base: string; name: string | null; iconUrl: string | null }): Promise<Profile>;
-  /** In single mode asks first (Decision 9); on ok clears the shared store, then switches. */
-  setCurrent(id: string): Promise<"switched" | "cancelled">;
   /**
-   * Runs the `onRemoved` listeners, then schedules the store's deletion (single mode: clears the
-   * shared store when the profile is current), then forgets the profile. A removed current
-   * profile hands over to the next one, else the previous one, else none.
+   * In single mode asks first (Decision 9); on ok clears the shared store, then switches.
+   * `forced` (a managed lock, Task 18) skips the question but still clears the shared store.
+   */
+  setCurrent(id: string, opts?: { forced?: boolean }): Promise<"switched" | "cancelled">;
+  /**
+   * Runs the `onRemoved` listeners, then forgets the profile. In multi mode the profile and its
+   * store's id as an orphan are saved in one write before the store's deletion is scheduled, so
+   * no profile ever points at a store being deleted; a deletion that rejects stays an orphan for
+   * `sweep`. Single mode clears the shared store first when the profile is current. A removed
+   * current profile hands over to the next one, else the previous one, else none.
    */
   remove(id: string): Promise<void>;
+  /** Retries the deletion of orphaned stores (a removal whose native call rejected). */
+  sweep(): Promise<void>;
   /** The push plan's seam: listeners run before the store is removed. Returns an unsubscribe. */
   onRemoved(listener: (p: Profile) => void | Promise<void>): () => void;
 }
@@ -87,6 +94,8 @@ interface StoredState {
   version: 1;
   profiles: Profile[];
   currentId: string | null;
+  /** Stores of removed profiles whose deletion is not scheduled natively yet. */
+  orphans: string[];
 }
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -107,8 +116,13 @@ function parseProfile(v: unknown): Profile | null {
   return { id, base, origin, name, iconUrl, dataStoreId, addedAt };
 }
 
+// A corrupt or unreadable value reads as no profiles. The native stores of the profiles it held
+// stay on disk, orphaned: nothing names them any more, so nothing deletes them (iOS keeps the
+// WKWebsiteDataStore directories, Android the named profiles). They are never handed out again,
+// since every new profile gets a fresh UUID. Accepted: prefs corruption is rare and the leak is
+// local data of deployments the person had already added.
 function readState(prefs: PrefsPort): StoredState {
-  const empty: StoredState = { version: 1, profiles: [], currentId: null };
+  const empty: StoredState = { version: 1, profiles: [], currentId: null, orphans: [] };
   let raw: unknown;
   try {
     const text = prefs.get(PROFILES_PREF_KEY);
@@ -131,7 +145,13 @@ function readState(prefs: PrefsPort): StoredState {
   const stored = typeof raw.currentId === "string" ? raw.currentId : null;
   const currentId =
     stored && profiles.some((p) => p.id === stored) ? stored : (profiles[0]?.id ?? null);
-  return { version: 1, profiles, currentId };
+  const orphans = Array.isArray(raw.orphans)
+    ? raw.orphans.filter(
+        (id): id is string =>
+          typeof id === "string" && UUID.test(id) && !profiles.some((p) => p.dataStoreId === id),
+      )
+    : [];
+  return { version: 1, profiles, currentId, orphans };
 }
 
 export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
@@ -153,6 +173,16 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   }
 
   const copy = (p: Profile): Profile => ({ ...p });
+
+  /** Schedules an orphan's deletion; it stays recorded (for `sweep`) until that resolves. */
+  async function dropOrphan(id: string): Promise<void> {
+    try {
+      await stores.remove(id);
+    } catch {
+      return;
+    }
+    await save({ ...state, orphans: state.orphans.filter((o) => o !== id) }).catch(() => undefined);
+  }
 
   return {
     list: () => state.profiles.map(copy),
@@ -194,19 +224,21 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
         return copy(profile);
       }),
 
-    setCurrent: (id) =>
+    setCurrent: (id, opts) =>
       serial(async () => {
         const target = state.profiles.find((p) => p.id === id);
         if (!target) throw new Error("unknown profile");
         if (state.currentId === id) return "switched";
         if ((await stores.mode()) === "single" && state.currentId !== null) {
-          const locale = deps.locale?.() ?? "en";
-          const ok = await deps.confirm({
-            message: t(locale, "profile.switch_confirm.message"),
-            ok: t(locale, "profile.switch_confirm.confirm"),
-            cancel: t(locale, "profile.switch_confirm.cancel"),
-          });
-          if (!ok) return "cancelled";
+          if (opts?.forced !== true) {
+            const locale = deps.locale?.() ?? "en";
+            const ok = await deps.confirm({
+              message: t(locale, "profile.switch_confirm.message"),
+              ok: t(locale, "profile.switch_confirm.confirm"),
+              cancel: t(locale, "profile.switch_confirm.cancel"),
+            });
+            if (!ok) return "cancelled";
+          }
           // The shared store holds the current deployment's session: clear it before another
           // deployment can load into it.
           await stores.clearAll(origins());
@@ -227,17 +259,29 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
             // A failing listener (the push registration) never keeps a profile the person removed.
           }
         }
-        if ((await stores.mode()) === "single") {
-          if (state.currentId === id) await stores.clearAll(origins());
-        } else {
-          await stores.remove(target.dataStoreId);
-        }
+        const single = (await stores.mode()) === "single";
+        // Single mode has no store of its own to delete: the shared one is cleared while the
+        // profile is still here, so a failure leaves it listed (signed out), never stranded.
+        if (single && state.currentId === id) await stores.clearAll(origins());
         const profiles = state.profiles.filter((p) => p.id !== id);
         const currentId =
           state.currentId === id
             ? (profiles[index]?.id ?? profiles[index - 1]?.id ?? null)
             : state.currentId;
-        await save({ ...state, profiles, currentId });
+        if (single) {
+          await save({ ...state, profiles, currentId });
+          return;
+        }
+        // One write forgets the profile and records its store as an orphan; only then is the
+        // deletion scheduled. A failed write keeps the profile with its store untouched.
+        const orphan = target.dataStoreId;
+        await save({ ...state, profiles, currentId, orphans: [...state.orphans, orphan] });
+        await dropOrphan(orphan);
+      }),
+
+    sweep: () =>
+      serial(async () => {
+        for (const orphan of [...state.orphans]) await dropOrphan(orphan);
       }),
 
     onRemoved: (listener) => {
