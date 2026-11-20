@@ -8,7 +8,9 @@
 
 package com.capybarahq.shell
 
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import com.getcapacitor.JSObject
@@ -159,6 +161,26 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         }
     }
 
+    /** `openExternal@1`: ACTION_VIEW for an http(s) URL (the runtime already applied the origin rule). */
+    @PluginMethod
+    fun openExternal(call: PluginCall) {
+        val url = call.getString("url")?.let { ExternalUrl.parse(it) }
+        if (url == null) {
+            call.reject("openExternal needs an http(s) url")
+            return
+        }
+        main.post {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject("nothing can open this URL")
+            }
+        }
+    }
+
     override fun onDocument(view: ProfileWebView, docId: String) {
         views[view.profileId] = WeakReference(view)
         notifyListeners("document", JSObject().put("profileId", view.profileId).put("docId", docId).put("state", "opened"))
@@ -178,3 +200,11 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
     }
 }
 
+
+/** What native opens in the system browser: absolute http(s) URLs of at most 2048 characters. */
+object ExternalUrl {
+    private val PATTERN = Regex("^(https?)://[^/?#\\s]+[^\\s]*$", RegexOption.IGNORE_CASE)
+
+    fun parse(raw: String): String? =
+        if (raw.length <= 2048 && PATTERN.matches(raw)) raw else null
+}

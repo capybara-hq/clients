@@ -303,6 +303,7 @@ describe("createHostPort", () => {
       reply: vi.fn(async () => {}),
       pushState: vi.fn(async () => {}),
       event: vi.fn(async () => {}),
+      openExternal: vi.fn(async () => {}),
     };
     const port = createHostPort(plugin);
     const seen: ShellCallMessage[] = [];

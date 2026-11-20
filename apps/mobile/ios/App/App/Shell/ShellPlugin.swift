@@ -23,6 +23,7 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "showError", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setAppearance", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "launchOptions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openExternal", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
@@ -177,6 +178,19 @@ extension ShellPlugin {
         #endif
         call.resolve(result)
     }
+
+    /// `openExternal@1`: an https URL, or http (the runtime already applied the origin rule).
+    @objc func openExternal(_ call: CAPPluginCall) {
+        guard let raw = call.getString("url"), let url = ExternalURL.parse(raw) else {
+            call.reject("openExternal needs an http(s) url")
+            return
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                if opened { call.resolve() } else { call.reject("nothing can open this URL") }
+            }
+        }
+    }
 }
 
 extension UIColor {
@@ -185,6 +199,17 @@ extension UIColor {
         guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
         self.init(red: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
                   blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// What native opens in the system browser: absolute http(s) URLs of at most 2048 characters.
+enum ExternalURL {
+    static func parse(_ raw: String) -> URL? {
+        guard raw.count <= 2048, let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              url.host?.isEmpty == false
+        else { return nil }
+        return url
     }
 }
 
