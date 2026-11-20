@@ -31,6 +31,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.util.Log
+import android.webkit.JsResult
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
@@ -253,6 +254,23 @@ class ProfileWebView private constructor(
                     }
                     return false
                 }
+
+                // N5: a page off the profile origin (a provider page, or one the backstop is
+                // stopping) never holds the WebView with a "stay on this page" prompt: it is
+                // confirmed, so a loadBase() is never cancelled. The profile's own pages keep theirs.
+                override fun onJsBeforeUnload(
+                    webView: WebView,
+                    url: String?,
+                    message: String?,
+                    result: JsResult,
+                ): Boolean {
+                    // `url` (and webView.url) is already the navigation's target here, so the page
+                    // asking is judged by the main frame's last started page.
+                    if (!view.mainFrameOffOrigin()) return false
+                    view.report(mapOf("event" to "beforeunload-confirmed", "url" to url))
+                    result.confirm()
+                    return true
+                }
             }
             val init = JSONObject(state.toString())
                 .put("origin", origin.serialized)
@@ -358,6 +376,9 @@ class ProfileWebView private constructor(
 
     // ---- Navigation and loading ----
 
+    /** True while the main frame's last started page is not on the profile origin. */
+    internal fun mainFrameOffOrigin(): Boolean = committedOrigin != profileOrigin
+
     /** Loads the deployment's base address. */
     fun loadBase() {
         mainFrameFailed = false
@@ -412,6 +433,9 @@ class ProfileWebView private constructor(
         if (url == "about:blank") return false
         if (url == stoppedUrl) return true
         stoppedUrl = url
+        // The stopped page may already be the main frame's document until loadBase replaces it: it
+        // counts as off the origin (no OAuth exception from it, its beforeunload prompt confirmed).
+        committedOrigin = origin
         report(mapOf("event" to "backstop", "url" to url))
         stopLoading()
         oauthReturn = null

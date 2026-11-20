@@ -8,6 +8,7 @@ import {
   createMenuCapability,
   type MenuHostPort,
   type MenuShowInput,
+  menuHostPortFrom,
 } from "../../src/runtime/capabilities/menu.ts";
 import { createOpenExternalCapability } from "../../src/runtime/capabilities/open-external.ts";
 import { createShareCapability, type SharePort } from "../../src/runtime/capabilities/share.ts";
@@ -224,6 +225,7 @@ describe("menu@1", () => {
   function fake(answer: string | null = null) {
     const port = {
       show: vi.fn(async (_input: MenuShowInput) => answer),
+      cancel: vi.fn(() => {}),
     } satisfies MenuHostPort;
     return port;
   }
@@ -310,6 +312,7 @@ describe("menu@1", () => {
         new Promise((resolve) => {
           finish = resolve;
         }),
+      cancel: () => {},
     };
     const { call } = setup("menu@1", createMenuCapability(port));
     expect(await call("show", [{ items }], false)).toEqual({ ok: false, code: "no_activation" });
@@ -319,11 +322,48 @@ describe("menu@1", () => {
     expect(await first).toEqual({ ok: true, value: "open" });
   });
 
+  test("the document ending cancels the open menu natively and settles cancelled", async () => {
+    let finish: (id: string | null) => void = () => {};
+    const port = {
+      show: vi.fn(
+        () =>
+          new Promise<string | null>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+      cancel: vi.fn(() => finish(null)),
+    } satisfies MenuHostPort;
+    const { registry, call } = setup("menu@1", createMenuCapability(port));
+    const open = call("show", [{ items }]);
+    await vi.waitFor(() => expect(port.show).toHaveBeenCalledTimes(1));
+    registry.endDocument("p1");
+    expect(await open).toEqual({ ok: false, code: "cancelled" });
+    expect(port.cancel).toHaveBeenCalledTimes(1);
+    // The slot is free again for the next document.
+    port.show.mockImplementationOnce(async () => "open");
+    expect(await call("show", [{ items }])).toEqual({ ok: true, value: "open" });
+  });
+
+  test("a menu that settles on its own is never cancelled", async () => {
+    const port = fake("open");
+    const { registry, call } = setup("menu@1", createMenuCapability(port));
+    expect(await call("show", [{ items }])).toEqual({ ok: true, value: "open" });
+    registry.endDocument("p1");
+    expect(port.cancel).not.toHaveBeenCalled();
+  });
+
+  test("menuHostPortFrom forwards cancel to the MenuHost plugin", async () => {
+    const plugin = { show: vi.fn(async () => ({ id: null })), cancel: vi.fn(async () => {}) };
+    menuHostPortFrom(plugin).cancel();
+    expect(plugin.cancel).toHaveBeenCalledTimes(1);
+  });
+
   test("a host failure is a failed call", async () => {
     const port: MenuHostPort = {
       show: async () => {
         throw new Error("no window");
       },
+      cancel: () => {},
     };
     const { call } = setup("menu@1", createMenuCapability(port));
     expect(await call("show", [{ items }])).toEqual(FAILED);

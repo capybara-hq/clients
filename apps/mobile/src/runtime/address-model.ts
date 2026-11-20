@@ -1,7 +1,9 @@
-// The address page's state machine (src/local/address/address.ts renders it): discovery of what
-// the person typed, the locked-preset refusal, and the deployment's name and icon.
+// The address page's state machine (src/local/address/address.ts renders it). Discovery itself,
+// the locked-preset refusal included, runs in the runtime (address-bridge.ts `answerDiscover`);
+// the page reaches it by postMessage, so the model only takes a `discover` function.
 import { type Meta, normalizeAddress } from "@capybara-hq/shell";
-import { type AddressErrorKind, discover, type HttpGetPort } from "./discovery.ts";
+import type { AddressResult } from "./address-bridge.ts";
+import type { AddressErrorKind } from "./discovery.ts";
 
 export interface FoundDeployment {
   base: string;
@@ -22,13 +24,17 @@ export interface AddressModel {
   reset(): void;
 }
 
-/** `meta.icons.app` (else `meta.icon`) resolved against the base; only http(s) URLs. */
+/**
+ * `meta.icons.app` (else `meta.icon`) resolved against the base. Only https, or http when the
+ * base itself is http (a loopback deployment): an https deployment never shows a plain-http image.
+ */
 export function resolveIcon(base: string, meta: Meta): string | null {
   const icon = meta.icons?.app ?? meta.icon;
   if (!icon) return null;
   try {
     const url = new URL(icon, base);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+    const httpOk = new URL(base).protocol === "http:";
+    return url.protocol === "https:" || (httpOk && url.protocol === "http:") ? url.href : null;
   } catch {
     return null;
   }
@@ -40,9 +46,8 @@ function hostOf(input: string): string {
 }
 
 export function createAddressModel(deps: {
-  httpGet: HttpGetPort;
-  /** The only base the page accepts (a locked preset), or null. */
-  lockedBase: string | null;
+  /** The runtime's discovery (`answerDiscover`, over postMessage in the page). */
+  discover(input: string): Promise<AddressResult>;
 }): AddressModel {
   let state: AddressState = { phase: "idle" };
   let seq = 0;
@@ -63,27 +68,12 @@ export function createAddressModel(deps: {
     },
     async submit(input) {
       const mine = ++seq;
-      const host = hostOf(input);
-      const typed = normalizeAddress(input);
-      set({ phase: "checking", host });
-      if (deps.lockedBase !== null && !(typed.ok && typed.base === deps.lockedBase)) {
-        set({ phase: "error", error: "locked", host });
-        return;
-      }
-      const result = await discover(input, { httpGet: deps.httpGet });
+      set({ phase: "checking", host: hostOf(input) });
+      const result = await deps.discover(input);
       if (mine !== seq) return;
-      if ("error" in result) {
-        set({ phase: "error", error: result.error, host });
-        return;
-      }
-      set({
-        phase: "found",
-        found: {
-          base: result.base,
-          name: result.meta.name,
-          iconUrl: resolveIcon(result.base, result.meta),
-        },
-      });
+      set(
+        "found" in result ? { phase: "found", found: result.found } : { phase: "error", ...result },
+      );
     },
   };
 }

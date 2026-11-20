@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- The wiring end to end: the deployment the framed address page added and opened. It reports the
+     capabilities its Shell environment offers (chrome, haptics, share, menu, openExternal). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  </head>
+  <body>
+    <h1>Loopback deployment</h1>
+    <script>
+      const shell = window.capybaraShell;
+      fetch("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          doc: "address-deployment",
+          results: {
+            capabilities: shell ? Object.keys(shell.capabilities).sort() : null,
+            capacitor: typeof window.Capacitor,
+          },
+        }),
+      });
+    </script>
+  </body>
+</html>

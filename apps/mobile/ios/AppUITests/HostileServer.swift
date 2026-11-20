@@ -4,7 +4,8 @@
 // directory it is given), records every GET with its host, answers /redirect-oauth with an
 // OAuth-shaped redirect to origin B, answers
 // /redirect with a redirect to origin B, serves the sandbox-CSP pages, and collects the pages'
-// reports (POST /report) and the app's gate log (POST /native-log).
+// reports (POST /report) and the app's gate log (POST /native-log). GET /api/v1/meta serves
+// meta.json of the directory (the address page's discovery).
 
 import Foundation
 import Network
@@ -165,7 +166,7 @@ final class HostileServer {
             status = "302 Found"
             headers["Location"] = "\(originB)/redirected.html?response_type=code&client_id=c&state=s&redirect_uri=\(originA)%2Fcb"
         case ("GET", _):
-            var name = path == "/" ? "top.html" : String(path.dropFirst())
+            var name = path == "/" ? "top.html" : path == "/api/v1/meta" ? "meta.json" : String(path.dropFirst())
             if path.hasPrefix("/plugin-ui/") {
                 name = "plugin-ui.html"
             }
@@ -176,7 +177,8 @@ final class HostileServer {
             if allowed, let text = try? String(contentsOf: pagesDir.appendingPathComponent(name), encoding: .utf8) {
                 body = Data(text.replacingOccurrences(of: "__ORIGIN_A__", with: originA)
                     .replacingOccurrences(of: "__ORIGIN_B__", with: originB).utf8)
-                headers["Content-Type"] = name.hasSuffix(".js") ? "text/javascript" : "text/html; charset=utf-8"
+                headers["Content-Type"] = name.hasSuffix(".js") ? "text/javascript"
+                    : name.hasSuffix(".json") ? "application/json" : "text/html; charset=utf-8"
             } else {
                 status = "404 Not Found"
             }

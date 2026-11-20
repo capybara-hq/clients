@@ -1,9 +1,13 @@
 // The address page (spec §4.1): the person types a platform address, discovery answers with the
 // deployment's name and icon, and Sign in hands the address on. Plain DOM, no design package, the
 // same layout as the desktop's connect page. The state machine is src/runtime/address-model.ts.
-import { registerPlugin } from "@capacitor/core";
+//
+// The page is framed over the runtime document and has no Capacitor bridge (N1: iOS injects it in
+// the main frame only, and neither platform's framed pages use it). It asks the runtime by
+// its port (src/runtime/address-bridge.ts, local-channel.ts): the runtime discovers, adds the
+// profile and opens it.
 import { type Locale, t } from "@capybara-hq/shell";
-import { brand } from "../../../brand.ts";
+import { type AddressClient, createAddressClient } from "../../runtime/address-bridge.ts";
 import {
   type AddressModel,
   type AddressState,
@@ -11,7 +15,7 @@ import {
   errorKey,
   type FoundDeployment,
 } from "../../runtime/address-model.ts";
-import { effectivePreset, type HttpGetNative, httpGetPortFrom } from "../../runtime/discovery.ts";
+import { createRuntimeLink } from "../../runtime/local-channel.ts";
 
 // ---- the page ----
 
@@ -30,7 +34,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 export function mountAddressPage(
   root: HTMLElement,
-  deps: { model: AddressModel; locale: Locale; onSignIn: Handoff },
+  deps: { model: AddressModel; locale: Locale; onSignIn: Handoff; onBack?: () => void },
 ): void {
   const { model, locale } = deps;
   const tr = (key: string, vars?: Record<string, string>) => t(locale, key, vars);
@@ -78,6 +82,13 @@ export function mountAddressPage(
     });
     page.append(el("h1", "ad-title", tr("address.title")), el("p", "ad-lead", tr("address.lead")));
     page.append(form);
+    const { onBack } = deps;
+    if (onBack) {
+      const back = el("button", "ad-link", tr("dialog.cancel"));
+      back.type = "button";
+      back.addEventListener("click", () => onBack());
+      page.append(back);
+    }
     root.append(page);
   };
 
@@ -109,19 +120,25 @@ export function mountAddressPage(
 
 // Runs only inside the page (never under vitest, which has no document).
 const appRoot = typeof document !== "undefined" ? document.getElementById("app") : null;
-if (appRoot) {
-  const native = registerPlugin<HttpGetNative>("CapybaraHost");
-  const preset = effectivePreset(brand, null);
+if (appRoot && window.parent !== window) {
+  let client: AddressClient | null = null;
+  const link = createRuntimeLink({
+    parent: window.parent,
+    origin: location.origin,
+    onMessage: (data) => client?.receive(data),
+  });
+  window.addEventListener("message", (event) => link.receive(event));
+  client = createAddressClient({ post: (message) => link.post(message) });
+  const runtime = client;
   const locale: Locale = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
   document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  // `?back=1`: the runtime framed the page over something to return to (the error page).
+  const canGoBack = new URLSearchParams(location.search).get("back") === "1";
   mountAddressPage(appRoot, {
-    model: createAddressModel({
-      httpGet: httpGetPortFrom(native),
-      lockedBase: preset?.locked ? preset.base : null,
-    }),
+    model: createAddressModel({ discover: (input) => runtime.discover(input) }),
     locale,
-    // Sign-in is Task 17: until it lands the page only reports the choice.
-    onSignIn: (found) =>
-      window.dispatchEvent(new CustomEvent("capybara:address", { detail: found })),
+    // Sign-in is Task 17: for now choosing the deployment adds it and opens it.
+    onSignIn: (found) => runtime.choose(found.base),
+    ...(canGoBack ? { onBack: () => runtime.close() } : {}),
   });
 }

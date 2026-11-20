@@ -48,6 +48,8 @@ export type AddressErrorKind =
   | "sign_in_unavailable"
   | "locked";
 
+const NULL_BODY = new Set([204, 205, 304]);
+
 /**
  * A `fetch` over the port with `redirect: "error"` semantics: a 3xx rejects. The request's signal
  * (`fetchMeta`'s 10 s deadline, the caller's) rejects with an AbortError whatever the native side
@@ -66,7 +68,12 @@ function fetchOver(port: HttpGetPort): typeof fetch {
           }),
         ])
       : answer);
-    if (res.status >= 300 && res.status < 400) throw new TypeError("redirect");
+    if (res.status >= 300 && res.status < 400 && res.status !== 304)
+      throw new TypeError("redirect");
+    // `Response` refuses a status outside 200..599 and a body on a null-body status: both are
+    // simply not a deployment's meta, so they get a stand-in that reads as not_capybara.
+    if (res.status < 200 || res.status > 599) return new Response(null, { status: 502 });
+    if (NULL_BODY.has(res.status)) return new Response(null, { status: res.status });
     // An oversized body is never parsed: an unparseable stand-in makes it not_capybara.
     return new Response(res.truncated ? "truncated" : res.body, { status: res.status });
   };

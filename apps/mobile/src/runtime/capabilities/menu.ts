@@ -25,6 +25,8 @@ export interface MenuShowInput {
 /** The native menu. Resolves the picked item id, or null when dismissed. */
 export interface MenuHostPort {
   show(input: MenuShowInput): Promise<string | null>;
+  /** Dismisses the menu showing now, if any (its `show` then resolves null). */
+  cancel(): void;
 }
 
 export const MENU_HOST_PLUGIN_NAME = "MenuHost";
@@ -33,6 +35,7 @@ export const MENU_HOST_PLUGIN_NAME = "MenuHost";
 export interface MenuHostPlugin {
   /** `cancelLabel` is the shell's own text (the iPhone action sheet's cancel row). */
   show(options: MenuShowInput & { cancelLabel: string }): Promise<{ id: string | null }>;
+  cancel(): Promise<void>;
 }
 
 /** A `MenuHostPort` over the plugin; English labels when no locale is given. */
@@ -40,6 +43,9 @@ export function menuHostPortFrom(plugin: MenuHostPlugin, locale?: () => Locale):
   return {
     show: async (input) =>
       (await plugin.show({ ...input, cancelLabel: t(locale?.() ?? "en", "dialog.cancel") })).id,
+    cancel: () => {
+      plugin.cancel().catch(() => {});
+    },
   };
 }
 
@@ -97,13 +103,18 @@ export function createMenuCapability(host: MenuHostPort): CapabilityImpl {
   return {
     confirming: ["show"],
     functions: {
-      async show(_ctx, input) {
+      async show(ctx, input) {
         const menu = parseMenuInput(input);
+        // The document ended (the registry has answered `cancelled`): close the menu natively.
+        const cancel = () => host.cancel();
+        ctx.signal.addEventListener("abort", cancel, { once: true });
         let picked: string | null;
         try {
           picked = await host.show(menu);
         } catch {
           return fail();
+        } finally {
+          ctx.signal.removeEventListener("abort", cancel);
         }
         // Only an enabled item of this menu can be the answer, whatever the host reports.
         const item = menu.items.find((i) => i.id === picked);

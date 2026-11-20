@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { brand as officialBrand } from "../brand.ts";
+import { answerDiscover } from "../src/runtime/address-bridge.ts";
 import { createAddressModel, resolveIcon } from "../src/runtime/address-model.ts";
 import {
   discover,
@@ -74,6 +75,17 @@ describe("discover", () => {
       expect(await discover("capybara.example.com", { httpGet })).toEqual({
         error: "not_capybara",
       });
+    }
+  });
+
+  test("a null-body status (204, 205, 304) or an out-of-range status is not_capybara", async () => {
+    for (const status of [204, 205, 304, 101, 199, 600]) {
+      for (const body of ["", "x"]) {
+        const httpGet = fakeGet({ [META_URL]: { status, body } });
+        expect(await discover("capybara.example.com", { httpGet })).toEqual({
+          error: "not_capybara",
+        });
+      }
     }
   });
 
@@ -192,11 +204,15 @@ describe("startRoute", () => {
   });
 });
 
+/** The page's model over the runtime's discovery, as the framed page reaches it by postMessage. */
+const modelOver = (httpGet: HttpGetPort, lockedBase: string | null) =>
+  createAddressModel({ discover: (input) => answerDiscover(input, { httpGet, lockedBase }) });
+
 describe("the address page model", () => {
   const answers = { [META_URL]: ok(META) };
 
   test("renders the deployment's name and its app icon resolved against the base", async () => {
-    const model = createAddressModel({ httpGet: fakeGet(answers), lockedBase: null });
+    const model = modelOver(fakeGet(answers), null);
     await model.submit("capybara.example.com");
     expect(model.state()).toMatchObject({
       phase: "found",
@@ -210,14 +226,14 @@ describe("the address page model", () => {
 
   test("passes through checking before the answer", async () => {
     const phases: string[] = [];
-    const model = createAddressModel({ httpGet: fakeGet(answers), lockedBase: null });
+    const model = modelOver(fakeGet(answers), null);
     model.subscribe((s) => phases.push(s.phase));
     await model.submit("capybara.example.com");
     expect(phases).toEqual(["checking", "found"]);
   });
 
   test("a failure shows the error kind and the host", async () => {
-    const model = createAddressModel({ httpGet: fakeGet({}), lockedBase: null });
+    const model = modelOver(fakeGet({}), null);
     await model.submit("capybara.example.com");
     expect(model.state()).toMatchObject({
       phase: "error",
@@ -228,7 +244,7 @@ describe("the address page model", () => {
 
   test("locked: another address is refused with locked, without asking the network", async () => {
     const httpGet = fakeGet(answers);
-    const model = createAddressModel({ httpGet, lockedBase: "https://acme.example.com" });
+    const model = modelOver(httpGet, "https://acme.example.com");
     await model.submit("capybara.example.com");
     expect(model.state()).toMatchObject({ phase: "error", error: "locked" });
     expect(httpGet.urls).toEqual([]);
@@ -236,7 +252,7 @@ describe("the address page model", () => {
 
   test("locked: the preset itself is accepted", async () => {
     const httpGet = fakeGet({ "https://acme.example.com/api/v1/meta": ok(META) });
-    const model = createAddressModel({ httpGet, lockedBase: "https://acme.example.com" });
+    const model = modelOver(httpGet, "https://acme.example.com");
     await model.submit("https://acme.example.com/");
     expect(model.state().phase).toBe("found");
   });
@@ -247,7 +263,7 @@ describe("the address page model", () => {
     const httpGet: HttpGetPort = {
       get: (url) => (url.includes("slow") ? slow : Promise.resolve(ok({ ...META, name: "Fast" }))),
     };
-    const model = createAddressModel({ httpGet, lockedBase: null });
+    const model = modelOver(httpGet, null);
     const first = model.submit("slow.example.com");
     await model.submit("fast.example.com");
     release(ok({ ...META, name: "Slow" }));
@@ -269,5 +285,14 @@ describe("resolveIcon", () => {
       resolveIcon(base, { ...META, icon: "javascript:alert(1)", icons: undefined } as never),
     ).toBe(null);
     expect(resolveIcon(base, { ...META, icon: null, icons: undefined } as never)).toBeNull();
+  });
+
+  test("an http icon is dropped on an https base and kept on an http (loopback) one", () => {
+    const icon = { ...META, icons: undefined, icon: "http://cdn.example.com/i.png" } as never;
+    expect(resolveIcon(base, icon)).toBeNull();
+    expect(resolveIcon("http://127.0.0.1:8080", icon)).toBe("http://cdn.example.com/i.png");
+    expect(
+      resolveIcon("http://127.0.0.1:8080", { ...META, icon: "/i.png", icons: undefined } as never),
+    ).toBe("http://127.0.0.1:8080/i.png");
   });
 });

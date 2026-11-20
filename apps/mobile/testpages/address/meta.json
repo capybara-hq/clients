@@ -1,0 +1,7 @@
+{
+  "name": "Loopback Test Platform",
+  "icon": null,
+  "icons": { "app": null, "maskable": null, "favicon": null },
+  "protocols": { "device": { "min": 1, "max": 2 } },
+  "features": { "localDevices": true, "appSignIn": true }
+}
