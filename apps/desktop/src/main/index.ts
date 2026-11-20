@@ -85,12 +85,7 @@ import {
   installPreferenceActions,
   provisionalToFollow,
 } from "./preferences.ts";
-import {
-  createProfileStore,
-  type Profile,
-  partitionFor,
-  sweepOrphanPartitions,
-} from "./profiles.ts";
+import { createProfileStore, type Profile, partitionFor, sweepAfterLoad } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
 import {
   hardenAnyContents,
@@ -199,16 +194,13 @@ function start(): void {
       newId: () => randomUUID(),
     });
     // A provisional profile's partition outlives a quit in the middle of its sign-in: gone at start,
-    // before any partition is loaded. Not while a corrupt store waits to be recovered: its
-    // profiles read as none, and their partitions must stay.
-    if (!fs.existsSync(join(app.getPath("userData"), "profiles.json.corrupt")))
-      sweepOrphanPartitions({
-        partitionsDir: join(app.getPath("userData"), "Partitions"),
-        knownIds: profiles.list().map((p) => p.id),
-        fs,
-        join,
-        log: (message, err) => console.error(message, err ?? ""),
-      });
+    // before any partition is loaded, and only after a clean load of profiles.json.
+    sweepAfterLoad(profiles, {
+      partitionsDir: join(app.getPath("userData"), "Partitions"),
+      fs,
+      join,
+      log: (message, err) => console.error(message, err ?? ""),
+    });
 
     // Theme and language (spec §6.10, §12): the profile's own cb-theme / NEXT_LOCALE cookies, the
     // app's choice before any profile, else the OS. Every page, window and menu reads them here.

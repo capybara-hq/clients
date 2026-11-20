@@ -86,6 +86,12 @@ export interface ProfileStore {
   /** The last used profile, else the first one. */
   lastUsed(): Profile | undefined;
   setLastUsed(id: string): void;
+  /**
+   * How the store loaded at start: `loadedCleanly` only when the file was read (or did not exist)
+   * and parsed as a whole; `seenIds` every string `id` the file held, kept or dropped, plus the
+   * profiles now. The start-up partition sweep trusts nothing else.
+   */
+  loadReport(): { loadedCleanly: boolean; seenIds: string[] };
 }
 
 interface StoreFile {
@@ -108,6 +114,19 @@ const PROFILE_PARTITION_DIR =
 export interface SweepFs {
   readdirSync(path: string): string[];
   rmSync(path: string, o: { recursive: true; force: true }): void;
+}
+
+/**
+ * The start-up sweep, only after a clean load of the store: every id the file held (kept or
+ * dropped) counts as known. Returns the removed names (none when the load was not clean).
+ */
+export function sweepAfterLoad(
+  store: Pick<ProfileStore, "loadReport">,
+  o: Omit<Parameters<typeof sweepOrphanPartitions>[0], "knownIds">,
+): string[] {
+  const report = store.loadReport();
+  if (!report.loadedCleanly) return [];
+  return sweepOrphanPartitions({ ...o, knownIds: report.seenIds });
 }
 
 /**
@@ -197,21 +216,29 @@ function isMissing(err: unknown): boolean {
  * Reads the store; an unreadable or corrupt file is moved aside to `<file>.corrupt` (so the next
  * save never overwrites what might be recovered) and reads as empty. A missing file is just empty.
  */
-function readStore(fs: ProfileFs, file: string): StoreFile {
+interface ReadResult {
+  store: StoreFile;
+  /** Read (or missing) and parsed as a whole. */
+  clean: boolean;
+  /** Every string `id` of the file's entries, valid or dropped. */
+  seenIds: string[];
+}
+
+function readStore(fs: ProfileFs, file: string): ReadResult {
   const empty: StoreFile = { version: 1, profiles: [], lastUsedId: null };
-  const setAside = () => {
+  const setAside = (): ReadResult => {
     try {
       fs.renameSync(file, `${file}.corrupt`);
     } catch {
       // Nothing more to do: the store still starts empty.
     }
-    return empty;
+    return { store: empty, clean: false, seenIds: [] };
   };
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
   } catch (err) {
-    return isMissing(err) ? empty : setAside();
+    return isMissing(err) ? { store: empty, clean: true, seenIds: [] } : setAside();
   }
   let raw: unknown;
   try {
@@ -220,6 +247,9 @@ function readStore(fs: ProfileFs, file: string): StoreFile {
     return setAside();
   }
   if (!isRecord(raw) || !Array.isArray(raw.profiles)) return setAside();
+  const seenIds = raw.profiles
+    .map((entry) => (isRecord(entry) && typeof entry.id === "string" ? entry.id : null))
+    .filter((id): id is string => id !== null);
   const profiles: Profile[] = [];
   for (const entry of raw.profiles) {
     const p = parseProfile(entry);
@@ -227,15 +257,20 @@ function readStore(fs: ProfileFs, file: string): StoreFile {
   }
   const last = typeof raw.lastUsedId === "string" ? raw.lastUsedId : null;
   return {
-    version: 1,
-    profiles,
-    lastUsedId: last && profiles.some((p) => p.id === last) ? last : null,
+    store: {
+      version: 1,
+      profiles,
+      lastUsedId: last && profiles.some((p) => p.id === last) ? last : null,
+    },
+    clean: true,
+    seenIds,
   };
 }
 
 export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   const { fs, file } = deps;
-  let state = readStore(fs, file);
+  const loaded = readStore(fs, file);
+  let state = loaded.store;
 
   function save(): void {
     fs.mkdirSync(dirname(file), { recursive: true });
@@ -254,6 +289,10 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
 
   return {
     list: () => state.profiles.map((p) => ({ ...p })),
+    loadReport: () => ({
+      loadedCleanly: loaded.clean,
+      seenIds: [...new Set([...loaded.seenIds, ...state.profiles.map((p) => p.id)])],
+    }),
     get: (id) => {
       const p = state.profiles.find((q) => q.id === id);
       return p && { ...p };

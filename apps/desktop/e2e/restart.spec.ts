@@ -98,7 +98,10 @@ test("the 「平台」 menu's sign-out: confirmed, the logout posted, the sessio
   expect(await h.cookies(id, fake.base, "cap_at")).toHaveLength(1);
   const logouts = fake.logouts;
   await h.app.evaluate(({ Menu }) => {
-    const platform = Menu.getApplicationMenu()?.items[1]?.submenu;
+    // The 「平台」 menu by its label (either language), not by position.
+    const platform = Menu.getApplicationMenu()?.items.find((i) =>
+      ["Platform", "平台"].includes(i.label),
+    )?.submenu;
     const item = platform?.items.find((i) => /^(Sign Out of |退出登录 )/.test(i.label));
     if (!item) throw new Error("no sign-out item");
     item.click();

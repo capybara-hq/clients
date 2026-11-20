@@ -1,5 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
-import { createProfileStore, partitionFor, sweepOrphanPartitions } from "../src/main/profiles.ts";
+import {
+  createProfileStore,
+  partitionFor,
+  sweepAfterLoad,
+  sweepOrphanPartitions,
+} from "../src/main/profiles.ts";
 import { fakeSession, memoryFs } from "./fakes.ts";
 
 const FILE = "/user-data/profiles.json";
@@ -308,5 +313,84 @@ describe("sweepOrphanPartitions", () => {
       sweepOrphanPartitions({ partitionsDir: "/u/Partitions", knownIds: [], fs, join }),
     ).toEqual([]);
     expect(fs.rmSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("sweepAfterLoad (the start-up guard)", () => {
+  const saved = "11111111-2222-4333-8444-555555555555";
+  const dropped = "22222222-3333-4444-8555-666666666666";
+  const orphan = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const dirs = [`profile-${saved}`, `profile-${dropped}`, `profile-${orphan}`, "local"];
+  const sweepFs = () => {
+    const removed: string[] = [];
+    return {
+      removed,
+      readdirSync: () => dirs,
+      rmSync: (p: string) => {
+        removed.push(p);
+      },
+    };
+  };
+  const join = (...parts: string[]) => parts.join("/");
+  const run = (store: Parameters<typeof sweepAfterLoad>[0]) => {
+    const fs = sweepFs();
+    sweepAfterLoad(store, { partitionsDir: "/p", fs, join });
+    return fs.removed;
+  };
+
+  test("a clean load: only the id the file never held is removed; a dropped entry's stays", () => {
+    const file = JSON.stringify({
+      version: 1,
+      lastUsedId: null,
+      profiles: [
+        { id: saved, ...example },
+        // Dropped on read (not normalized), but its partition is not an orphan.
+        { id: dropped, base: "http://10.0.0.5", origin: "http://10.0.0.5", name: "x" },
+      ],
+    });
+    const { store } = setup({ [FILE]: file });
+    expect(store.list().map((p) => p.id)).toEqual([saved]);
+    expect(store.loadReport()).toEqual({ loadedCleanly: true, seenIds: [saved, dropped] });
+    expect(run(store)).toEqual([`/p/profile-${orphan}`]);
+  });
+
+  test("a missing file is clean: every profile partition is an orphan", () => {
+    const { store } = setup();
+    expect(store.loadReport().loadedCleanly).toBe(true);
+    expect(run(store)).toHaveLength(3);
+  });
+
+  test("an unreadable file whose set-aside rename fails: nothing is deleted", () => {
+    const fs = memoryFs();
+    const broken = {
+      ...fs,
+      readFileSync: () => {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      },
+      renameSync: () => {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      },
+    };
+    const store = createProfileStore({
+      file: FILE,
+      fs: broken,
+      sessionFor: () => fakeSession(),
+      newId: () => "x",
+    });
+    expect(store.list()).toEqual([]);
+    expect(store.loadReport().loadedCleanly).toBe(false);
+    expect(run(store)).toEqual([]);
+  });
+
+  test("a corrupt file (set aside): nothing is deleted", () => {
+    const { store, fs } = setup({ [FILE]: "{not json" });
+    expect(fs.files.has(`${FILE}.corrupt`)).toBe(true);
+    expect(run(store)).toEqual([]);
+  });
+
+  test("a profile added after start counts as known", () => {
+    const { store } = setup();
+    const added = store.add({ ...example, id: orphan });
+    expect(store.loadReport().seenIds).toContain(added.id);
   });
 });
