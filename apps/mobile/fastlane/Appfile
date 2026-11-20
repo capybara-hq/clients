@@ -1,4 +1,9 @@
-# The identifiers come from apps/mobile/brand.ts through the environment (the workflow reads them
-# from the generated native files); the defaults are the official ones.
-app_identifier(ENV["CAPYBARA_APP_ID"] || "com.capybarahq.mobile")
-package_name(ENV["CAPYBARA_APP_ID"] || "com.capybarahq.mobile")
+# The identifiers come from apps/mobile/brand.ts: the workflow exports the generated application id
+# as CAPYBARA_APP_ID; locally the generated android/brand.properties is read.
+brand_id = ENV["CAPYBARA_APP_ID"]
+if brand_id.to_s.empty?
+  line = File.readlines(File.expand_path("../android/brand.properties", __dir__)).find { |l| l.start_with?("applicationId=") }
+  brand_id = line.split("=", 2).last.strip
+end
+app_identifier(brand_id)
+package_name(brand_id)

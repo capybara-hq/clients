@@ -79,6 +79,33 @@ describe("the mobile release workflow", () => {
     expect(raw).not.toMatch(/echo[^\n]*\$\{\{\s*secrets\./);
   });
 
+  test("secrets are set only on the steps that need them, never on a job or an action step", () => {
+    for (const job of jobs) {
+      for (const value of Object.values(job.env ?? {})) expect(value).not.toMatch(/secrets\./);
+    }
+    for (const step of steps) {
+      const secretEnv = Object.values(step.env ?? {}).some((v) => /secrets\./.test(v));
+      if (step.uses) expect(secretEnv, String(step.uses)).toBe(false);
+      if (/pnpm install|cap sync|pnpm .*build/.test(step.run ?? "")) expect(secretEnv).toBe(false);
+    }
+    const usingSecrets = steps.filter((s) =>
+      Object.values(s.env ?? {}).some((v) => /secrets\./.test(v)),
+    );
+    expect(usingSecrets.length).toBeGreaterThan(0);
+  });
+
+  test("exports the application id from the generated brand files before building", () => {
+    for (const job of jobs) {
+      const text = stepsOf(job);
+      const idStep = text.findIndex(
+        (t) => t.includes("CAPYBARA_APP_ID") && t.includes("brand.properties"),
+      );
+      const build = text.findIndex((t) => /fastlane (ios|android) /.test(t));
+      expect(idStep).toBeGreaterThanOrEqual(0);
+      expect(build).toBeGreaterThan(idStep);
+    }
+  });
+
   test("jobs read secrets from a deployment environment", () => {
     for (const job of jobs) expect(job.environment).toBe("mobile-release");
   });
@@ -110,6 +137,16 @@ describe("the mobile release workflow", () => {
 });
 
 describe("the fastlane lanes", () => {
+  test("take the application id from the brand and sign through the project settings", async () => {
+    const fastfile = await readFile(`${repo}apps/mobile/fastlane/Fastfile`, "utf8");
+    const appfile = await readFile(`${repo}apps/mobile/fastlane/Appfile`, "utf8");
+    expect(fastfile).not.toContain("com.capybarahq.mobile");
+    expect(appfile).not.toContain("com.capybarahq.mobile");
+    expect(fastfile).toContain("brand.properties");
+    expect(fastfile).toContain("update_code_signing_settings");
+    expect(fastfile).not.toMatch(/xcargs:[^\n]*(CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM)/);
+  });
+
   test("define the three lanes", async () => {
     const fastfile = await readFile(`${repo}apps/mobile/fastlane/Fastfile`, "utf8");
     expect(fastfile).toMatch(/platform :ios/);
