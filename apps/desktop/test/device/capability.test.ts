@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, test, vi } from "vitest";
+import type { DeviceCeilingRequest } from "@capybara-hq/plugin-sdk";
+import { describe, expect, expectTypeOf, test, vi } from "vitest";
 import {
   BUNDLED_DEVICE_PROTOCOL,
   createDeviceAvailability,
@@ -10,6 +11,11 @@ import {
 import { createDeviceCapability } from "../../src/main/device/capability.ts";
 import type { SpawnLike } from "../../src/main/device/cli.ts";
 import type { LiveStatus, RunningOperation } from "../../src/main/device/control.ts";
+import {
+  type CeilingField,
+  type OwnerCeiling,
+  parseCeilingRequest,
+} from "../../src/main/device/machine.ts";
 import { createDeviceTexts } from "../../src/main/device/texts.ts";
 import type { Profile } from "../../src/main/profiles.ts";
 import {
@@ -750,5 +756,13 @@ describe("the program's risk texts", () => {
       ) as unknown as ReturnType<SpawnLike>;
     const texts = createDeviceTexts({ resourcesPath: "/nowhere", spawn: quietSpawn, env: {} });
     await expect(texts()).rejects.toThrow();
+  });
+});
+
+describe("the request shape", () => {
+  test("the shell's ceiling fields are exactly the SDK's DeviceCeilingRequest", () => {
+    expectTypeOf<Partial<OwnerCeiling>>().toEqualTypeOf<DeviceCeilingRequest>();
+    expectTypeOf<keyof DeviceCeilingRequest>().toEqualTypeOf<CeilingField>();
+    expectTypeOf(parseCeilingRequest).returns.toEqualTypeOf<DeviceCeilingRequest | undefined>();
   });
 });

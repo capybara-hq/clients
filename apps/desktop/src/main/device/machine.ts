@@ -1,7 +1,11 @@
 // What this machine is, read from the device program (spec §8: `status --json` and the control
 // socket). Every reader keeps only the fields it names, so whatever else a command prints (the
 // working directory, the connect URL, and never, but even if, a credential) does not travel on.
-import type { KeepAwakeMode, ThisMachineStatus } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceCeilingRequest,
+  KeepAwakeMode,
+  ThisMachineStatus,
+} from "@capybara-hq/plugin-sdk";
 import { normalizeAddress } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
@@ -97,11 +101,11 @@ const isProjectReach = (v: unknown): v is OwnerCeiling["projectReach"] =>
   v === "workspace" || v === "os-user";
 
 /**
- * A `device@1.requestCeiling` input (the SDK's `DeviceCeilingRequest`): at least one known field,
+ * A `device@1.requestCeiling` input (`DeviceCeilingRequest`): at least one known field,
  * each with a valid value, and nothing else (an older page's `{ fullAccess, projectReach }` is
  * refused, never half applied); undefined otherwise.
  */
-export function parseCeilingRequest(v: unknown): Partial<OwnerCeiling> | undefined {
+export function parseCeilingRequest(v: unknown): DeviceCeilingRequest | undefined {
   if (!isRecord(v)) return undefined;
   const keys = Object.keys(v);
   if (keys.length === 0) return undefined;
@@ -110,13 +114,13 @@ export function parseCeilingRequest(v: unknown): Partial<OwnerCeiling> | undefin
   if ("outsideSandbox" in v && typeof outsideSandbox !== "boolean") return undefined;
   if ("network" in v && !isNetwork(network)) return undefined;
   if ("projectReach" in v && !isProjectReach(projectReach)) return undefined;
-  return v as Partial<OwnerCeiling>;
+  return v as DeviceCeilingRequest;
 }
 
 /** Whether `next[field]` allows more than `cur[field]` (an absent field changes nothing). */
 export function widensField(
   cur: OwnerCeiling,
-  next: Partial<OwnerCeiling>,
+  next: DeviceCeilingRequest,
   field: CeilingField,
 ): boolean {
   switch (field) {
@@ -130,7 +134,7 @@ export function widensField(
 }
 
 /** `ceiling set` arguments naming only the requested fields (the program keeps the others). */
-export function ceilingSetArgs(req: Partial<OwnerCeiling>): string[] {
+export function ceilingSetArgs(req: DeviceCeilingRequest): string[] {
   return [
     "ceiling",
     "set",
