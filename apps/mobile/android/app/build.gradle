@@ -25,6 +25,10 @@ android {
     kotlinOptions {
         jvmTarget = "21"
     }
+    // The hostile-page test pages (apps/mobile/testpages/hostile) ship in the test APK's assets.
+    sourceSets {
+        androidTest.assets.srcDirs += ['../../testpages']
+    }
     buildTypes {
         release {
             minifyEnabled false
@@ -45,6 +49,8 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // The profile WebViews' gate: document-start script, web message listener, profiles.
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>done</title></head>
+<body>
+<p>Sequence done.</p>
+<script>
+  fetch(`${location.origin}/report`, { method: "POST", body: JSON.stringify({ doc: "sequence-done" }) })
+    .catch(() => {})
+    .then(() => {
+      document.title = "hostile:done";
+    });
+</script>
+</body>
+</html>

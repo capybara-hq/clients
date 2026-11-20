@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-doc="A-popup">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A-popup</title><script>window.__early = { shellType: typeof window.capybaraShell };</script>
+<style>button { position: fixed; inset: 0; width: 100%; height: 100%; font-size: 32px; }</style>
+</head>
+<body>
+<p>Origin A: window.open, without and with a user gesture.</p>
+<script>
+  // "same-window": the target loads in this WebView (Android, multiple windows off).
+  const describe = (w) => (w === null ? "null" : w === window ? "same-window" : typeof w);
+  window.__extraProbe = (results) =>
+    new Promise((resolve) => {
+      results.popup = { noGesture: describe(window.open("/popup-child.html?via=script")) };
+      const button = document.createElement("button");
+      button.id = "open-popup";
+      button.textContent = "Open popup";
+      button.setAttribute("aria-label", "Open popup");
+      button.addEventListener("click", () => {
+        results.popup.gesture = describe(window.open("/popup-child.html?via=gesture"));
+        results.popup.gestureActivation = navigator.userActivation?.isActive ?? null;
+        button.remove();
+        resolve();
+      });
+      document.body.append(button);
+      fetch("/report", { method: "POST", body: JSON.stringify({ doc: "popup-ready" }) }).catch(() => {});
+    });
+  window.__afterProbe = () => { location.href = "/done.html"; };
+</script>
+<script src="/probe.js"></script>
+</body>
+</html>

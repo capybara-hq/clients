@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en" data-doc="B-navigated">
+<head><meta charset="utf-8"><title>B-navigated</title><script>window.__early = { shellType: typeof window.capybaraShell };</script></head>
+<body>
+<p>Origin B, reached by a top-level link from A.</p>
+<script>window.__afterProbe = () => { location.href = "__ORIGIN_A__/frame-same.html"; };</script>
+<script src="/probe.js"></script>
+</body>
+</html>

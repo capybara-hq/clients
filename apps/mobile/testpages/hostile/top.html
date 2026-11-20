@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en" data-doc="A-top">
+<head><meta charset="utf-8"><title>A-top</title><script>window.__early = { shellType: typeof window.capybaraShell };</script></head>
+<body>
+<p>Origin A, top frame: the profile document.</p>
+<a id="next" href="__ORIGIN_B__/navigated.html">to origin B</a>
+<script>window.__afterProbe = () => document.getElementById("next").click();</script>
+<script src="/probe.js"></script>
+</body>
+</html>

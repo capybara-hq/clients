@@ -21,6 +21,8 @@
   },
   "devDependencies": {
     "@capacitor/cli": "8.6.2",
+    "@capybara-hq/plugin-sdk": "0.1.0-rc.41",
+    "@capybara-hq/shell": "workspace:*",
     "esbuild": "^0.28.2"
   }
 }

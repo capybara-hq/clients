@@ -78,6 +78,12 @@ importers:
       '@capacitor/cli':
         specifier: 8.6.2
         version: 8.6.2
+      '@capybara-hq/plugin-sdk':
+        specifier: 0.1.0-rc.41
+        version: 0.1.0-rc.41
+      '@capybara-hq/shell':
+        specifier: workspace:*
+        version: link:../../packages/shell
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2

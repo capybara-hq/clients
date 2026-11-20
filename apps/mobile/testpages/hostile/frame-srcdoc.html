@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>A-frame-srcdoc outer</title></head>
+<body>
+<p>Origin A, top frame hosting the frame A-frame-srcdoc.</p>
+<script>
+  window.addEventListener("message", (event) => {
+    if (event.data?.gateDone) location.href = "/frame-blank.html";
+  });
+</script>
+<iframe title="probe frame" srcdoc="&lt;script&gt;window.__doc = &quot;A-frame-srcdoc&quot;; window.__early = { shellType: typeof window.capybaraShell };&lt;/script&gt;&lt;script src=&quot;/probe.js&quot;&gt;&lt;/script&gt;"></iframe>
+</body>
+</html>

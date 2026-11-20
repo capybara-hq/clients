@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>A-frame-blank outer</title></head>
+<body>
+<p>Origin A, top frame hosting the frame A-frame-blank.</p>
+<script>
+  window.addEventListener("message", (event) => {
+    if (event.data?.gateDone) location.href = "/csp-sandbox.html";
+  });
+</script>
+<iframe title="probe frame" id="blank"></iframe>
+<script src="/frame-blank.js"></script>
+</body>
+</html>

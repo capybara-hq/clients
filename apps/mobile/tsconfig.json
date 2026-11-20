@@ -6,7 +6,13 @@
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "types": ["node"],
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM"],
+    "resolveJsonModule": true
   },
-  "include": ["brand.ts", "capacitor.config.ts", "src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["brand.ts", "capacitor.config.ts", "src/**/*.ts", "scripts/**/*.ts"],
+  "references": [
+    {
+      "path": "../../packages/shell"
+    }
+  ]
 }
