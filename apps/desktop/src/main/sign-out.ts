@@ -6,8 +6,9 @@
 // (`takeLoggedOut`), not an expiry. The two can arrive in either order: the page's fetch resolves
 // on the response headers and the completion comes with the body, so the navigation may be seen
 // first. A `/login` that was not the end of a sign-out is recorded (`noteLogin`); a completion
-// that follows it within 5 s, or that finds a window of the profile on `/login`, completes the
-// sign-out at once. The shell's own logout POSTs (the menu's, sign-in's revoke of an unwanted
+// that follows it within 5 s, or that finds a window of the profile on `/login` or showing the
+// expired page (`showsLogin`; session-watch.ts stops the navigation and shows that page), completes
+// the sign-out at once. The shell's own logout POSTs (the menu's, sign-in's revoke of an unwanted
 // session) also complete on the partition (`session.fetch` passes through `webRequest`, after
 // its promise resolved); they run inside `suppress` and leave no note. The app menu's entry asks in a shell dialog, posts the logout
 // itself through the partition's fetch and completes whatever the POST answered: a dead session
@@ -26,6 +27,12 @@ import type { FetchLike } from "./sign-in.ts";
 export const LOGGED_OUT_WINDOW_MS = 30_000;
 /** The app menu's logout POST gives up after this long (the sign-out completes anyway). */
 export const LOGOUT_TIMEOUT_MS = 10_000;
+/**
+ * From the unreachable page the host may hang: the POST gives up this soon. (Completing first and
+ * posting afterwards is not done: the POST needs the session cookies, and clearing them after a
+ * late answer could remove the cookies of a sign-in made meanwhile.)
+ */
+export const UNREACHABLE_LOGOUT_TIMEOUT_MS = 2_000;
 /** A completion this soon after a `/login` the web already reached pairs with it. */
 export const LOGIN_PAIR_MS = 5_000;
 /** A suppressed (shell-initiated) logout's completion may arrive this long after its run ended. */
@@ -55,8 +62,11 @@ function parse(url: string): URL | null {
   }
 }
 
-/** `url`'s path below `base` (same origin, under the base path), without a trailing slash. */
-function routeUnder(url: string, base: string): string | null {
+/**
+ * `url`'s path below `base` (same origin, under the base path), without a trailing slash; null
+ * for a URL elsewhere.
+ */
+export function routeUnder(url: string, base: string): string | null {
   const target = parse(url);
   const home = parse(base);
   if (!target || !home || target.origin !== home.origin) return null;
@@ -108,10 +118,9 @@ export interface NavigationContents {
  * that cannot be stopped). One navigation may be reported more than once (stopped or not), so
  * `onLogin` must be idempotent; `takeLoggedOut` is, being true once.
  *
- * K9 takes this over for the expired page: it passes its own `onLogin` (the session-watch
- * decision) instead of `signOutOnLogin`, and calls `signOut.takeLoggedOut` / `complete` from it,
- * and `signOut.noteLogin` for a `/login` that was not the end of a sign-out (so a completion that
- * arrives after it still ends the sign-out).
+ * The decision is session-watch.ts's: `signOut.takeLoggedOut` / `complete` for the end of a
+ * sign-out, else `signOut.noteLogin` (so a completion that arrives after it still ends the
+ * sign-out) and the expired page.
  */
 export function watchLoginNavigations(
   contents: NavigationContents,
@@ -140,25 +149,6 @@ export function watchLoginNavigations(
   contents.on("did-navigate-in-page", committed("did-navigate-in-page"));
 }
 
-/**
- * The decision until K9 adds the expired page: a `/login` right after a logout ends the sign-out
- * (the navigation is stopped where it can be; the window closes anyway); any other `/login` is
- * left to the web for now.
- */
-export function signOutOnLogin(
-  signOut: Pick<SignOut, "takeLoggedOut" | "complete" | "noteLogin">,
-  profileId: string,
-): (nav: LoginNavigation) => void {
-  return (nav) => {
-    if (!signOut.takeLoggedOut(profileId)) {
-      signOut.noteLogin(profileId);
-      return;
-    }
-    nav.stop();
-    void signOut.complete(profileId);
-  };
-}
-
 export interface SignOutDeps {
   /** The profile as stored now; undefined once removed. */
   getProfile(id: string): Profile | undefined;
@@ -170,7 +160,10 @@ export interface SignOutDeps {
   closeProfileWindows(id: string): void;
   /** Whether a main window of the profile is open (absent: assumed). */
   hasProfileWindows?(id: string): boolean;
-  /** Whether a main window of the profile shows its `/login` now (absent: never). */
+  /**
+   * Whether a main window of the profile shows its `/login` now, or the expired page that replaced
+   * it (absent: never).
+   */
   showsLogin?(id: string): boolean;
   /** Board `SignOut` in a shell dialog: true only for 退出登录. */
   confirm(profile: Profile): Promise<boolean>;
@@ -209,8 +202,18 @@ export interface SignOut {
   takeLoggedOut(profileId: string): boolean;
   /** Marks signed out, closes the main windows, shows the signed-out small window. */
   complete(profileId: string): Promise<void>;
-  /** The 「平台」 menu entry: shell dialog, then logout POST, then complete. */
-  confirmAndSignOut(profileId: string): Promise<void>;
+  /**
+   * The 「平台」 menu entry: shell dialog, then logout POST, then complete. `unreachable` (from the
+   * unreachable page): the POST gives up after 2 s.
+   */
+  confirmAndSignOut(profileId: string, o?: { unreachable?: boolean }): Promise<void>;
+  /**
+   * Signs out without asking (the expired page's 退出登录, spec §6.8): a best-effort logout POST
+   * (suppressed, the usual timeout) in case the session still lives, the session cookies cleared,
+   * then complete. A profile that is not signed in any more only completes (its windows close,
+   * the signed-out page shows).
+   */
+  signOutNow(profileId: string, o?: { unreachable?: boolean }): Promise<void>;
 }
 
 export function createSignOut(deps: SignOutDeps): SignOut {
@@ -244,14 +247,14 @@ export function createSignOut(deps: SignOutDeps): SignOut {
     return true;
   }
 
-  async function postLogout(profile: Profile): Promise<void> {
+  async function postLogout(profile: Profile, ms: number): Promise<void> {
     try {
       const res = await deps.fetchFor(profile)(`${profile.base}${LOGOUT_ROUTE}`, {
         method: "POST",
         headers: { "X-Capybara-Csrf": "1" },
         credentials: "include",
         redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(ms),
       });
       if (!res.ok) log(`the logout answered ${res.status}; signing out locally`);
     } catch (err) {
@@ -324,7 +327,7 @@ export function createSignOut(deps: SignOutDeps): SignOut {
       deps.onSignedOut?.(updated);
     },
 
-    async confirmAndSignOut(profileId) {
+    async confirmAndSignOut(profileId, o) {
       const profile = deps.getProfile(profileId);
       if (!profile?.signedIn) return;
       // A menu click is a user action in the app's own UI: the activation is given.
@@ -341,13 +344,21 @@ export function createSignOut(deps: SignOutDeps): SignOut {
         deps.gate?.release(profileId);
       }
       if (!confirmed) return;
+      if (!deps.getProfile(profileId)?.signedIn) return;
+      await signOut.signOutNow(profileId, o);
+    },
+
+    async signOutNow(profileId, o) {
       const current = deps.getProfile(profileId);
-      if (!current?.signedIn) return;
-      await signOut.suppress(profileId, () => postLogout(current));
-      try {
-        await deps.clearSessionCookies(current);
-      } catch (err) {
-        log("could not clear the session cookies", err);
+      if (!current) return;
+      if (current.signedIn) {
+        const ms = o?.unreachable ? Math.min(timeoutMs, UNREACHABLE_LOGOUT_TIMEOUT_MS) : timeoutMs;
+        await signOut.suppress(profileId, () => postLogout(current, ms));
+        try {
+          await deps.clearSessionCookies(current);
+        } catch (err) {
+          log("could not clear the session cookies", err);
+        }
       }
       await signOut.complete(profileId);
     },
