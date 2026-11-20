@@ -26,6 +26,8 @@ export interface CapybaraHostPlugin {
     event: string;
     payload: unknown;
   }): Promise<void>;
+  /** `UIApplication.open` / `ACTION_VIEW`; rejects when nothing can open the URL. */
+  openExternal(options: { url: string }): Promise<void>;
 }
 
 export const HOST_PLUGIN_NAME = "CapybaraHost";

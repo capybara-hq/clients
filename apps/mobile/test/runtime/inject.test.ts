@@ -452,6 +452,7 @@ describe("the host hop end to end", () => {
         flush();
       },
       event: async () => {},
+      openExternal: async () => {},
     };
     const handler = {
       postMessage: (raw: unknown) => {
