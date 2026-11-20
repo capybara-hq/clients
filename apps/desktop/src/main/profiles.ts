@@ -2,6 +2,7 @@
 // userData with atomic writes; a corrupt file reads as empty and never stops the app.
 import { dirname } from "node:path";
 import { normalizeAddress } from "@capybara-hq/shell";
+import { type Appearance, validAppearance } from "../shared/appearance.ts";
 
 export interface Profile {
   id: string;
@@ -18,7 +19,7 @@ export interface Profile {
   account?: { name: string; login: string };
   /** The main window's last rectangle. */
   bounds?: ProfileBounds;
-  appearance?: ProfileAppearance;
+  appearance?: Appearance;
 }
 
 export interface ProfileBounds {
@@ -28,27 +29,19 @@ export interface ProfileBounds {
   height: number;
 }
 
-export interface ProfileTokens {
-  bg: string;
-  panel: string;
-  ink: string;
-  muted: string;
-  line: string;
-  accent: string;
-  onAccent: string;
-}
-
-/** Structurally the same as `Appearance` in appearance.ts; unify when both have landed. */
-export interface ProfileAppearance {
-  scheme: "light" | "dark";
-  tokens?: ProfileTokens;
-  singleScheme?: boolean;
-}
-
 export type NewProfile = Omit<Profile, "id" | "signedIn"> & { signedIn?: boolean };
-export type ProfilePatch = {
-  [K in keyof Omit<Profile, "id" | "base" | "origin">]?: Profile[K] | undefined;
-};
+/**
+ * `undefined` deletes an optional field (iconHash, account, bounds, appearance); for `name` and
+ * `signedIn` it means no change.
+ */
+export interface ProfilePatch {
+  name?: string;
+  signedIn?: boolean;
+  iconHash?: string | undefined;
+  account?: { name: string; login: string } | undefined;
+  bounds?: ProfileBounds | undefined;
+  appearance?: Appearance | undefined;
+}
 
 export interface ProfileFs {
   readFileSync(path: string, encoding: "utf8"): string;
@@ -79,7 +72,7 @@ export interface ProfileStore {
   get(id: string): Profile | undefined;
   /** Adds a profile; the same `base` again returns the existing one. */
   add(input: NewProfile): Profile;
-  /** Merges `patch` (a key set to undefined is removed) and saves; undefined for an unknown id. */
+  /** Merges `patch` (undefined removes an optional field) and saves; undefined for an unknown id. */
   update(id: string, patch: ProfilePatch): Profile | undefined;
   /**
    * Clears the profile's partition, then forgets it. The caller asks first and closes the
@@ -97,6 +90,7 @@ interface StoreFile {
   lastUsedId: string | null;
 }
 
+const OPTIONAL_FIELDS: readonly string[] = ["iconHash", "account", "bounds", "appearance"];
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function partitionFor(id: string): string {
@@ -105,28 +99,6 @@ export function partitionFor(id: string): string {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-const TOKEN_KEYS = ["bg", "panel", "ink", "muted", "line", "accent", "onAccent"] as const;
-
-function parseAppearance(v: unknown): ProfileAppearance | undefined {
-  if (!isRecord(v) || (v.scheme !== "light" && v.scheme !== "dark")) return undefined;
-  const out: ProfileAppearance = { scheme: v.scheme };
-  if (v.tokens !== undefined) {
-    if (!isRecord(v.tokens)) return undefined;
-    const t = {} as Record<string, string>;
-    for (const k of TOKEN_KEYS) {
-      const c = v.tokens[k];
-      if (typeof c !== "string" || c === "") return undefined;
-      t[k] = c;
-    }
-    out.tokens = t as unknown as ProfileTokens;
-  }
-  if (v.singleScheme !== undefined) {
-    if (typeof v.singleScheme !== "boolean") return undefined;
-    out.singleScheme = v.singleScheme;
-  }
-  return out;
 }
 
 function parseBounds(v: unknown): ProfileBounds | undefined {
@@ -156,7 +128,7 @@ function parseProfile(v: unknown): Profile | null {
   // Malformed optional fields are dropped, not fatal.
   const account = parseAccount(v.account);
   const bounds = parseBounds(v.bounds);
-  const appearance = parseAppearance(v.appearance);
+  const appearance = validAppearance(v.appearance);
   return {
     id,
     base,
@@ -258,8 +230,11 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
     update(id, patch) {
       const i = state.profiles.findIndex((p) => p.id === id);
       if (i < 0) return undefined;
-      const merged: Record<string, unknown> = { ...state.profiles[i], ...patch };
-      for (const k of Object.keys(merged)) if (merged[k] === undefined) delete merged[k];
+      const merged: Record<string, unknown> = { ...state.profiles[i] };
+      for (const [k, v] of Object.entries(patch)) {
+        if (v !== undefined) merged[k] = v;
+        else if (OPTIONAL_FIELDS.includes(k)) delete merged[k];
+      }
       // Identity fields are never patched, whatever the caller passes.
       const { id: _i, base, origin } = state.profiles[i] as Profile;
       const next = { ...merged, id, base, origin } as unknown as Profile;

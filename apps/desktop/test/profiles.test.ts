@@ -188,9 +188,36 @@ describe("profile fields", () => {
       appearance: { scheme: "blue" },
     });
     expect(p).toEqual({ id: "a", ...example, signedIn: true });
-    expect(read({ appearance: { scheme: "light", tokens: { bg: "#fff" } } })?.appearance).toBe(
-      undefined,
-    );
+    // Malformed tokens drop only the tokens: the scheme stays.
+    expect(read({ appearance: { scheme: "light", tokens: { bg: "#fff" } } })?.appearance).toEqual({
+      scheme: "light",
+    });
+    expect(
+      read({ appearance: { scheme: "dark", tokens: { bg: "red", panel: "#111" } } })?.appearance,
+    ).toEqual({ scheme: "dark" });
+  });
+
+  test("update: undefined deletes optional fields only", () => {
+    const { store } = setup();
+    const a = store.add({
+      ...example,
+      iconHash: "h",
+      bounds: { x: 1, y: 2, width: 3, height: 4 },
+      appearance: { scheme: "dark" },
+    });
+    store.update(a.id, { signedIn: true });
+    const u = store.update(a.id, {
+      // The type disallows undefined for these; at runtime it still means no change.
+      ...({ name: undefined, signedIn: undefined } as object),
+      iconHash: undefined,
+      bounds: undefined,
+      appearance: undefined,
+    });
+    expect(u?.name).toBe(example.name);
+    expect(u?.signedIn).toBe(true);
+    expect(u).not.toHaveProperty("iconHash");
+    expect(u).not.toHaveProperty("bounds");
+    expect(u).not.toHaveProperty("appearance");
   });
 
   test("update merges, removes undefined keys, ignores identity and persists", () => {
