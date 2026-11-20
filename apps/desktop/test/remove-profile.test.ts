@@ -157,3 +157,13 @@ describe("removing a platform (spec 6.3)", () => {
     expect(gate.isConfirmingCallAllowed("p1", true)).toBe("ok");
   });
 });
+
+describe("the removal dialog's language (spec 12)", () => {
+  test("the profile's own language, not the app's", async () => {
+    const { removal, boxes } = setup({
+      locale: (profileId) => (profileId === "p1" ? "en" : "zh"),
+    });
+    await removal.remove("p1");
+    expect(boxes[0]?.options.buttons).toEqual(["Cancel", "Remove"]);
+  });
+});

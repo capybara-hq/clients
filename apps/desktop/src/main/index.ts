@@ -31,13 +31,7 @@ import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
 import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
 import { appMenuTemplate, createStartAtLogin } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
-import {
-  BUILTIN_TOKENS,
-  backgroundOf,
-  electronColor,
-  overlayColors,
-  resolveAppearance,
-} from "./appearance.ts";
+import { backgroundOf, overlayColors, resolveAppearance } from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -77,7 +71,12 @@ import {
   readManagedConfig,
 } from "./managed.ts";
 import { createOnboarding, type OnboardingWindow, platformName } from "./onboarding.ts";
-import { type CookieJarLike, createPreferences, installPreferenceActions } from "./preferences.ts";
+import {
+  type CookieJarLike,
+  createPreferences,
+  installPreferenceActions,
+  provisionalToFollow,
+} from "./preferences.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
 import { hardenAnyContents, installDenyAllPermissions, LOCAL_PARTITION } from "./security.ts";
@@ -313,6 +312,7 @@ function start(): void {
           profiles.update(profile.id, { appearance });
           preferencesChanged();
         },
+        stored: (id) => profiles.get(id)?.appearance,
       }),
     );
     /** The profile partition's own fetch (its cookie jar, its webRequest listeners). */
@@ -379,10 +379,6 @@ function start(): void {
         version: shellVersion,
       }),
       workArea: () => screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
-      backgroundColor: (profileId) => {
-        const a = appearanceOf(profileId === undefined ? undefined : { id: profileId });
-        return electronColor(a.tokens?.panel) ?? BUILTIN_TOKENS[a.scheme].panel;
-      },
       log: (message, err) => console.error(message, err ?? ""),
     });
     const showDialog = shellDialogs.show;
@@ -394,9 +390,9 @@ function start(): void {
       dialogs: createDeviceDialogs({
         showDialog,
         iconFor,
-        get locale() {
-          return menuLocale();
-        },
+        // Each dialog in the language of the profile it is about; none: the menus' language.
+        locale: (profileId) =>
+          profileId === undefined ? menuLocale() : localeOf({ id: profileId }),
         platform: process.platform,
       }),
       texts: createDeviceTexts({
@@ -473,7 +469,8 @@ function start(): void {
           ...(provisional.iconHash ? { iconHash: provisional.iconHash } : {}),
         });
         const saved = profiles.update(added.id, { signedIn: true, account }) ?? added;
-        void prefs.seed(saved).finally(() => prefs.watch(saved));
+        // Its pages were app level until now: the app's choices win in its partition.
+        void prefs.seed(saved, { overwrite: true }).finally(() => prefs.watch(saved));
         ui.profilesChanged();
         trayDevice.refresh();
         return saved;
@@ -561,17 +558,17 @@ function start(): void {
       dialogParent: (id) => windows.dialogParent(id),
       showDialog,
       iconFor,
-      get locale() {
-        return menuLocale();
-      },
+      // The removal dialog speaks the language of the profile it removes (spec §12).
+      locale: (profileId) => localeOf({ id: profileId }),
       beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
       closeProfileWindows: (id) => {
         windows.closeProfileWindows(id);
         onboarding.profileRemoved(id);
       },
       removeProfile: async (id) => {
-        await profiles.remove(id);
+        // First: the partition's clearing must not put a cache entry back.
         prefs.forget(id);
+        await profiles.remove(id);
       },
       forgetAvailability: (id) => deviceAvailability.forget(id),
       onRemoved: () => {
@@ -716,10 +713,8 @@ function start(): void {
     // The local pages' theme and language toggles (spec §6.10): the page's profile, else the app
     // level. A provisional profile's pages are app level; its partition follows the app's choice.
     const reseedProvisional = async () => {
-      const current = onboarding.current();
-      if (current?.provisional && begun && current.profileId === begun.id) {
-        await prefs.seed(begun, { overwrite: true });
-      }
+      const follower = provisionalToFollow(onboarding.current(), begun);
+      if (follower) await prefs.seed(follower, { overwrite: true });
     };
     installPreferenceActions({
       localPages,

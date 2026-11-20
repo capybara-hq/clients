@@ -2,6 +2,8 @@
 // is the web's own `cb-theme` cookie in the profile's partition; the last chrome@1 report carries
 // the platform's colors (and whether its theme has one scheme only); before any profile the OS
 // decides. The cookie reads and writes are preferences.ts; this module only resolves.
+
+import type { Tokens } from "../shared/appearance.ts";
 import {
   type Appearance,
   BUILTIN_TOKENS,
@@ -69,4 +71,24 @@ export function overlayColors(appearance: Appearance): { color: string; symbolCo
     color: electronColor(tokens.bg) ?? BUILTIN_TOKENS[appearance.scheme].bg,
     symbolColor: electronColor(tokens.muted) ?? BUILTIN_TOKENS[appearance.scheme].muted,
   };
+}
+
+/** A color with no transparency: hex, `rgb()`, or `rgba()` whose alpha is 1. */
+export function isOpaque(color: string): boolean {
+  if (!color.startsWith("rgba(")) return isColorValue(color);
+  if (!isColorValue(color)) return false;
+  const alpha = Number(color.slice(color.lastIndexOf(",") + 1, -1).trim());
+  return alpha === 1;
+}
+
+/** Whether two appearances say the same (scheme, every token, singleScheme). */
+export function sameAppearance(a: Appearance | undefined, b: Appearance | undefined): boolean {
+  if (!a || !b) return a === b;
+  if (a.scheme !== b.scheme || (a.singleScheme === true) !== (b.singleScheme === true)) {
+    return false;
+  }
+  if (!a.tokens || !b.tokens) return a.tokens === b.tokens;
+  const ta = a.tokens;
+  const tb = b.tokens;
+  return (Object.keys(ta) as (keyof Tokens)[]).every((k) => ta[k] === tb[k]);
 }
