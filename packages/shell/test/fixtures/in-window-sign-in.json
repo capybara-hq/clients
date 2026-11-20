@@ -467,5 +467,125 @@
     "url": "https://capybara.example.com/team/api/v1/auth/login/x/..%2f",
     "base": "https://capybara.example.com/team",
     "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my%20app/api/v1/auth/login",
+    "base": "https://x.example.com/my%20app",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/my%20app/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/my%20app",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/api/v1/auth/login",
+    "base": "https://x.example.com/my%20app",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my-app/api/v1/auth/login",
+    "base": "https://x.example.com/my-app",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/my-app/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/my-app",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/api/v1/auth/login",
+    "base": "https://x.example.com/my-app",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/团队/api/v1/auth/login",
+    "base": "https://x.example.com/团队",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/团队/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/团队",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/api/v1/auth/login",
+    "base": "https://x.example.com/团队",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/a_b.c~d/api/v1/auth/login",
+    "base": "https://x.example.com/a_b.c~d",
+    "blocked": true
+  },
+  {
+    "method": "GET",
+    "url": "https://x.example.com/a_b.c~d/api/v1/auth/sso/lark/start",
+    "base": "https://x.example.com/a_b.c~d",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/api/v1/auth/login",
+    "base": "https://x.example.com/a_b.c~d",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my%2Dapp/api/v1/auth/login",
+    "base": "https://x.example.com/my-app",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my%2dapp/api/v1/auth/login",
+    "base": "https://x.example.com/my-app",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my-app/api/v1/auth/login",
+    "base": "https://x.example.com/my%2Dapp",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/%E5%9B%A2%E9%98%9F/api/v1/auth/login",
+    "base": "https://x.example.com/团队",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/%e5%9b%a2%e9%98%9f/api/v1/auth/login",
+    "base": "https://x.example.com/团队",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my app/api/v1/auth/login",
+    "base": "https://x.example.com/my%20app",
+    "blocked": true
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/my%20apps/api/v1/auth/login",
+    "base": "https://x.example.com/my%20app",
+    "blocked": false
+  },
+  {
+    "method": "POST",
+    "url": "https://x.example.com/%E5%9B%A2/api/v1/auth/login",
+    "base": "https://x.example.com/团队",
+    "blocked": false
   }
 ]

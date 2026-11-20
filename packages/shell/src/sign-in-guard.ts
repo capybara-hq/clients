@@ -71,40 +71,57 @@ export function isInWindowSignIn(method: string, url: string, base: string): boo
 //  - each letter or digit of a path word (the base path segments and the route) is the character
 //    or its `%xx` escape: `[l%][46]?c?` (the two hex digits are optional, which also accepts a few
 //    look-alikes such as `l6c`: block when in doubt);
-//  - a pop pair `x<SEP>..` with an escaped dot or slash the engine could not resolve (`POP`),
-//    allowed after the host and after every word, nowhere else: the words stay adjacent, so
-//    `/api/v1/auth/refresh/login` is not the login route (as in `isInWindowSignIn`).
+//  - an escaped dot segment the engine cannot resolve (`..%2f`, `%2e%2e%2f`, `%2f..`): a separate
+//    rule blocks every URL of the origin that holds one (`DOTS`), whatever its route, because
+//    the words of the route rules stay adjacent (`/api/v1/auth/refresh/login` is not the login
+//    route, as in `isInWindowSignIn`). No real request carries one.
+// WebKit compiles the rules to automata: nested quantified groups and repeated optional parts
+// made the compile of a three-segment base never finish (scripts/compile-rules.swift), so a
+// rule has no nested groups and no optional part but the escape digits.
 // Deliberate non-goals, on all three platforms: a double-encoded `%25xx` (the server never
 // decodes twice), and an escaped `x` in a pop pair.
 
 const SEP = "([/%]5?c?2?f?)";
 const NOT_QS = "[^?#]";
-const POP = `(${SEP}+[^?#/%]+${SEP}+[.%]2?e?[.%]2?e?)*`;
+const DOTS = "[.%]2?e?[.%]2?e?";
 
 function escapeLiteral(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** `login` -> `[l%]6?c?[o%]6?f?...`: each letter or digit, or `%` and its two hex digits. */
+/** ASCII characters a URL keeps literal; any other character appears only as `%XX` bytes. */
+const LITERAL_OK = /[-._~]/;
+
+/**
+ * `login` -> `[l%][46]?c?...`: each letter or digit, or `%` and its two hex digits. Other
+ * characters of a base segment are their literal when a URL may keep it (`-._~`) or else only the
+ * UTF-8 `%XX` bytes the WebView keeps (a space, a CJK character): every rule stays ASCII.
+ */
 function word(text: string): string {
   let out = "";
   for (const ch of text.toLowerCase()) {
-    if (!/[a-z0-9]/.test(ch)) {
-      out += escapeLiteral(ch);
+    if (/[a-z0-9]/.test(ch)) {
+      const hex = ch.charCodeAt(0).toString(16);
+      // An upper-case escape (`%54` for `t`) has the high digit 4 / 5 where the lower case has 6 / 7.
+      const hi = /[a-o]/.test(ch) ? "[46]" : /[p-z]/.test(ch) ? "[57]" : "3";
+      out += `[${ch}%]${hi}?${hex.charAt(1)}?`;
       continue;
     }
-    const hex = ch.charCodeAt(0).toString(16);
-    // The character itself, or `%`, then the high digit, then the low digit, each optional.
-    // An upper-case escape (`%54` for `t`) has the high digit 4 / 5 where the lower case has 6 / 7.
-    const hi = /[a-o]/.test(ch) ? "[46]" : /[p-z]/.test(ch) ? "[57]" : "3";
-    out += `[${ch}%]${hi}?${hex.charAt(1)}?`;
+    const bytes = [...new TextEncoder().encode(ch)];
+    if (bytes.length === 1 && LITERAL_OK.test(ch)) {
+      // `-` is last in the class, so it is a literal.
+      const hex = (bytes[0] as number).toString(16).padStart(2, "0");
+      out += `[%${ch}]${hex.charAt(0)}?${hex.charAt(1)}?`;
+      continue;
+    }
+    for (const byte of bytes) out += `%${byte.toString(16).padStart(2, "0")}`;
   }
   return out;
 }
 
-/** The path words of the rules: `SEP+ word POP` per segment. */
+/** The path words of the rules: `SEP+ word` per segment. */
 function words(segments: string[]): string {
-  return segments.map((seg) => `${SEP}+${word(seg)}${POP}`).join("");
+  return segments.map((seg) => `${SEP}+${word(seg)}`).join("");
 }
 
 /**
@@ -119,14 +136,16 @@ export function signInBlockRules(
   const home = parse(base);
   if (!home || (home.protocol !== "https:" && home.protocol !== "http:")) return [];
   const prefix = canonicalPath(home.pathname).split("/").filter(Boolean);
-  const head = `^${escapeLiteral(home.protocol)}//([^/@]*@)?${escapeLiteral(home.host)}${POP}${words([...prefix, "api", "v1", "auth"])}`;
+  const origin = `^${escapeLiteral(home.protocol)}//([^/@]*@)?${escapeLiteral(home.host)}`;
+  const head = `${origin}${words([...prefix, "api", "v1", "auth"])}`;
   const login = `${head}${words(["login"])}${SEP}*`;
-  const ssoStart = `${head}${words(["sso"])}${SEP}+[^?#/%]${NOT_QS}*${SEP}+${word("start")}${POP}${SEP}*`;
+  const ssoStart = `${head}${words(["sso"])}${SEP}+[^?#/%]${NOT_QS}*${SEP}+${word("start")}${SEP}*`;
   // `$` and `[?#]` are the two ends: no alternation, so one rule each.
-  return [login, ssoStart].flatMap((filter) =>
-    [`${filter}$`, `${filter}[?#]`].map((f) => ({
-      trigger: { "url-filter": f },
-      action: { type: "block" as const },
-    })),
-  );
+  const routes = [login, ssoStart].flatMap((filter) => [`${filter}$`, `${filter}[?#]`]);
+  // An escaped dot segment next to an escaped slash, anywhere on the origin: `..%2f`, `%2f..`.
+  const dots = [`${origin}${NOT_QS}*${DOTS}%[25][fc]`, `${origin}${NOT_QS}*%[25][fc]${DOTS}`];
+  return [...routes, ...dots].map((f) => ({
+    trigger: { "url-filter": f },
+    action: { type: "block" as const },
+  }));
 }

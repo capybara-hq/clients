@@ -53,6 +53,14 @@ describe("signInBlockRules: the WebKit content-blocker emulation", () => {
         const f = rule.trigger["url-filter"];
         expect(rule.action).toEqual({ type: "block" });
         expect(Object.keys(rule.trigger)).toEqual(["url-filter"]);
+        let depth = 0;
+        let deepest = 0;
+        for (const ch of f.replace(/\\./g, "")) {
+          if (ch === "(") deepest = Math.max(deepest, ++depth);
+          if (ch === ")") depth -= 1;
+        }
+        expect(deepest, "groups never nest").toBeLessThanOrEqual(1);
+        expect(f, "ASCII only").toMatch(/^[\x20-\x7e]*$/);
         expect(f.startsWith("^https://") || f.startsWith("^http://")).toBe(true);
         expect(f, "no alternation").not.toMatch(/(^|[^\\])\|/);
         expect(f, "no counted repetition").not.toMatch(/(^|[^\\])\{/);
