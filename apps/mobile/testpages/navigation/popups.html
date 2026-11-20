@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Task 16 fix round 1 (R14): every new window goes to the browser sheet, whatever its origin.
+     Thirds: a target=_blank link to origin B shaped as an OAuth authorization URL, a target=_blank
+     link on origin A, and window.open on origin A (a user gesture). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body { margin: 0; height: 100%; }
+      .t { position: fixed; left: 0; width: 100%; height: 33.3%; display: flex; align-items: center;
+           justify-content: center; font: 24px system-ui; color: #000; text-decoration: none; }
+      #oauth { top: 0; background: #fde; }
+      #same { top: 33.3%; background: #dfe; }
+      #open { top: 66.6%; background: #def; border: 0; }
+    </style>
+  </head>
+  <body>
+    <a class="t" id="oauth" target="_blank"
+       href="__ORIGIN_B__/foreign.html?via=oauth&amp;response_type=code&amp;client_id=c&amp;state=s&amp;redirect_uri=__ORIGIN_A__%2Fcb">OAuth link</a>
+    <a class="t" id="same" target="_blank" href="/foreign.html?via=same-blank">Same-origin link</a>
+    <button class="t" id="open" type="button">Same-origin window</button>
+    <script>
+      document.getElementById("open").addEventListener("click", () => {
+        window.open("/foreign.html?via=same-open");
+      });
+      fetch("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: "popups-ready", results: {} }),
+      });
+    </script>
+  </body>
+</html>

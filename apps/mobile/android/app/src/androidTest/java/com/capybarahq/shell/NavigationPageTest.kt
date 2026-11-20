@@ -1,7 +1,8 @@
-// Task 16 / R14 on a device: a profile page that leaves its origin through window.open (a user
-// gesture), a target=_blank link or a server 302 to another origin. Each URL must reach the
-// browser sheet hook, origin B must never be requested by the profile WebView, and the WebView
-// stays on its page. The pages are apps/mobile/testpages/navigation, served on loopback by the test.
+// Task 16 / R14 on a device, against apps/mobile/testpages/navigation served on loopback by the
+// test. Leaving the origin (window.open, a target=_blank link, a server 302) reaches the browser
+// sheet hook and origin B is never requested; every new window goes to the sheet whatever its
+// origin (fix round 1, I1); main-frame loads shouldOverrideUrlLoading never sees (a form POST, a
+// step back into an off-origin entry) meet the backstop (I3).
 
 package com.capybarahq.shell
 
@@ -23,11 +24,40 @@ import java.util.concurrent.TimeUnit
 class NavigationPageTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    @Test
-    fun leavingTheOriginGoesToTheSheetAndNeverLoadsHere() {
+    private class Harness(
+        val server: HostileServer,
+        val scenario: ActivityScenario<MainActivity>,
+        val view: ProfileWebView,
+        val sheets: LinkedBlockingQueue<String>,
+        val events: LinkedBlockingQueue<Map<String, Any?>>,
+    ) {
+        /** Every event seen, for failure messages. */
+        val seen = java.util.Collections.synchronizedList(ArrayList<Map<String, Any?>>())
+
+        fun url(): String? {
+            var current: String? = null
+            scenario.onActivity { current = view.url }
+            return current
+        }
+
+        /** Waits for a gate event matching `match`; null on timeout. */
+        fun awaitEvent(timeoutMs: Long = 30_000, match: (Map<String, Any?>) -> Boolean): Map<String, Any?>? {
+            val deadline = SystemClock.uptimeMillis() + timeoutMs
+            while (true) {
+                val left = deadline - SystemClock.uptimeMillis()
+                if (left <= 0) return null
+                val e = events.poll(left, TimeUnit.MILLISECONDS) ?: return null
+                seen.add(e)
+                if (match(e)) return e
+            }
+        }
+    }
+
+    private fun run(page: String, base: String? = null, block: (Harness) -> Unit) {
         HostileServer(instrumentation.context.assets, "navigation").use { server ->
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val sheets = LinkedBlockingQueue<String>()
+                val events = LinkedBlockingQueue<Map<String, Any?>>()
                 var view: ProfileWebView? = null
                 scenario.onActivity { activity ->
                     val script = ProfileWebView.bundledScript(activity) ?: error("no shell script")
@@ -36,40 +66,107 @@ class NavigationPageTest {
                         .put("capabilities", JSONObject())
                         .put("events", JSONObject())
                     val result = ProfileWebView.create(
-                        activity, "nav", server.originA, "navigation-test", "0.0.0-test", state, script,
+                        activity, "nav", server.originA, "navigation-${page.substringBefore('.')}", "0.0.0-test", state, script,
+                        base = base?.let { "${server.originA}$it" } ?: server.originA,
                     )
                     val v = (result as? ProfileWebView.Result.Ready)?.view ?: error("not created: $result")
                     v.onSheet = { sheets.add(it) }
+                    v.monitor = ProfileWebView.Monitor { _, e -> events.add(e) }
                     activity.addContentView(
                         v,
                         ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
                     )
-                    v.loadUrl("${server.originA}/nav.html")
+                    v.loadUrl("${server.originA}/$page")
                     view = v
                 }
-                assertTrue("page never ready: ${server.requests()}", server.await("nav-ready", 120))
-
-                // Top third: window.open; middle: target=_blank; bottom: a link answered with a 302.
-                val expected = listOf(
-                    1f / 6 to "${server.originB}/foreign.html?via=open",
-                    3f / 6 to "${server.originB}/foreign.html?via=blank",
-                    5f / 6 to "${server.originB}/redirected.html",
-                )
-                for ((fraction, url) in expected) {
-                    tap(view!!, fraction)
-                    assertEquals(url, sheets.poll(30, TimeUnit.SECONDS))
+                try {
+                    block(Harness(server, scenario, view!!, sheets, events))
+                } finally {
+                    scenario.onActivity { view?.destroy() }
                 }
-
-                var current: String? = null
-                scenario.onActivity { current = view?.url }
-                assertEquals("${server.originA}/nav.html", current)
-                val foreign = server.requests().filter { it.startsWith("localhost") }
-                assertEquals("origin B was requested by the profile WebView", emptyList<String>(), foreign)
-                assertTrue(server.requests().any { it.endsWith(" /redirect") })
-                scenario.onActivity { view?.destroy() }
             }
         }
     }
+
+    @Test
+    fun leavingTheOriginGoesToTheSheetAndNeverLoadsHere() = run("nav.html") { h ->
+        assertTrue("page never ready: ${h.server.requests()}", h.server.await("nav-ready", 120))
+        // Top third: window.open (wrapped, a gated post); middle: target=_blank (onCreateWindow);
+        // bottom: a same-window link answered with a 302 to origin B.
+        val expected = listOf(
+            1f / 6 to "${h.server.originB}/foreign.html?via=open",
+            3f / 6 to "${h.server.originB}/foreign.html?via=blank",
+            5f / 6 to "${h.server.originB}/redirected.html",
+        )
+        for ((fraction, url) in expected) {
+            tap(h.view, fraction)
+            assertEquals(url, h.sheets.poll(30, TimeUnit.SECONDS))
+        }
+        assertEquals("${h.server.originA}/nav.html", h.url())
+        assertEquals("origin B was requested", emptyList<String>(), h.server.requests().filter { it.startsWith("localhost") })
+        assertTrue(h.server.requests().any { it.endsWith(" /redirect") })
+    }
+
+    @Test
+    fun everyNewWindowGoesToTheSheetWhateverItsOrigin() = run("popups.html") { h ->
+        assertTrue("page never ready: ${h.server.requests()}", h.server.await("popups-ready", 120))
+        val a = h.server.originA
+        val b = h.server.originB
+        val expected = listOf(
+            // An OAuth-shaped target=_blank link must not leave in place (I1).
+            1f / 6 to "$b/foreign.html?via=oauth&response_type=code&client_id=c&state=s&redirect_uri=$a%2Fcb",
+            3f / 6 to "$a/foreign.html?via=same-blank",
+            5f / 6 to "$a/foreign.html?via=same-open",
+        )
+        for ((fraction, url) in expected) {
+            tap(h.view, fraction)
+            assertEquals(url, h.sheets.poll(30, TimeUnit.SECONDS))
+        }
+        assertEquals("$a/popups.html", h.url())
+        val requested = h.server.requests()
+        assertEquals("origin B was requested", emptyList<String>(), requested.filter { it.startsWith("localhost") })
+        assertTrue("a new window loaded here: $requested", requested.none { it.contains("/foreign.html") })
+    }
+
+    @Test
+    fun aFormPostToAnotherOriginMeetsTheBackstop() = run("post.html", base = "/post.html") { h ->
+        assertTrue("page never ready: ${h.server.requests()}", h.server.await("post-ready", 120))
+        tap(h.view, 0.5f)
+        val stopped = h.awaitEvent { it["event"] == "backstop" }
+        assertTrue("no backstop", stopped != null)
+        assertTrue("$stopped", (stopped?.get("url") as String).startsWith("${h.server.originB}/foreign.html"))
+        assertTrue("never back on the base", h.awaitEvent { it["event"] == "accept" && it["kind"] == "hello" } != null)
+        assertEquals("${h.server.originA}/post.html", h.url())
+        assertTrue(h.sheets.isEmpty())
+    }
+
+    @Test
+    fun goingBackIntoAnOffOriginEntryAfterTheReturnMeetsTheBackstop() =
+        run("oauth-start.html", base = "/back.html") { h ->
+            assertTrue("never ready: ${h.server.requests()}", h.server.await("start-ready", 120))
+            tap(h.view, 0.5f)
+            assertTrue(
+                "never left: ${h.seen}",
+                h.awaitEvent { it["event"] == "load" && h.url()?.contains("/oauth.html") == true } != null,
+            )
+            tap(h.view, 0.5f)
+            assertTrue("never returned: ${h.server.requests()}", h.server.await("back-ready", 60))
+            assertTrue(h.awaitEvent { it["event"] == "accept" && it["kind"] == "hello" } != null)
+            assertTrue(h.awaitEvent { it["event"] == "load" } != null)
+            // Back past the provider: the return has ended, so only the backstop may bring the
+            // WebView back to the profile.
+            var history = ""
+            h.scenario.onActivity {
+                val list = h.view.copyBackForwardList()
+                history = (0 until list.size).joinToString { i -> list.getItemAtIndex(i).url } + " @" + list.currentIndex
+                h.view.goBack()
+            }
+            val stopped = h.awaitEvent { it["event"] == "backstop" }
+            assertTrue("no backstop: $history ${h.seen} ${h.server.requests()}", stopped != null)
+            assertTrue("$stopped", (stopped?.get("url") as String).startsWith("${h.server.originB}/oauth.html"))
+            assertTrue(h.awaitEvent { it["event"] == "accept" && it["kind"] == "hello" } != null)
+            assertTrue("${h.url()}", h.url()!!.startsWith(h.server.originA))
+        }
 
     private fun tap(view: ProfileWebView, fraction: Float) {
         val location = IntArray(2)

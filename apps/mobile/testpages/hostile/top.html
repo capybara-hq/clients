@@ -5,7 +5,7 @@
 <p>Origin A, top frame: the profile document.</p>
 <!-- Shaped as a connector OAuth authorization URL returning to origin A, so the navigation policy
      (Task 16) lets the profile WebView leave for origin B and come back, as a real OAuth flow does. -->
-<a id="next" href="__ORIGIN_B__/navigated.html?response_type=code&amp;redirect_uri=__ORIGIN_A__%2Fcb">to origin B</a>
+<a id="next" href="__ORIGIN_B__/navigated.html?response_type=code&amp;client_id=c&amp;state=s&amp;redirect_uri=__ORIGIN_A__%2Fcb">to origin B</a>
 <script>window.__afterProbe = () => document.getElementById("next").click();</script>
 <script src="/probe.js"></script>
 </body>

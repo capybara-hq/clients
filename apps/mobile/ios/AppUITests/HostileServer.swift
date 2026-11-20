@@ -163,7 +163,7 @@ final class HostileServer {
             // A server redirect shaped as an OAuth authorization URL back to origin A: the policy
             // lets it leave the origin (a plain /redirect to origin B goes to the browser sheet).
             status = "302 Found"
-            headers["Location"] = "\(originB)/redirected.html?response_type=code&redirect_uri=\(originA)%2Fcb"
+            headers["Location"] = "\(originB)/redirected.html?response_type=code&client_id=c&state=s&redirect_uri=\(originA)%2Fcb"
         case ("GET", _):
             var name = path == "/" ? "top.html" : String(path.dropFirst())
             if path.hasPrefix("/plugin-ui/") {

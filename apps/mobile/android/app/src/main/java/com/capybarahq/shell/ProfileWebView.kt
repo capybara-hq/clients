@@ -5,12 +5,15 @@
 // (ShellMessageListener). Accepted posts go to its `sink` (the ShellPlugin, which forwards them to
 // the TypeScript runtime); replies and pushes go back through the posting document's reply proxy.
 //
-// Navigation (Task 16, R14): every main-frame navigation, server redirects included, passes
-// `NavigationPolicy` in `shouldOverrideUrlLoading`; another origin goes to the browser sheet
-// (`onSheet`) and never loads here. Popups never get a WebView: multiple windows are off, so a
-// `window.open` or `target=_blank` navigates this WebView and meets the same policy (a foreign
-// URL goes to the sheet; a same-origin one stays here, which is the profile's own trust), and
-// `onCreateWindow` makes nothing. Load results go to the sink: a main-frame failure before a
+// Navigation (Task 16, R14): main-frame navigations pass `NavigationPolicy` in
+// `shouldOverrideUrlLoading` (server redirects included); another origin goes to the browser sheet
+// (`onSheet`) and never loads here. Navigations that method skips (a form POST, back / forward)
+// meet a backstop in `onPageStarted`: off the profile origin outside a pending OAuth return the
+// load is stopped and the WebView returns to the base. Popups never get a WebView and always go to
+// the sheet, as on iOS: multiple windows are on so `onCreateWindow` is asked, it routes a tapped
+// link's URL (the hit test) with `targetBlank` and returns false; the profile document's
+// `window.open` is wrapped by the injected script and arrives as a gated `open` post. Load
+// results go to the sink: a main-frame failure before a
 // commit (`didFailProvisional`, a TLS error never proceeds), a finished load, a dead render
 // process (R11: the host recreates the WebView and shows the error state).
 //
@@ -140,6 +143,12 @@ class ProfileWebView private constructor(
 
     /** A connector OAuth leave-and-return under way (NavigationPolicy). */
     private var oauthReturn: OauthReturn? = null
+    /** The origin of the main frame's last started page (a redirect keeps it). */
+    private var committedOrigin: Origin? = null
+    /** The last main-frame URL the policy allowed (the backstop lets exactly that one start). */
+    private var lastAllowedMain: String? = null
+    /** The load the backstop stopped last (it may hear about it twice). */
+    private var stoppedUrl: String? = null
     /** Set by a main-frame failure until the next main-frame start, so its error page is ignored. */
     private var mainFrameFailed = false
     /** The origin the main frame is loading (a certificate error there is a main-frame failure). */
@@ -212,9 +221,9 @@ class ProfileWebView private constructor(
             WebViewCompat.setProfile(view, profileName)
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
-            // R14: no popup windows. With multiple windows off a window.open or target=_blank
-            // navigates this WebView, so the policy client below decides it like any navigation.
-            view.settings.setSupportMultipleWindows(false)
+            // R14: multiple windows on, so a target=_blank link reaches onCreateWindow (instead of
+            // navigating this WebView) and goes to the sheet; onCreateWindow never makes a window.
+            view.settings.setSupportMultipleWindows(true)
             view.settings.javaScriptCanOpenWindowsAutomatically = false
             view.settings.allowFileAccess = false
             view.settings.allowContentAccess = false
@@ -226,12 +235,21 @@ class ProfileWebView private constructor(
                     isUserGesture: Boolean,
                     resultMsg: Message?,
                 ): Boolean {
-                    // Never called while multiple windows are off; if a WebView ever does, the
-                    // tapped link (when there is one) goes to the sheet and no window is made.
-                    view.report(mapOf("event" to "popup-window"))
+                    // A new window never exists: the tapped link's URL goes to the policy as a new
+                    // window (the sheet). An unwrapped window.open (a frame's) gets nothing.
+                    view.report(mapOf("event" to "popup-request", "gesture" to isUserGesture))
                     val hit = webView.hitTestResult
-                    if (hit.type == HitTestResult.SRC_ANCHOR_TYPE) {
-                        hit.extra?.let { view.route(it, isMainFrame = true, targetBlank = true) }
+                    when (hit.type) {
+                        HitTestResult.SRC_ANCHOR_TYPE ->
+                            hit.extra?.let { view.route(it, isMainFrame = true, targetBlank = true) }
+                        HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                            // `extra` is the image; the link's href comes back asynchronously.
+                            val reply = Handler(Looper.getMainLooper()) { msg ->
+                                msg.data.getString("url")?.let { view.route(it, isMainFrame = true, targetBlank = true) }
+                                true
+                            }.obtainMessage()
+                            webView.requestFocusNodeHref(reply)
+                        }
                     }
                     return false
                 }
@@ -281,6 +299,11 @@ class ProfileWebView private constructor(
 
     override fun accepted(post: ShellPost, origin: Origin, reply: JavaScriptReplyProxy) {
         when (post) {
+            is ShellPost.Open -> {
+                // Android's wrapped window.open: always a new window, so always the sheet.
+                report(mapOf("event" to "accept", "kind" to "open", "origin" to origin.serialized))
+                route(post.url, isMainFrame = true, targetBlank = true)
+            }
             is ShellPost.Hello -> {
                 report(mapOf("event" to "accept", "kind" to "hello", "origin" to origin.serialized))
                 if (post.docId != currentDocId) endDocument()
@@ -339,6 +362,8 @@ class ProfileWebView private constructor(
     fun loadBase() {
         mainFrameFailed = false
         mainTarget = profileOrigin
+        lastAllowedMain = base
+        stoppedUrl = null
         loadUrl(base)
     }
 
@@ -347,12 +372,14 @@ class ProfileWebView private constructor(
         val now = System.currentTimeMillis()
         val decision = NavigationPolicy.decide(
             url, profileOrigin.serialized, base, isMainFrame, targetBlank, OauthReturn.isPending(oauthReturn, now),
+            committedOrigin == profileOrigin,
         )
         if (isMainFrame && !targetBlank) {
             oauthReturn = OauthReturn.next(oauthReturn, url, decision, profileOrigin, now)
             if (decision == NavigationDecision.ALLOW) {
                 mainTarget = NavUrl.parse(url)?.origin
                 mainFrameFailed = false
+                lastAllowedMain = url
             }
         }
         report(mapOf("event" to "navigation", "url" to url, "decision" to decision.wire, "isMainFrame" to isMainFrame))
@@ -364,6 +391,32 @@ class ProfileWebView private constructor(
             }
             NavigationDecision.BLOCK -> true
         }
+    }
+
+    /**
+     * I3: a main-frame load the policy never saw (`shouldOverrideUrlLoading` is not called for a
+     * form POST or a history step). Off the profile origin and outside a pending OAuth return it is
+     * stopped and the WebView goes back to the base; it cannot tell a POST from a history step, so
+     * it opens no sheet. It runs on `onPageStarted` and on `doUpdateVisitedHistory` (a page
+     * restored from the back/forward cache fires only the latter). True when it stopped the load.
+     */
+    internal fun backstop(url: String, fromPageStart: Boolean = true): Boolean {
+        if (fromPageStart) {
+            val allowed = url == lastAllowedMain
+            lastAllowedMain = null
+            if (allowed) return false
+        }
+        val origin = NavUrl.parse(url)?.origin
+        if (origin == profileOrigin) return false
+        if (origin != null && OauthReturn.isPending(oauthReturn, System.currentTimeMillis())) return false
+        if (url == "about:blank") return false
+        if (url == stoppedUrl) return true
+        stoppedUrl = url
+        report(mapOf("event" to "backstop", "url" to url))
+        stopLoading()
+        oauthReturn = null
+        post { loadBase() }
+        return true
     }
 
     private fun emitLoad(event: JSONObject) {
@@ -379,6 +432,13 @@ class ProfileWebView private constructor(
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             // A new main-frame document: the one that said hello is gone.
             endDocument()
+            if (url != null && backstop(url)) return
+            committedOrigin = NavUrl.parse(url ?: "")?.origin
+        }
+
+        /** A history step restored from the back/forward cache fires no onPageStarted: check here too. */
+        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+            if (url != null) backstop(url, fromPageStart = false)
         }
 
         override fun onPageFinished(view: WebView, url: String?) {

@@ -185,6 +185,8 @@ final class ProfileWebView: WKWebView {
     var onSheet: ((URL) -> Void)?
     /// A connector OAuth leave-and-return under way (NavigationPolicy).
     private var oauthReturn: OauthReturn?
+    /// The origin of the main frame's last committed page (a redirect keeps it).
+    private var committedOrigin: Origin?
 
     var currentDocId: String? { pushes.docId }
     private let gateHandler: ShellMessageHandler
@@ -319,6 +321,7 @@ final class ProfileWebView: WKWebView {
     }
 
     fileprivate func committed() {
+        committedOrigin = url.flatMap { NavURL($0.absoluteString)?.origin }
         report(["event": "commit", "url": url?.absoluteString ?? ""])
     }
 
@@ -341,7 +344,8 @@ final class ProfileWebView: WKWebView {
         let text = url.absoluteString
         let decision = NavigationPolicy.decide(
             url: text, profileOrigin: profileOrigin.serialized, base: base, isMainFrame: isMainFrame,
-            targetBlank: targetBlank, oauthReturnPending: OauthReturn.isPending(oauthReturn, now: now))
+            targetBlank: targetBlank, oauthReturnPending: OauthReturn.isPending(oauthReturn, now: now),
+            fromProfileOrigin: committedOrigin == profileOrigin)
         if isMainFrame, !targetBlank {
             oauthReturn = OauthReturn.next(oauthReturn, url: text, decision: decision,
                                            profileOrigin: profileOrigin, now: now)

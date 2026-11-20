@@ -9,7 +9,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "same origin root without the base path",
@@ -21,7 +22,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "same origin, default port spelled",
@@ -33,7 +35,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "same origin, upper case host",
@@ -45,7 +48,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "loopback profile",
@@ -57,7 +61,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "another port is another origin",
@@ -69,7 +74,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "http is another origin",
@@ -81,7 +87,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "another origin top level",
@@ -93,7 +100,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "a look-alike host",
@@ -105,7 +113,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "credentials before a foreign host",
@@ -117,7 +126,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "connector OAuth authorization URL returning to the profile",
@@ -129,11 +139,12 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL, redirect_uri on the profile origin root",
-    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com/api/v1/oauth/callback",
+    "url": "https://login.idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com/api/v1/oauth/callback",
     "profile": {
       "origin": "https://cap.example.com",
       "base": "https://cap.example.com"
@@ -141,7 +152,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL without response_type",
@@ -153,11 +165,12 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL returning elsewhere",
-    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://evil.test/cb",
+    "url": "https://login.idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=https://evil.test/cb",
     "profile": {
       "origin": "https://cap.example.com",
       "base": "https://cap.example.com/team"
@@ -165,11 +178,12 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL returning to a look-alike",
-    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com.evil.test/cb",
+    "url": "https://login.idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com.evil.test/cb",
     "profile": {
       "origin": "https://cap.example.com",
       "base": "https://cap.example.com/team"
@@ -177,11 +191,12 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL returning over http",
-    "url": "https://login.idp.example/authorize?response_type=code&redirect_uri=http://cap.example.com/team/cb",
+    "url": "https://login.idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=http://cap.example.com/team/cb",
     "profile": {
       "origin": "https://cap.example.com",
       "base": "https://cap.example.com/team"
@@ -189,11 +204,12 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL over a non-http scheme",
-    "url": "ftp://login.idp.example/authorize?response_type=code&redirect_uri=https://cap.example.com/cb",
+    "url": "ftp://login.idp.example/authorize?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com/cb",
     "profile": {
       "origin": "https://cap.example.com",
       "base": "https://cap.example.com/team"
@@ -201,7 +217,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "authorization URL in a new window",
@@ -213,7 +230,8 @@
     "isMainFrame": true,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "while an OAuth return is pending, the provider's own pages",
@@ -225,7 +243,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": true,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "while an OAuth return is pending, back to the profile",
@@ -237,7 +256,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": true,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "while an OAuth return is pending, javascript: still blocks",
@@ -249,7 +269,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": true,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "target=_blank to another origin",
@@ -261,7 +282,8 @@
     "isMainFrame": true,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "target=_blank on the profile origin",
@@ -273,7 +295,8 @@
     "isMainFrame": true,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "target=_blank from a frame",
@@ -285,7 +308,8 @@
     "isMainFrame": false,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "sheet"
+    "expect": "sheet",
+    "fromProfileOrigin": true
   },
   {
     "name": "target=_blank with javascript:",
@@ -297,7 +321,8 @@
     "isMainFrame": true,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "target=_blank with data:",
@@ -309,7 +334,8 @@
     "isMainFrame": true,
     "targetBlank": true,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "javascript: top level",
@@ -321,7 +347,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "JavaScript: upper case",
@@ -333,7 +360,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "file: top level",
@@ -345,7 +373,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "data: top level",
@@ -357,7 +386,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "blob: top level",
@@ -369,7 +399,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "about:blank top level",
@@ -381,7 +412,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "a custom scheme top level",
@@ -393,7 +425,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "mailto: top level",
@@ -405,7 +438,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "not a URL",
@@ -417,7 +451,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "empty",
@@ -429,7 +464,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "the login route as a navigation",
@@ -441,7 +477,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "the login route, spelled differently",
@@ -453,7 +490,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "an SSO start route",
@@ -465,7 +503,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "an SSO start route at the root",
@@ -477,7 +516,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "an SSO start route while an OAuth return is pending",
@@ -489,7 +529,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": true,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "the SSO callback is not a sign-in start",
@@ -501,7 +542,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "the login route outside the base path is just a page",
@@ -513,7 +555,8 @@
     "isMainFrame": true,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame on another origin",
@@ -525,7 +568,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame about:srcdoc",
@@ -537,7 +581,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame about:blank",
@@ -549,7 +594,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame data:",
@@ -561,7 +607,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame blob:",
@@ -573,7 +620,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "allow"
+    "expect": "allow",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame javascript:",
@@ -585,7 +633,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame file:",
@@ -597,7 +646,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame custom scheme",
@@ -609,7 +659,8 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
   },
   {
     "name": "sub frame on the login route",
@@ -621,6 +672,98 @@
     "isMainFrame": false,
     "targetBlank": false,
     "oauthReturnPending": false,
-    "expect": "block"
+    "expect": "block",
+    "fromProfileOrigin": true
+  },
+  {
+    "name": "authorization URL from a foreign page",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback&state=s",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "pending expired, a foreign page navigates to an authorization URL",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback&state=s",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": false,
+    "expect": "sheet"
+  },
+  {
+    "name": "while pending, a foreign page may still navigate (the provider's own flow)",
+    "url": "https://idp2.example/next",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": true,
+    "fromProfileOrigin": false,
+    "expect": "allow"
+  },
+  {
+    "name": "authorization URL without client_id",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback&state=s",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": true,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL without state",
+    "url": "https://login.idp.example/oauth2/authorize?response_type=code&client_id=c&redirect_uri=https%3A%2F%2Fcap.example.com%2Fteam%2Fapi%2Fv1%2Foauth%2Fcallback",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": true,
+    "expect": "sheet"
+  },
+  {
+    "name": "authorization URL in a target=_blank link",
+    "url": "https://evil.example/login?response_type=code&client_id=c&state=s&redirect_uri=https://cap.example.com/team/api/v1/oauth/callback",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": true,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": true,
+    "expect": "sheet"
+  },
+  {
+    "name": "the profile origin from a foreign page",
+    "url": "https://cap.example.com/team/x",
+    "profile": {
+      "origin": "https://cap.example.com",
+      "base": "https://cap.example.com/team"
+    },
+    "isMainFrame": true,
+    "targetBlank": false,
+    "oauthReturnPending": false,
+    "fromProfileOrigin": false,
+    "expect": "allow"
   }
 ]

@@ -132,6 +132,16 @@ class ShellPostTest {
     }
 
     @Test
+    fun anOpenCarriesAnHttpUrlOnly() {
+        // Android wraps window.open in the injected script: the URL goes to the browser sheet.
+        val open = mapOf("type" to "open", "docId" to "doc-1234-5678", "url" to "https://b.example/x")
+        assertEquals(ShellPost.Open("doc-1234-5678", "https://b.example/x"), ShellPost.parse(open))
+        for (url in listOf(null, 1, "", "javascript:alert(1)", "https://b.example/" + "a".repeat(5000))) {
+            assertNull("accepted $url", ShellPost.parse(open + ("url" to url)))
+        }
+    }
+
+    @Test
     fun refusesOversizedText() {
         assertNull(ShellPost.decode("x".repeat(ShellPost.MAX_CHARS + 1)))
         assertNull(ShellPost.decode(null))

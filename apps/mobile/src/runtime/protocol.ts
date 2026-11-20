@@ -72,6 +72,8 @@ export type PagePost =
   | { type: "hello"; docId: string }
   /** iOS: one outstanding post per document; native answers it with the queued pushes. */
   | { type: "listen"; docId: string }
+  /** Android: the profile document's wrapped `window.open`; native sends the URL to the sheet. */
+  | { type: "open"; docId: string; url: string }
   | {
       type: "call";
       docId: string;

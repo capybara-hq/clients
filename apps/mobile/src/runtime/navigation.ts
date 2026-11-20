@@ -2,9 +2,11 @@
 //
 // - Same-origin main-frame navigations stay in the WebView.
 // - A connector OAuth flow may leave the origin top level and come back: a main-frame navigation
-//   to an authorization URL whose `redirect_uri` is on the profile origin stays, and so does every
-//   main-frame navigation while that return is pending (the provider's own login pages), until
-//   the WebView is back on the profile origin or the OAuth state's lifetime ends.
+//   that starts while the committed page is on the profile origin, to an authorization URL whose
+//   `redirect_uri` is on the profile origin, stays, and so does every main-frame navigation while
+//   that return is pending (the provider's own login pages), until the WebView is back on the
+//   profile origin or the OAuth state's lifetime ends. A foreign page can never start (or renew)
+//   one.
 // - Every other origin, and every new window (`target=_blank`, `window.open`), goes to the in-app
 //   browser sheet: popups never get a WebView (R14).
 // - Anything that is not http(s) top level is blocked (`javascript:`, `file:`, `data:`, `blob:`,
@@ -26,6 +28,11 @@ export interface NavigationContext {
   targetBlank: boolean;
   /** A connector OAuth leave-and-return is under way (`nextOauthReturn`). */
   oauthReturnPending: boolean;
+  /**
+   * The main frame's committed page is on the profile origin when the navigation starts (a server
+   * redirect keeps the page it started from). Only then may an authorization URL leave.
+   */
+  fromProfileOrigin: boolean;
 }
 
 /** The kernel's OAuth state lives 10 minutes (OAUTH_STATE_TTL_SECONDS); so does a pending return. */
@@ -45,13 +52,16 @@ function parse(url: string): URL | null {
 const isHttp = (u: URL) => u.protocol === "http:" || u.protocol === "https:";
 
 /**
- * True for an OAuth authorization request that returns to the profile: http(s), a `response_type`
- * and a `redirect_uri` on exactly the profile origin (the kernel's connector flow sets both; its
- * callback is `<publicUrl>/api/v1/oauth/callback`).
+ * True for an OAuth authorization request that returns to the profile: http(s), a `response_type`,
+ * a `client_id`, a `state` and a `redirect_uri` on exactly the profile origin (the kernel's
+ * connector flow always sends all four; its callback is `<publicUrl>/api/v1/oauth/callback`).
  */
 export function isAuthorizationUrl(url: string, profileOrigin: string): boolean {
   const u = parse(url);
-  if (!u || !isHttp(u) || !u.searchParams.has("response_type")) return false;
+  if (!u || !isHttp(u)) return false;
+  for (const name of ["response_type", "client_id", "state"]) {
+    if (!u.searchParams.has(name)) return false;
+  }
   const back = parse(u.searchParams.get("redirect_uri") ?? "");
   return back !== null && isHttp(back) && back.origin === profileOrigin;
 }
@@ -71,7 +81,8 @@ export function decideNavigation(url: string, ctx: NavigationContext): Navigatio
   if (!ctx.isMainFrame) return FRAME_SCHEMES.has(u.protocol) ? "allow" : "block";
   if (!isHttp(u)) return "block";
   if (u.origin === ctx.profile.origin) return "allow";
-  if (ctx.oauthReturnPending || isAuthorizationUrl(u.href, ctx.profile.origin)) return "allow";
+  if (ctx.oauthReturnPending) return "allow";
+  if (ctx.fromProfileOrigin && isAuthorizationUrl(u.href, ctx.profile.origin)) return "allow";
   return "sheet";
 }
 
@@ -82,8 +93,9 @@ export interface OauthReturn {
 
 /**
  * The pending return after a main-frame decision. An allowed navigation off the profile origin
- * starts it (keeping the first start), one back on the origin ends it, and it ends on its own
- * after `OAUTH_RETURN_TTL_MS`. A sheet or a block changes nothing.
+ * starts it; while one is pending its start never moves (a new authorization URL does not renew
+ * it); one back on the origin ends it, and it ends on its own after `OAUTH_RETURN_TTL_MS`. A sheet
+ * or a block changes nothing.
  */
 /** Whether a return is still pending at `now` (the `oauthReturnPending` of a decision). */
 export function oauthReturnPending(state: OauthReturn | null, now: number): boolean {

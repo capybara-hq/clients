@@ -201,7 +201,8 @@ object NavigationPolicy {
 
     fun isAuthorizationUrl(url: String, profileOrigin: Origin): Boolean {
         val u = NavUrl.parse(url) ?: return false
-        if (!u.isHttp || u.queryValue("response_type") == null) return false
+        if (!u.isHttp) return false
+        if (listOf("response_type", "client_id", "state").any { u.queryValue(it) == null }) return false
         val back = u.queryValue("redirect_uri")?.let { NavUrl.parse(it) } ?: return false
         return back.isHttp && back.origin == profileOrigin
     }
@@ -213,6 +214,7 @@ object NavigationPolicy {
         isMainFrame: Boolean,
         targetBlank: Boolean,
         oauthReturnPending: Boolean,
+        fromProfileOrigin: Boolean,
     ): NavigationDecision {
         val u = NavUrl.parse(url) ?: return NavigationDecision.BLOCK
         val profile = Origin.parse(profileOrigin) ?: return NavigationDecision.BLOCK
@@ -224,7 +226,9 @@ object NavigationPolicy {
         val origin = u.origin
         if (!u.isHttp || origin == null) return NavigationDecision.BLOCK
         if (origin == profile) return NavigationDecision.ALLOW
-        if (oauthReturnPending || isAuthorizationUrl(url, profile)) return NavigationDecision.ALLOW
+        if (oauthReturnPending) return NavigationDecision.ALLOW
+        // Only a page on the profile origin may start a leave-and-return (never a foreign one).
+        if (fromProfileOrigin && isAuthorizationUrl(url, profile)) return NavigationDecision.ALLOW
         return NavigationDecision.SHEET
     }
 
