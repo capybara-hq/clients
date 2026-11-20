@@ -16,6 +16,7 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
 | ---------------- | --------------------------------------------------------------------------------------------- |
 | `packages/shell` | `@capybara-hq/shell` (private): pure logic and the i18n catalog (zh, en); no Electron imports |
 | `apps/desktop`   | `@capybara-hq/desktop` (private): the Electron app; `brand.ts` is the only brand file         |
+| `apps/mobile`    | `@capybara-hq/mobile` (private): the Capacitor app with its iOS and Android projects          |
 
 ## Rules
 
@@ -27,6 +28,9 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
 - Tests: `pnpm test` (vitest) from the root; no fixed sleeps, no per-test timeouts.
 - English for code, comments, identifiers and commit messages. UI text goes through the shell i18n
   catalog; the zh copy says 平台 / 智能体 / 设备 / 本机, never 企业 or the Latin word `agent`.
+- Mobile: `apps/mobile/brand.ts` is the only brand file; native code namespaces are fixed (Swift
+  module `App`, Kotlin package `com.capybarahq.shell`). Capacitor's bridge never reaches a profile
+  WebView.
 - Tests never touch the real Keychain, real login items or launchd; use injected fakes.
 
 ## Commands
@@ -45,6 +49,13 @@ node apps/desktop/node_modules/electron/install.js   # once: the Electron binary
 pnpm --filter @capybara-hq/desktop dev           # build, then run Electron on the unpackaged app
 pnpm --filter @capybara-hq/desktop bundle-node   # fill build/node and build/device (the device)
 pnpm --filter @capybara-hq/desktop dist --mac --publish never   # an unsigned local package
+
+# The mobile app (Xcode, JDK 21 and the Android SDK; Gradle only through the wrapper)
+pnpm --filter @capybara-hq/mobile sync              # build the local pages, then cap sync
+pnpm --filter @capybara-hq/mobile test:ios          # XCTest (AppTests) on an iPhone simulator
+pnpm --filter @capybara-hq/mobile test:ios:ui       # XCUITest (AppUITests)
+pnpm --filter @capybara-hq/mobile test:android      # JVM unit tests
+pnpm --filter @capybara-hq/mobile test:android:device   # instrumented tests on a running emulator
 ```
 
 ## Work and commits
