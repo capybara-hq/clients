@@ -38,6 +38,26 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         }
     }
 
+    /** One GET for the address page: no redirects, a timeout and a body cap (HttpGet.kt). */
+    @PluginMethod
+    fun httpGet(call: PluginCall) {
+        val url = call.getString("url")
+        if (url == null) {
+            call.reject("httpGet needs url")
+            return
+        }
+        Thread {
+            try {
+                val r = HttpGet.get(url)
+                call.resolve(
+                    JSObject().put("status", r.status).put("body", r.body).put("truncated", r.truncated),
+                )
+            } catch (e: HttpGetFailure) {
+                call.reject(e.message)
+            }
+        }.start()
+    }
+
     @PluginMethod
     fun pushState(call: PluginCall) {
         val state = call.getObject("state")
