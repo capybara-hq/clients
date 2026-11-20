@@ -4,10 +4,13 @@ import {
   decideWindowOpen,
   GRANTED_PERMISSIONS,
   hardenAddressContents,
+  hardenLocalContents,
   hardenProfileContents,
   installDenyAllPermissions,
   installPermissionHandlers,
   isNavigationAllowed,
+  LOCAL_PARTITION,
+  localWebPreferences,
   profileWebPreferences,
 } from "../src/main/security.ts";
 import { fakeSession, fakeWebContents } from "./fakes.ts";
@@ -198,5 +201,34 @@ describe("the address page window", () => {
     const e = { preventDefault: vi.fn() };
     wc.emit("will-attach-webview", e, {}, {});
     expect(e.preventDefault).toHaveBeenCalled();
+  });
+});
+
+describe("local page windows", () => {
+  test("use the app's local partition with the baseline preferences", () => {
+    expect(localWebPreferences({ preload: "/x/local.cjs" })).toMatchObject({
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      webviewTag: false,
+      partition: LOCAL_PARTITION,
+      preload: "/x/local.cjs",
+    });
+    expect(LOCAL_PARTITION).not.toMatch(/^persist:/);
+  });
+
+  test("stay on app://local and open no windows", () => {
+    const wc = fakeWebContents("app://local/onboarding.html");
+    hardenLocalContents(wc);
+    for (const url of ["https://capybara.example.com/", "app://address/index.html"]) {
+      const away = { url, preventDefault: vi.fn() };
+      wc.emit("will-navigate", away, url);
+      expect(away.preventDefault).toHaveBeenCalled();
+    }
+    const stay = { url: "app://local/main-error.html", preventDefault: vi.fn() };
+    wc.emit("will-navigate", stay, stay.url);
+    expect(stay.preventDefault).not.toHaveBeenCalled();
+    expect(wc.openWindow("https://capybara.example.com/")).toEqual({ action: "deny" });
   });
 });

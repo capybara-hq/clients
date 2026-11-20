@@ -1,6 +1,6 @@
 // The security baseline of the shell windows (spec §7.2): webPreferences, permissions, navigation
 // and window.open rules. Electron objects come in as parameters.
-import { ADDRESS_HOST, APP_SCHEME } from "../shared/protocol.ts";
+import { ADDRESS_HOST, APP_SCHEME, LOCAL_HOST } from "../shared/protocol.ts";
 
 const BASE_PREFERENCES = {
   contextIsolation: true,
@@ -35,6 +35,16 @@ export const ADDRESS_PARTITION = "address";
 
 export function addressWebPreferences(o: { preload: string }) {
   return { ...BASE_PREFERENCES, partition: ADDRESS_PARTITION, preload: o.preload };
+}
+
+/**
+ * The local pages (small window, error overlay, shell dialogs): the app's own partition, never a
+ * profile's, so no deployment cookie or storage is ever in reach of a local page.
+ */
+export const LOCAL_PARTITION = "local";
+
+export function localWebPreferences(o: { preload: string }) {
+  return { ...BASE_PREFERENCES, partition: LOCAL_PARTITION, preload: o.preload, spellcheck: false };
 }
 
 /**
@@ -199,6 +209,17 @@ export function hardenAddressContents(wc: ContentsLike): void {
     // Node's URL gives a non-special scheme the origin "null": compare scheme and host instead.
     const u = parse(navigationUrl(e, url));
     if (!u || u.protocol !== `${APP_SCHEME}:` || u.host !== ADDRESS_HOST) e.preventDefault();
+  };
+  wc.on("will-navigate", stay);
+  wc.on("will-redirect", stay);
+}
+
+/** A local page never navigates away from app://local and opens no windows. */
+export function hardenLocalContents(wc: ContentsLike): void {
+  hardenAnyContents(wc);
+  const stay = (e: Prevented, url: unknown) => {
+    const u = parse(navigationUrl(e, url));
+    if (!u || u.protocol !== `${APP_SCHEME}:` || u.host !== LOCAL_HOST) e.preventDefault();
   };
   wc.on("will-navigate", stay);
   wc.on("will-redirect", stay);

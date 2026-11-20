@@ -54,6 +54,7 @@ import { createDeviceTexts } from "./device/texts.ts";
 import { createTrayDevice } from "./device/tray-device.ts";
 import { createDockIcon, createDockIconCache, type DockCacheFs } from "./dock.ts";
 import { createConfirmGate, createShellBridge, type IpcMainLike } from "./ipc.ts";
+import { createLocalPages } from "./local-pages.ts";
 import {
   createPlistReader,
   ensureManagedProfiles,
@@ -62,7 +63,7 @@ import {
 } from "./managed.ts";
 import { createProfileStore, type Profile, partitionFor } from "./profiles.ts";
 import { createProfileRemoval } from "./remove-profile.ts";
-import { ADDRESS_PARTITION, hardenAnyContents } from "./security.ts";
+import { ADDRESS_PARTITION, hardenAnyContents, LOCAL_PARTITION } from "./security.ts";
 import { createSignIn, type FetchLike } from "./sign-in.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
 import { createUiRefresh } from "./ui-refresh.ts";
@@ -127,12 +128,14 @@ function start(): void {
       readPlist: createPlistReader({ existsSync: fs.existsSync, execFileSync }),
     });
 
-    session
-      .fromPartition(ADDRESS_PARTITION)
-      .protocol.handle(
-        APP_SCHEME,
-        createAppProtocolHandler({ dir: join(dist, "address-page"), readFile }),
-      );
+    // One app:// handler for the address partition and the local pages' partition alike.
+    const appProtocol = createAppProtocolHandler({
+      dir: join(dist, "address-page"),
+      localDir: join(dist, "local"),
+      readFile,
+    });
+    session.fromPartition(ADDRESS_PARTITION).protocol.handle(APP_SCHEME, appProtocol);
+    session.fromPartition(LOCAL_PARTITION).protocol.handle(APP_SCHEME, appProtocol);
 
     // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
     // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
@@ -289,6 +292,13 @@ function start(): void {
       closeSender: (sender) => windows.closeSender(sender),
     });
     addressHost.install(ipcMain as unknown as IpcMainLike);
+
+    // The local pages (small window, error overlay, shell dialogs) register here with their kind;
+    // the features that own their actions install the handlers.
+    const localPages = createLocalPages({
+      log: (message, err) => console.error(message, err ?? ""),
+    });
+    localPages.install(ipcMain as unknown as IpcMainLike);
 
     // Under `lockDeployments` the app offers only the managed profiles (an older saved one stays
     // on disk but is not offered).

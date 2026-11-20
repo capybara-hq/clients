@@ -28,11 +28,31 @@ export const ADDRESS_CHANNELS = {
   open: "capybara-address:open",
 } as const;
 
-/** The app's own scheme, which serves only the address page. */
+/**
+ * Channels of the local pages' preload (`window.capybaraLocal`): the small window, the main
+ * window's error overlay and the shell dialogs. Never the Shell environment.
+ */
+export const LOCAL_CHANNELS = {
+  /** Invoke: the page's current `PageState`, or null for a sender main does not know. */
+  state: "capybara-local:state",
+  /** Invoke: one page action, `LocalActRequest` → `LocalActResult`. */
+  act: "capybara-local:act",
+  /** Main → preload: a new `PageState` for the page. */
+  push: "capybara-local:push",
+} as const;
+
+/** The app's own scheme: the address page (until K5 removes it) and the local pages. */
 export const APP_SCHEME = "app";
 export const ADDRESS_HOST = "address";
 export const ADDRESS_ORIGIN = `${APP_SCHEME}://${ADDRESS_HOST}`;
 export const ADDRESS_URL = `${ADDRESS_ORIGIN}/index.html`;
+/** Local pages are flat files under one host: `app://local/<page>.html`. */
+export const LOCAL_HOST = "local";
+export const LOCAL_ORIGIN = `${APP_SCHEME}://${LOCAL_HOST}`;
+/** The URL of a local page by its name (`onboarding` → `app://local/onboarding.html`). */
+export function localPageUrl(page: string): string {
+  return `${LOCAL_ORIGIN}/${page}.html`;
+}
 
 export type Insets = CapybaraShell["insets"];
 export type Controls = { x: number; y: number; width: number; height: number };
