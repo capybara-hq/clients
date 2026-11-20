@@ -518,3 +518,16 @@ test("an unreachable platform: the unreachable page, 重试, back when it answer
   await expect.poll(overlayUrls).toEqual([]);
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
 });
+
+test("a client navigation to /login (history.pushState) shows the expired page too", async () => {
+  await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
+  // A router's replace/push: no request, only did-navigate-in-page.
+  await page.evaluate(() => {
+    history.pushState(null, "", "/login?returnTo=%2Fua");
+  });
+  const overlay = await windowOn("app://local/main-error.html");
+  await expect(overlay.locator("h1")).toHaveText(/^(登录已过期|Your session has expired)$/);
+  await signInFromPage(overlay);
+  await expect.poll(overlayUrls).toEqual([]);
+  await expect(page).toHaveURL(`${fake.base}/ua`);
+});

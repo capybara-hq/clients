@@ -61,15 +61,21 @@ export function probeDelay(downForMs: number): number {
   return downForMs < PROBE_FAST_FOR_MS ? PROBE_FAST_MS : PROBE_SLOW_MS;
 }
 
-/** True when `/api/v1/meta` of the deployment answers 2xx through the partition's fetch. */
+/**
+ * True when `/api/v1/meta` of the deployment answers 2xx with a JSON object, without a redirect,
+ * through the partition's fetch: a captive portal or a proxy's own page does not count as up.
+ */
 export async function probeMeta(fetch: FetchLike, base: string): Promise<boolean> {
   try {
     const res = await fetch(`${base}/api/v1/meta`, {
       method: "GET",
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const body = await res.json();
+    return typeof body === "object" && body !== null && !Array.isArray(body);
   } catch {
     return false;
   }
@@ -128,7 +134,10 @@ export interface SessionWatchDeps {
   localPages: Pick<LocalPages, "handle">;
   /** The profile as stored now; undefined once removed. */
   getProfile(id: string): Profile | undefined;
-  signOut: Pick<SignOut, "takeLoggedOut" | "noteLogin" | "complete" | "confirmAndSignOut">;
+  signOut: Pick<
+    SignOut,
+    "takeLoggedOut" | "noteLogin" | "complete" | "confirmAndSignOut" | "signOutNow"
+  >;
   signIn: Pick<SignIn, "begin" | "pendingUrl" | "cancel">;
   /** The system browser. */
   openExternal(url: string): Promise<unknown> | unknown;
@@ -189,7 +198,6 @@ export function createSessionWatch(deps: SessionWatchDeps) {
       waiting: w.mode === "expired" && pending.has(w.profileId),
       probing: w.mode === "unreachable" && w.probing,
       downSince: w.mode === "unreachable" ? w.downSince : null,
-      now: deps.now(),
     };
     return {
       ...deps.pageBase(profile),
@@ -262,6 +270,8 @@ export function createSessionWatch(deps: SessionWatchDeps) {
     if (w.ended || w.mode === "expired") return;
     w.failedUrl = url;
     if (w.mode === "unreachable") {
+      // A reload after a successful probe failed again: same overlay, same backoff.
+      if (!w.cancelProbe && !w.probing) scheduleProbe(w);
       render(w);
       return;
     }
@@ -296,14 +306,12 @@ export function createSessionWatch(deps: SessionWatchDeps) {
     }
     w.probing = false;
     if (w.ended || w.mode !== "unreachable") return;
-    if (up) {
-      const url = w.failedUrl;
-      clear(w);
-      load(w, url);
-      return;
-    }
     render(w);
+    // The overlay stays until a document of the deployment loads (the did-navigate 200–499 branch):
+    // meta may answer while documents still fail, and that must neither flash nor reset the
+    // backoff. The next probe stays scheduled from the first failure.
     scheduleProbe(w);
+    if (up) load(w, w.failedUrl);
   }
 
   function onLogin(w: Watched, nav: LoginNavigation): void {
@@ -344,13 +352,31 @@ export function createSessionWatch(deps: SessionWatchDeps) {
     }
     const profile = saved ?? before;
     if (!profile) return;
-    // Another account: the page the last one was on may not be this one's.
+    // Another account: the page the last one was on may not be this one's, in any window.
     const sameAccount = !before?.account || before.account.login === outcome.account.login;
-    for (const w of ofProfile(profileId, "expired")) {
-      const url = sameAccount ? w.returnUrl : `${profile.base}/`;
-      clear(w);
-      load(w, url);
+    recover(profile, sameAccount);
+  }
+
+  /**
+   * The profile is signed in again: every expired window drops its overlay and loads its return
+   * URL (`/` for another account, whose other windows go to `/` as well). Returns how many expired
+   * windows were recovered.
+   */
+  function recover(profile: Profile, sameAccount: boolean): number {
+    const home = `${profile.base}/`;
+    let recovered = 0;
+    for (const w of ofProfile(profile.id)) {
+      if (w.mode === "expired") {
+        const url = sameAccount ? w.returnUrl : home;
+        clear(w);
+        load(w, url);
+        recovered += 1;
+      } else if (!sameAccount) {
+        if (w.mode === "unreachable") w.failedUrl = home;
+        load(w, home);
+      }
     }
+    return recovered;
   }
 
   async function startSignIn(w: Watched): Promise<void> {
@@ -383,7 +409,8 @@ export function createSessionWatch(deps: SessionWatchDeps) {
   function signOutFrom(w: Watched): void {
     const id = w.profileId;
     if (w.mode === "expired") {
-      // The session is gone: no confirmation, no logout request (spec §6.8).
+      // No confirmation (spec §6.8); the session may still live server side, so signOutNow posts
+      // the logout best effort and clears the session cookies before completing.
       if (pending.has(id)) {
         pending.delete(id);
         deps.signIn.cancel(id);
@@ -392,7 +419,7 @@ export function createSessionWatch(deps: SessionWatchDeps) {
         e.ended = true;
         stopProbe(e);
       }
-      void deps.signOut.complete(id);
+      void deps.signOut.signOutNow(id);
       return;
     }
     void deps.signOut.confirmAndSignOut(id);
@@ -484,7 +511,24 @@ export function createSessionWatch(deps: SessionWatchDeps) {
         w.overlay = undefined;
         overlay?.remove();
         watched.delete(w);
+        // The last window of the profile is gone: its re-sign-in has nowhere to return to.
+        const id = profile.id;
+        if (pending.has(id) && ![...watched].some((x) => x.profileId === id)) {
+          pending.delete(id);
+          deps.signIn.cancel(id);
+        }
       });
+    },
+
+    /**
+     * The profile was signed in another way (signIn@1, the small window): its expired windows drop
+     * the overlay and load their return URL. A signIn@1 call that replaced the overlay's own
+     * attempt first shows "cancelled" in the overlay (accepted: this clears it right after).
+     * Returns how many expired windows were recovered (0: the caller reloads as before).
+     */
+    signedIn(profileId: string): number {
+      const profile = deps.getProfile(profileId);
+      return profile ? recover(profile, true) : 0;
     },
 
     /** A window of the profile shows the expired page (sign-out: it counts as on `/login`). */

@@ -318,6 +318,29 @@ describe("complete", () => {
   });
 });
 
+describe("signOutNow (the expired page's 退出登录)", () => {
+  test("no dialog; a suppressed logout POST, the cookies cleared, then complete", async () => {
+    const h = setup();
+    await h.signOut.signOutNow("p1");
+    expect(h.deps.confirm).not.toHaveBeenCalled();
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(h.fetch.mock.calls[0]?.[0]).toBe("https://a.example.com/team/api/v1/auth/logout");
+    expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+    // Its own completion leaves no note for a later /login.
+    h.signOut.noteLoggedOut("p1");
+    expect(h.signOut.takeLoggedOut("p1")).toBe(false);
+  });
+
+  test("a dead session still signs out", async () => {
+    const fetch = vi.fn(async () => {
+      throw new TypeError("network");
+    });
+    const h = setup({ fetchFor: () => fetch });
+    await h.signOut.signOutNow("p1");
+    expect(h.order).toEqual(["cookies", "mark", "show", "close"]);
+  });
+});
+
 describe("confirmAndSignOut", () => {
   test("asks, posts the logout through the partition, clears the cookies, completes", async () => {
     const h = setup();

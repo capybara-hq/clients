@@ -85,6 +85,7 @@ function setup(over: Partial<SessionWatchDeps> = {}) {
     noteLogin: vi.fn(),
     complete: vi.fn(async (_id: string) => undefined),
     confirmAndSignOut: vi.fn(async (_id: string) => undefined),
+    signOutNow: vi.fn(async (_id: string) => undefined),
   };
   const signIn = {
     begin: vi.fn((_p: Profile) => ({
@@ -186,6 +187,12 @@ function setup(over: Partial<SessionWatchDeps> = {}) {
       return t.ms;
     },
     live,
+    /** Watches another window of the profile. */
+    another: () => {
+      const other = fakeWindow();
+      watch.watch(initialProfile(), other as unknown as SessionWindow);
+      return other;
+    },
     signOutProfile: () => {
       if (profile) profile = { ...profile, signedIn: false };
     },
@@ -211,6 +218,9 @@ describe("returnUrlFor", () => {
       "/team/login",
       "/elsewhere",
       "team/chat",
+      "/team-evil/x",
+      "/\t/evil.example.com/team/x",
+      "/team\t/../../elsewhere",
     ]) {
       expect(returnUrlFor(p, `${LOGIN}?returnTo=${encodeURIComponent(rt)}`, last)).toBe(last);
     }
@@ -360,12 +370,56 @@ describe("re-sign-in from the expired page", () => {
     expect(h.signIn.cancel).toHaveBeenCalledWith("p1");
   });
 
-  test("退出登录 completes the sign-out without asking and cancels a pending attempt", async () => {
+  test("退出登录 signs out without asking (logout POST, cookies) and cancels the attempt", async () => {
     const { h, overlay } = await expired();
     await h.act(overlay, "mainError.signOut");
     expect(h.signIn.cancel).toHaveBeenCalledWith("p1");
-    expect(h.signOut.complete).toHaveBeenCalledWith("p1");
+    expect(h.signOut.signOutNow).toHaveBeenCalledWith("p1");
     expect(h.signOut.confirmAndSignOut).not.toHaveBeenCalled();
+  });
+
+  test("another account also sends the profile's other windows home", async () => {
+    const h = setup();
+    const other = h.another();
+    h.win.webContents.emit("will-navigate", navEvent(), LOGIN);
+    const overlay = h.shown() as FakeOverlay;
+    await h.act(overlay, "mainError.signIn");
+    h.outcomes[0]?.({ ok: true, account: { name: "Bob", login: "bob@example.com" } });
+    await vi.waitFor(() => expect(overlay.isRemoved()).toBe(true));
+    expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/`);
+    expect(other.loadURL).toHaveBeenCalledWith(`${BASE}/`);
+  });
+
+  test("the same account leaves the other windows alone", async () => {
+    const h = setup();
+    const other = h.another();
+    h.win.webContents.emit("will-navigate", navEvent(), LOGIN);
+    const overlay = h.shown() as FakeOverlay;
+    await h.act(overlay, "mainError.signIn");
+    h.outcomes[0]?.({ ok: true, account: { name: "Ann", login: "ann@example.com" } });
+    await vi.waitFor(() => expect(overlay.isRemoved()).toBe(true));
+    expect(other.loadURL).not.toHaveBeenCalled();
+  });
+
+  test("signed in another way (signIn@1, the small window): the overlay goes, the page returns", () => {
+    const h = setup();
+    h.win.webContents.emit("will-navigate", navEvent(), `${LOGIN}?returnTo=%2Fteam%2Fx`);
+    const overlay = h.shown() as FakeOverlay;
+    expect(h.watch.signedIn("p1")).toBe(1);
+    expect(overlay.isRemoved()).toBe(true);
+    expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/x`);
+    expect(h.watch.signedIn("p1")).toBe(0);
+  });
+
+  test("the pending attempt is cancelled when the profile's last window closes", async () => {
+    const h = setup();
+    const other = h.another();
+    h.win.webContents.emit("will-navigate", navEvent(), LOGIN);
+    await h.act(h.shown() as FakeOverlay, "mainError.signIn");
+    h.win.emit("closed");
+    expect(h.signIn.cancel).not.toHaveBeenCalled();
+    other.emit("closed");
+    expect(h.signIn.cancel).toHaveBeenCalledWith("p1");
   });
 
   test("切换平台 pops the platform menu up over the window", async () => {
@@ -436,12 +490,39 @@ describe("the unreachable page", () => {
     expect(delays.slice(0, 12)).toEqual(Array(12).fill(PROBE_FAST_MS));
     expect(delays[12]).toBe(PROBE_SLOW_MS);
     expect(h.live()[0]?.ms).toBe(PROBE_SLOW_MS);
-    // The platform answers: the overlay goes and the failed page loads again.
+    // The platform answers: the failed page loads again under the overlay; the document that
+    // loads (200) removes the overlay and ends the probing.
     h.fireTimer();
     h.probes.shift()?.(true);
-    await vi.waitFor(() => expect(overlay.isRemoved()).toBe(true));
-    expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/c/1`);
+    await vi.waitFor(() => expect(h.win.loadURL).toHaveBeenCalledWith(`${BASE}/c/1`));
+    expect(overlay.isRemoved()).toBe(false);
+    h.win.webContents.emit("did-navigate", {}, `${BASE}/c/1`, 200);
+    expect(overlay.isRemoved()).toBe(true);
     expect(h.live()).toHaveLength(0);
+  });
+
+  test("meta up but the reload fails again: same overlay, backoff from the first failure", async () => {
+    const h = setup();
+    const since = h.now();
+    h.win.webContents.emit("did-fail-load", {}, -105, "x", `${BASE}/c/1`, true);
+    const overlay = h.shown() as FakeOverlay;
+    // Eleven down probes (55 s), then meta answers.
+    for (let i = 0; i < 11; i++) {
+      h.fireTimer();
+      h.probes.shift()?.(false);
+      await vi.waitFor(() => expect(h.live()).toHaveLength(1));
+    }
+    h.fireTimer();
+    h.probes.shift()?.(true);
+    await vi.waitFor(() => expect(h.win.loadURL).toHaveBeenCalledTimes(1));
+    // The reload is answered 503: nothing flashes, nothing restarts.
+    h.win.webContents.emit("did-navigate", {}, `${BASE}/c/1`, 503);
+    expect(h.overlays).toHaveLength(1);
+    expect(overlay.isRemoved()).toBe(false);
+    expect(overlay.state().downSince).toBe(since);
+    expect(h.live()).toHaveLength(1);
+    // 60 s after the first failure: the slow phase.
+    expect(h.live()[0]?.ms).toBe(PROBE_SLOW_MS);
   });
 
   test("502 / 503 / 504 main documents show it; other codes do not", () => {
@@ -480,15 +561,6 @@ describe("the unreachable page", () => {
     expect(overlay.state().probing).toBe(false);
   });
 
-  test("the elapsed time grows in the state", () => {
-    const h = setup();
-    h.win.webContents.emit("did-fail-load", {}, -105, "x", `${BASE}/`, true);
-    const overlay = h.shown() as FakeOverlay;
-    const since = overlay.state().downSince as number;
-    h.advance(5 * 60_000);
-    expect(overlay.state().now - since).toBe(5 * 60_000);
-  });
-
   test("closing the window stops probing and removes the overlay", () => {
     const h = setup();
     h.win.webContents.emit("did-fail-load", {}, -105, "x", `${BASE}/`, true);
@@ -522,12 +594,23 @@ describe("the unreachable page", () => {
 
 describe("probeMeta", () => {
   test("2xx is up; anything else or a network error is down", async () => {
-    const ok = vi.fn(async () => ({ ok: true, status: 200 }));
+    const ok = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ name: "A" }) }));
     expect(await probeMeta(ok as never, BASE)).toBe(true);
     expect(ok).toHaveBeenCalledWith(
       `${BASE}/api/v1/meta`,
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ method: "GET", redirect: "error" }),
     );
+    // A captive portal's own 200 page is not the platform.
+    const portal = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("not JSON");
+      },
+    });
+    expect(await probeMeta(portal as never, BASE)).toBe(false);
+    const notObject = async () => ({ ok: true, status: 200, json: async () => "x" });
+    expect(await probeMeta(notObject as never, BASE)).toBe(false);
     expect(await probeMeta((async () => ({ ok: false, status: 503 })) as never, BASE)).toBe(false);
     expect(
       await probeMeta(

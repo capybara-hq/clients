@@ -341,7 +341,11 @@ function start(): void {
       // The partition's own fetch: the kernel's Set-Cookie lands in the profile's cookie jar.
       fetchFor: partitionFetch,
       getProfile: (id) => profiles.get(id),
-      onSignedIn: (profile) => windows.reloadProfile(profile),
+      // Windows on the expired page go back to their page; otherwise every window reloads.
+      onSignedIn: (profile) => {
+        if (sessionWatch.signedIn(profile.id) > 0) windows.showProfile(profile);
+        else windows.reloadProfile(profile);
+      },
       // A session the app did not want: its cookies go from the partition's jar as well.
       clearSessionCookies,
       // Its logout is the app's own: no sign-out note (sign-out.ts).
@@ -496,6 +500,8 @@ function start(): void {
       markSignedIn: (id, account) => {
         const saved = profiles.update(id, { signedIn: true, account });
         ui.stateChanged();
+        // A window still on the expired page goes back to its page.
+        sessionWatch.signedIn(id);
         return saved;
       },
       openMain: (profile, home) => {

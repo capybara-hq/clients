@@ -20,6 +20,9 @@ import { type PageContext, startPage } from "../runtime.ts";
 
 type Ctx = PageContext<MainErrorState>;
 
+/** The 1 s tick of the unreachable page's elapsed time (the page's own clock, not main's). */
+let tick: ReturnType<typeof setInterval> | undefined;
+
 const act = (ctx: Ctx, action: string) => {
   void ctx.act(action).catch(() => undefined);
 };
@@ -51,12 +54,21 @@ function render(ctx: Ctx): void {
       ? t("mainError.expired.waiting")
       : t("mainError.expired.lead");
   const keys = expired && state.error && !state.waiting ? signInErrorKeys(state.error) : null;
+  const meta = hostLine(metaLine({ ...state, host, now: Date.now() }, t), { faint: true });
+  if (tick !== undefined) clearInterval(tick);
+  tick = undefined;
+  if (!expired && state.downSince !== null) {
+    const text = meta.querySelector("span");
+    tick = setInterval(() => {
+      if (text) text.textContent = metaLine({ ...state, host, now: Date.now() }, t);
+    }, 1000);
+  }
   const el = page({
     layout: "wide",
     content: [
       platformIcon(state.platform),
       stack([
-        hostLine(metaLine({ ...state, host }, t), { faint: true }),
+        meta,
         heading(t(expired ? "mainError.expired.title" : "mainError.unreachable.title")),
         lead(leadText),
       ]),

@@ -198,6 +198,12 @@ export interface SignOut {
   complete(profileId: string): Promise<void>;
   /** The 「平台」 menu entry: shell dialog, then logout POST, then complete. */
   confirmAndSignOut(profileId: string): Promise<void>;
+  /**
+   * Signs out without asking (the expired page's 退出登录, spec §6.8): a best-effort logout POST
+   * (suppressed, the usual timeout) in case the session still lives, the session cookies cleared,
+   * then complete.
+   */
+  signOutNow(profileId: string): Promise<void>;
 }
 
 export function createSignOut(deps: SignOutDeps): SignOut {
@@ -328,6 +334,10 @@ export function createSignOut(deps: SignOutDeps): SignOut {
         deps.gate?.release(profileId);
       }
       if (!confirmed) return;
+      await signOut.signOutNow(profileId);
+    },
+
+    async signOutNow(profileId) {
       const current = deps.getProfile(profileId);
       if (!current?.signedIn) return;
       await signOut.suppress(profileId, () => postLogout(current));

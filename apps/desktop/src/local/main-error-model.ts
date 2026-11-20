@@ -13,10 +13,11 @@ export type MainErrorFields = {
   waiting: boolean;
   /** Unreachable: a probe of `/api/v1/meta` is running (重试 shows it is busy). */
   probing: boolean;
-  /** Unreachable: when the window first failed to load (epoch ms); null on the expired page. */
+  /**
+   * Unreachable: when the window first failed to load (epoch ms); null on the expired page. The
+   * page ticks the elapsed time itself from it.
+   */
   downSince: number | null;
-  /** When main built this state (epoch ms): the elapsed time is `now - downSince`. */
-  now: number;
 };
 
 export type MainErrorState = PageState & MainErrorFields;
@@ -45,7 +46,7 @@ export function duration(
  * (board MainErrors: `capybara.meta1.top · 5 分钟无响应`).
  */
 export function metaLine(
-  state: Pick<MainErrorFields, "page" | "downSince" | "now"> & { host: string },
+  state: Pick<MainErrorFields, "page" | "downSince"> & { host: string; now: number },
   t: (key: string, vars?: Record<string, string>) => string,
 ): string {
   if (state.page !== "unreachable" || state.downSince === null) return state.host;
