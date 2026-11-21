@@ -50,11 +50,19 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         frame
     }
 
+    /** How many profile WebViews live (single store: at most one). */
+    val viewCount: Int get() = views.size
+
     /** The shown profile's WebView, for system back. */
     val current: ProfileWebView? get() = shown?.let { views[it] }
 
+    /** The profile's WebView, if it was made (sign-in runs its exchange there). */
+    fun view(profileId: String): ProfileWebView? = views[profileId]
+
     /** Shows the profile's WebView and loads its base; an error text when it cannot be made. */
     fun open(spec: Spec): String? {
+        // Single store (Decision 9): one deployment at a time, so no other profile's WebView lives.
+        if (DataStores.get(activity).mode == DataStoreMode.SINGLE) closeAllBut(spec.profileId)
         specs[spec.profileId] = spec
         val view = views[spec.profileId] ?: (make(spec) ?: return "not_created")
         shown = spec.profileId
@@ -72,6 +80,24 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         if (shown == profileId) container.visibility = View.GONE
     }
 
+    /**
+     * Tears the profile's WebView down: a profile hidden by a managed lock or removed. Its page
+     * ends, the view leaves the container and is destroyed; a later [open] makes a new one.
+     * (Android still keeps a profile used in this process from deletion until the next cold
+     * start; DataStoreCore handles that.)
+     */
+    fun close(profileId: String) {
+        specs.remove(profileId)
+        val view = views.remove(profileId) ?: return
+        view.close()
+        container.removeView(view)
+        view.destroy()
+        if (shown == profileId) {
+            shown = null
+            container.visibility = View.GONE
+        }
+    }
+
     fun setAppearance(profileId: String, background: Int, lightContent: Boolean) {
         this.background = background
         container.setBackgroundColor(background)
@@ -81,8 +107,24 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
             .isAppearanceLightStatusBars = !lightContent
     }
 
+    /**
+     * Destroys every profile WebView (single store: before the shared store is cleared, so a page
+     * cannot write into it again). The next [open] makes a fresh one.
+     */
+    fun closeAll() = closeAllBut(null)
+
+    /** Every other profile's WebView goes the way [close] takes it: its document ends first. */
+    private fun closeAllBut(keep: String?) {
+        for (id in views.keys.filter { it != keep }) close(id)
+        specs.keys.retainAll { it == keep }
+    }
+
     private fun make(spec: Spec): ProfileWebView? {
-        val name = DataStores.get(activity).profileName(spec.dataStoreId) ?: return null
+        val core = DataStores.get(activity)
+        if (!core.usable(spec.dataStoreId)) return null
+        // Null name: the default profile, which only the single store (no MULTI_PROFILE) may use.
+        val name = core.profileName(spec.dataStoreId)
+        if (name == null && core.mode != DataStoreMode.SINGLE) return null
         val script = ProfileWebView.bundledScript(activity) ?: return null
         val version = try {
             activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "0.0.0"
@@ -95,6 +137,7 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         val view = (result as? ProfileWebView.Result.Ready)?.view ?: return null
         view.sink = this
         view.onSheet = { sheet(it) }
+        if (core.mode == DataStoreMode.SINGLE) view.onOrigin = { VisitedOrigins.record(activity, it) }
         view.setBackgroundColor(background ?: Color.TRANSPARENT)
         container.addView(
             view,

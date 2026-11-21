@@ -17,8 +17,14 @@
 // commit (`didFailProvisional`, a TLS error never proceeds), a finished load, a dead render
 // process (R11: the host recreates the WebView and shows the error state).
 //
+// Sign-in (Task 17): every request of the WebView and of its profile's service workers meets
+// `SignInGuard` in `shouldInterceptRequest` (the in-WebView sign-in routes answer 403); the code
+// exchange runs in the top document's injected script (its own `fetch`), only while it is on the
+// profile origin (`post`).
+//
 // R9: without DOCUMENT_START_SCRIPT and WEB_MESSAGE_LISTENER (and MULTI_PROFILE for a named
-// profile) no profile WebView is made and no remote origin loads: `create` answers Unsupported.
+// profile; a WebView without it runs the single store, Decision 9) no profile WebView is made and
+// no remote origin loads: `create` answers Unsupported.
 // There is no addJavascriptInterface fallback.
 
 package com.capybarahq.shell
@@ -33,10 +39,13 @@ import android.os.Message
 import android.util.Log
 import android.webkit.JsResult
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.ServiceWorkerClient
+import android.webkit.ServiceWorkerController
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.JavaScriptReplyProxy
@@ -47,22 +56,58 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 
+/** The WebView feature check every decision goes through (one seam, so a debug build can lack one). */
+object WebViewSupport {
+    @Volatile private var lacking: Set<String> = emptySet()
+
+    /** Debug builds only: pretend the WebView lacks [features] (a device test of Decision 9). */
+    fun debugLack(features: Set<String>) {
+        check(BuildConfig.DEBUG) { "debugLack is for debug builds" }
+        lacking = features
+    }
+
+    fun isSupported(feature: String): Boolean = feature !in lacking && WebViewFeature.isFeatureSupported(feature)
+}
+
 /** R9: the WebView features a profile WebView cannot do without. */
 object ProfileWebViewSupport {
     /** Without these the app shows its native unsupported state and loads no remote origin. */
     val GATE = listOf(WebViewFeature.DOCUMENT_START_SCRIPT, WebViewFeature.WEB_MESSAGE_LISTENER)
 
-    val REQUIRED = listOf(
-        WebViewFeature.DOCUMENT_START_SCRIPT,
-        WebViewFeature.WEB_MESSAGE_LISTENER,
-        WebViewFeature.MULTI_PROFILE,
-    )
+    /** Features of a named profile; a WebView without MULTI_PROFILE uses the single store. */
+    val REQUIRED = GATE + WebViewFeature.MULTI_PROFILE
 
-    /** The required features `isSupported` lacks; empty when a profile WebView can be made. */
+    /** The required features `isSupported` lacks; empty when a named profile WebView can be made. */
     fun missing(isSupported: (String) -> Boolean): List<String> = REQUIRED.filterNot(isSupported)
 
     /** The gate features `isSupported` lacks: empty when the app may run at all. */
     fun missingGate(isSupported: (String) -> Boolean): List<String> = GATE.filterNot(isSupported)
+
+    sealed class Admission {
+        object Allowed : Admission()
+
+        /** The WebView lacks a required feature: show the unsupported state, load nothing. */
+        class Unsupported(val missing: List<String>) : Admission()
+
+        /** A caller error: the default profile where named profiles exist (R8). */
+        class Refused(val reason: String) : Admission()
+    }
+
+    /**
+     * May a profile WebView be made? [profileName] null means the single store (Decision 9): only
+     * on a WebView without MULTI_PROFILE, where the gate's features are still required. A named
+     * profile needs MULTI_PROFILE too; "Default" is never a name (R8).
+     */
+    fun admit(isSupported: (String) -> Boolean, profileName: String?): Admission {
+        val gate = missingGate(isSupported)
+        if (gate.isNotEmpty()) return Admission.Unsupported(gate)
+        val multi = isSupported(WebViewFeature.MULTI_PROFILE)
+        if (profileName == null) {
+            return if (multi) Admission.Refused("default_profile") else Admission.Allowed
+        }
+        if (profileName == "Default" || profileName.isBlank()) return Admission.Refused("default_profile")
+        return if (multi) Admission.Allowed else Admission.Unsupported(listOf(WebViewFeature.MULTI_PROFILE))
+    }
 }
 
 /** One gated call, as the runtime receives it (`ShellCallMessage` in src/runtime/protocol.ts). */
@@ -142,6 +187,9 @@ class ProfileWebView private constructor(
     /** Where a navigation that leaves the profile goes: the browser sheet (BrowserSheet.kt). */
     var onSheet: ((String) -> Unit)? = null
 
+    /** Every main-frame origin that starts loading (single store: the wipe must reach them). */
+    var onOrigin: ((String) -> Unit)? = null
+
     /** A connector OAuth leave-and-return under way (NavigationPolicy). */
     private var oauthReturn: OauthReturn? = null
     /** The origin of the main frame's last started page (a redirect keeps it). */
@@ -155,6 +203,8 @@ class ProfileWebView private constructor(
     /** The origin the main frame is loading (a certificate error there is a main-frame failure). */
     private var mainTarget: Origin? = null
     private var gone = false
+    /** Counts main-frame documents: an exchange whose document went away never reports. */
+    private var documentGeneration = 0L
 
     private var current: JavaScriptReplyProxy? = null
     private var currentDocId: String? = null
@@ -178,6 +228,17 @@ class ProfileWebView private constructor(
     companion object {
         private const val TAG = "CapybaraGate"
 
+        /**
+         * The only URLs a sign-in post may go to, exactly as the runtime builds them: the token
+         * exchange and the logout under the profile's base. The script passes the string to
+         * `fetch` unchanged, so nothing else may get through here.
+         */
+        fun isSignInPostUrl(url: String, base: String): Boolean =
+            url == "$base/api/v1/app-auth/token" || url == "$base/api/v1/auth/logout"
+
+        /** A sign-in post's total deadline, a little past the script's 30 s `AbortSignal.timeout`. */
+        const val POST_DEADLINE_MS: Long = 31_000
+
         /** An unanswered call ends after this long with `failed` (it ends sooner with its document). */
         const val DEFAULT_PENDING_LIFETIME_MS: Long = 600_000
         const val DEFAULT_PROFILE = "Default"
@@ -195,7 +256,8 @@ class ProfileWebView private constructor(
 
         /**
          * @param profileOrigin the normalized origin (`normalizeAddress(...).origin`).
-         * @param profileName the profile's own named androidx.webkit profile, never "Default" (R8).
+         * @param profileName the profile's own named androidx.webkit profile, never "Default" (R8); null
+         *   is the single store (Decision 9), allowed only where MULTI_PROFILE is absent.
          * @param state the initial `insets`, `capabilities` and `events` (`registry.descriptors`).
          * @param isSupported the feature check (injected for tests).
          */
@@ -203,23 +265,32 @@ class ProfileWebView private constructor(
             context: Context,
             profileId: String,
             profileOrigin: String,
-            profileName: String,
+            profileName: String?,
             shellVersion: String,
             state: JSONObject,
             script: String,
-            isSupported: (String) -> Boolean = WebViewFeature::isFeatureSupported,
+            isSupported: (String) -> Boolean = WebViewSupport::isSupported,
             pendingLifetimeMs: Long = DEFAULT_PENDING_LIFETIME_MS,
             base: String = profileOrigin,
         ): Result {
-            val missing = ProfileWebViewSupport.missing(isSupported)
-            if (missing.isNotEmpty()) return Result.Unsupported(missing)
-            if (profileName == DEFAULT_PROFILE || profileName.isBlank()) return Result.Refused("default_profile")
+            when (val admission = ProfileWebViewSupport.admit(isSupported, profileName)) {
+                is ProfileWebViewSupport.Admission.Unsupported -> return Result.Unsupported(admission.missing)
+                is ProfileWebViewSupport.Admission.Refused -> return Result.Refused(admission.reason)
+                ProfileWebViewSupport.Admission.Allowed -> {}
+            }
             val origin = Origin.parse(profileOrigin)
             if (origin == null || origin.serialized != profileOrigin) return Result.Refused("bad_origin")
 
             val view = ProfileWebView(context, profileId, origin, base, pendingLifetimeMs)
-            ProfileStore.getInstance().getOrCreateProfile(profileName)
-            WebViewCompat.setProfile(view, profileName)
+            // The profile's service workers meet the same sign-in guard as its pages. The single
+            // store (Decision 9) has one WebView at a time, so the process-wide client is its own.
+            if (profileName != null) {
+                val profile = ProfileStore.getInstance().getOrCreateProfile(profileName)
+                WebViewCompat.setProfile(view, profileName)
+                profile.serviceWorkerController.setServiceWorkerClient(SignInServiceWorkerClient(base))
+            } else {
+                ServiceWorkerController.getInstance().setServiceWorkerClient(SignInServiceWorkerClient(base))
+            }
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
             // R14: multiple windows on, so a target=_blank link reaches onCreateWindow (instead of
@@ -322,6 +393,13 @@ class ProfileWebView private constructor(
                 report(mapOf("event" to "accept", "kind" to "open", "origin" to origin.serialized))
                 route(post.url, isMainFrame = true, targetBlank = true)
             }
+            is ShellPost.PostResult -> {
+                // Only the injected script holds the port: the answer of a post sent to this document.
+                if (post.docId != currentDocId) return
+                posts[post.id]?.invoke(
+                    JSONObject().put("ok", post.ok).put("status", post.status).put("hasAccount", post.ok && post.hasAccount),
+                )
+            }
             is ShellPost.Hello -> {
                 report(mapOf("event" to "accept", "kind" to "hello", "origin" to origin.serialized))
                 if (post.docId != currentDocId) endDocument()
@@ -359,19 +437,95 @@ class ProfileWebView private constructor(
      */
     private fun endDocument() {
         pending.failAll()
+        failPosts()
         current = null
         val ended = currentDocId ?: return
         currentDocId = null
         sink?.onDocumentEnded(this, ended)
     }
 
+    /**
+     * ProfileHost.close: no load continues, the document ends (owed calls answered, the runtime
+     * hears `ended`) and the page is replaced by about:blank before the caller destroys the view.
+     * `loadUrl` from native is not a page navigation, so the gate's routing does not apply.
+     */
+    fun close() {
+        stopLoading()
+        endDocument()
+        loadUrl("about:blank")
+    }
+
     /** No expiry callback outlives the WebView (each would retain it for up to the lifetime). */
     override fun destroy() {
         pending.clear()
+        failPosts()
         current = null
         currentDocId = null
         onSheet = null
         super.destroy()
+    }
+
+    // ---- Sign-in (Task 17) ----
+
+    /** The top document's origin when it is the profile origin, else null. */
+    fun currentProfileOrigin(): String? {
+        val now = NavUrl.parse(url ?: "")?.origin
+        return if (committedOrigin == profileOrigin && now == profileOrigin) profileOrigin.serialized else null
+    }
+
+    /** After a sign-in: the page again when it is on the profile origin, else the base. */
+    fun reloadAfterSignIn() {
+        if (currentProfileOrigin() != null) reload() else loadBase()
+    }
+
+    /** Sign-in posts sent to the current document and not answered yet: id -> its callback. */
+    private val posts = HashMap<String, (JSONObject) -> Unit>()
+
+    /**
+     * A sign-in POST from the top document (Task 17 fix I1): the code exchange (`body` set) or the
+     * logout of an unwanted session (`body` null). It goes as a `post` push to the document that
+     * said hello, whose injected script took the port off `window` at document start and runs the
+     * request with the `fetch` it captured then, so a page script that patched `fetch` never sees
+     * the code or the verifier. Refused unless the top document and `url` are on the profile
+     * origin and the port is gone from the page (`"capybaraShellPort" in window` is false). `done`
+     * gets `{ ok, status, hasAccount }` once: the script's answer, a refusal, the document ending,
+     * or the total deadline ([POST_DEADLINE_MS]).
+     */
+    fun post(url: String, body: String?, done: (JSONObject) -> Unit) {
+        val failed = { JSONObject().put("ok", false).put("status", 0).put("hasAccount", false) }
+        if (currentProfileOrigin() == null || !isSignInPostUrl(url, base) || current == null) {
+            done(failed())
+            return
+        }
+        val generation = documentGeneration
+        evaluateJavascript("\"${ShellMessageListener.PORT_NAME}\" in window") { exposed ->
+            val proxy = current
+            if (exposed != "false" || proxy == null || generation != documentGeneration) {
+                report(mapOf("event" to "post-refused", "exposed" to exposed))
+                return@evaluateJavascript done(failed())
+            }
+            val id = java.util.UUID.randomUUID().toString()
+            var finished = false
+            val finish = { result: JSONObject ->
+                if (!finished) {
+                    finished = true
+                    posts.remove(id)
+                    done(result)
+                }
+            }
+            posts[id] = finish
+            main.postDelayed({ finish(failed()) }, POST_DEADLINE_MS)
+            proxy.postMessage(
+                JSONObject().put("type", "post").put("id", id).put("url", url)
+                    .put("body", body ?: JSONObject.NULL).toString(),
+            )
+        }
+    }
+
+    /** Every unanswered sign-in post fails (its document ended or the WebView went away). */
+    private fun failPosts() {
+        for (finish in posts.values.toList()) finish(JSONObject().put("ok", false).put("status", 0).put("hasAccount", false))
+        posts.clear()
     }
 
     // ---- Navigation and loading ----
@@ -455,7 +609,9 @@ class ProfileWebView private constructor(
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             // A new main-frame document: the one that said hello is gone.
+            documentGeneration++
             endDocument()
+            NavUrl.parse(url ?: "")?.origin?.let { onOrigin?.invoke(it.serialized) }
             if (url != null && backstop(url)) return
             committedOrigin = NavUrl.parse(url ?: "")?.origin
         }
@@ -468,6 +624,10 @@ class ProfileWebView private constructor(
                 committedOrigin = NavUrl.parse(url)?.origin
             }
         }
+
+        /** Off the main thread: the in-WebView sign-in routes answer 403 (SignInGuard.kt). */
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            SignInGuard.intercept(request.method, request.url.toString(), base, SignInGuard::forbidden)
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (mainFrameFailed || gone) return
@@ -518,4 +678,10 @@ class ProfileWebView private constructor(
         val m = monitor
         if (m != null) m.onGate(this, event) else Log.i(TAG, event.toString())
     }
+}
+
+/** The profile's service workers: the same sign-in guard as its pages. */
+class SignInServiceWorkerClient(private val base: String) : ServiceWorkerClient() {
+    override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+        SignInGuard.intercept(request.method, request.url.toString(), base, SignInGuard::forbidden)
 }

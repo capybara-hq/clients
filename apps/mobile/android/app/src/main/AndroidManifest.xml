@@ -22,15 +22,28 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- The sign-in callback: ${brandScheme}://auth/callback (brand.properties). -->
+        </activity>
+
+        <!-- The sign-in callback: ${brandScheme}://auth/callback (brand.properties), handed to
+             the pending Custom Tabs attempt (AuthSession.kt). -->
+        <activity
+            android:name=".AuthCallbackActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="${brandScheme}" android:host="auth" />
+                <data android:scheme="${brandScheme}" android:host="auth" android:path="/callback" />
             </intent-filter>
-
         </activity>
+
+        <!-- Managed configurations: presetUrl and lockToPreset (ManagedConfig.kt). -->
+        <meta-data
+            android:name="android.content.APP_RESTRICTIONS"
+            android:resource="@xml/app_restrictions" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

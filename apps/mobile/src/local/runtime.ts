@@ -7,8 +7,13 @@
 //
 // Start: `startRoute` picks the profile to open or the address page (a debug build launched by a
 // UI test opens the test's loopback origin instead, or the address page over an empty in-memory
-// profile list). Managed configuration (Task 18) is not read yet. The address page discovers and
-// adds a deployment through this document (src/runtime/address-bridge.ts), then it opens.
+// profile list). Managed configuration (src/runtime/managed.ts) decides which profiles are
+// visible; the gates that follow from it (listing, switching, adding, what stays on screen and
+// alive natively) live in src/runtime/profile-access.ts, and this file only wires them. The
+// address page discovers and adds a deployment through this document
+// (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser sign-in for it
+// (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment too old for
+// app sign-in gets the too-old state and no signIn@1.
 import { registerPlugin } from "@capacitor/core";
 import { Haptics } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
@@ -26,12 +31,7 @@ import {
   menuHostPortFrom,
 } from "../runtime/capabilities/menu.ts";
 import { openExternalPortFrom } from "../runtime/capabilities/open-external.ts";
-import {
-  effectivePreset,
-  type HttpGetNative,
-  httpGetPortFrom,
-  startRoute,
-} from "../runtime/discovery.ts";
+import { type HttpGetNative, httpGetPortFrom, startRoute } from "../runtime/discovery.ts";
 import { type ErrorStateMessage, isErrorPageMessage } from "../runtime/error-page.ts";
 import {
   type CapybaraHostPlugin,
@@ -43,6 +43,14 @@ import {
 import { createLoader, type ErrorState, type LoaderProfile } from "../runtime/loader.ts";
 import { createLocalFrames, type FrameHandle, type LocalPage } from "../runtime/local-frames.ts";
 import {
+  createManagedPolicy,
+  MANAGED_CONFIG_PLUGIN,
+  type ManagedConfigNative,
+  type ManagedPolicy,
+  managedSourceFrom,
+} from "../runtime/managed.ts";
+import { createProfileAccess, type ProfileAccess } from "../runtime/profile-access.ts";
+import {
   createProfileStore,
   DATA_STORES_PLUGIN,
   type DataStoresNative,
@@ -53,6 +61,15 @@ import {
   preloadPrefs,
 } from "../runtime/profiles.ts";
 import { createRegistry, serveCalls } from "../runtime/registry.ts";
+import {
+  appInfoFrom,
+  createSignIn,
+  createSignInSupport,
+  randomState,
+  type SignInNative,
+  signInPortsFrom,
+} from "../runtime/sign-in.ts";
+import { removeBlockRulesOnRemoval } from "../runtime/sign-in-block.ts";
 import { createSplash } from "../runtime/splash.ts";
 
 /**
@@ -67,7 +84,9 @@ interface LaunchOptions {
 
 type HostPlugin = CapybaraHostPlugin &
   ProfileHostPlugin &
-  HttpGetNative & {
+  HttpGetNative &
+  SignInNative & {
+    removeBlockRules(options: { profileId: string }): Promise<void>;
     launchOptions(): Promise<LaunchOptions>;
     openExternal(options: { url: string }): Promise<void>;
   };
@@ -121,6 +140,9 @@ async function main(): Promise<void> {
 
   let list: () => LoaderProfile[];
   let profiles: ProfileStore | null = null;
+  let managed: ManagedPolicy | null = null;
+  // The lock gates; made once the loader exists (policy changes before that wait in `start`).
+  let access: ProfileAccess | null = null;
   let switchTo: (id: string) => Promise<LoaderProfile | null>;
   let start: Promise<"address" | { profileId: string }>;
   if (options.testOrigin && options.testBase && !options.testAddress) {
@@ -146,9 +168,18 @@ async function main(): Promise<void> {
       locale,
     });
     profiles = store;
-    list = () => store.list();
-    switchTo = async (id) => ((await store.setCurrent(id)) === "switched" ? store.current() : null);
-    start = startRoute(brand, null, store);
+    removeBlockRulesOnRemoval(store, plugin);
+    const policy = await createManagedPolicy({
+      brand,
+      source: managedSourceFrom(registerPlugin<ManagedConfigNative>(MANAGED_CONFIG_PLUGIN)),
+      profiles: store,
+      changed: () => access?.reconcile(),
+      log: (message) => console.warn(`[managed] ${message}`),
+    });
+    managed = policy;
+    list = () => access?.list() ?? policy.visible();
+    switchTo = async (id) => (access ? access.switchTo(id) : null);
+    start = startRoute(brand, policy.values(), store);
   }
 
   const registry = createRegistry<LoaderProfile>({ host, profiles: { list: () => list() } });
@@ -163,7 +194,21 @@ async function main(): Promise<void> {
   });
   const appearance = createAppearanceStore(backend);
   let loader: ReturnType<typeof createLoader> | undefined;
+  const httpGet = httpGetPortFrom(plugin);
+  const support = createSignInSupport({ httpGet, onTooOld: (id) => loader?.tooOld(id) });
+  const info = await appInfoFrom(plugin);
+  const signIn = createSignIn<LoaderProfile>({
+    ...signInPortsFrom(plugin),
+    deviceName: info.deviceName,
+    appVersion: info.appVersion,
+    now: () => Date.now(),
+    newState: randomState,
+    scheme: brand.scheme,
+    // The stored profiles now: an attempt ends when its profile is removed or re-pointed.
+    profiles: { list: () => list() },
+  });
   registerMobileCapabilities(registry, {
+    signIn: { capability: signIn.capability, available: (p) => support.available(p) },
     chrome: createChrome({
       appearance,
       native: { setAppearance: (id, look) => profileHost.setAppearance(id, look) },
@@ -188,24 +233,32 @@ async function main(): Promise<void> {
     const message: ErrorStateMessage = { type: "error-state", state: errorState, locale: locale() };
     frames.post(message);
   };
-  const openProfile = (id: string) =>
-    void switchTo(id).then((next) => {
-      if (next) void loader?.open(next);
-    });
+  // Resolves whether it opened. Every open asks the deployment whether it can do app sign-in
+  // (the loader's `opened`; too old: the too-old state), whoever opened it.
+  const openProfile = async (id: string): Promise<boolean> => {
+    const next = await switchTo(id);
+    if (!next) return false;
+    await loader?.open(next);
+    return true;
+  };
   const showError = () => frames.show("error", "error/index.html");
   const address = createAddressHost({
-    httpGet: httpGetPortFrom(plugin),
+    httpGet,
     lockedBase: () => {
-      const preset = effectivePreset(brand, null);
-      return preset?.locked ? preset.base : null;
+      const policy = managed?.policy();
+      return policy?.locked ? policy.presetUrl : null;
     },
     add: async (found) => {
-      if (!profiles) throw new Error("no profile store");
-      return profiles.add(found);
+      if (!access) throw new Error("no profile store");
+      return access.add(found);
     },
+    // The person tapped Sign in: the deployment opens under the browser sign-in, which signs it
+    // in (or leaves the web's own sign-in page with signIn@1 when they cancel).
     opened: (profileId) => {
       frames.hide();
-      openProfile(profileId);
+      void openProfile(profileId)
+        .then((opened) => (opened ? signIn.begin(profileId) : undefined))
+        .catch(() => {});
     },
     closed: () => (errorState ? showError() : frames.hide()),
     post: (message) => {
@@ -221,7 +274,7 @@ async function main(): Promise<void> {
   onPageMessage = (page, data) => {
     if (page === "error" && isErrorPageMessage(data)) {
       if (data.type === "error-page-ready") sendErrorState();
-      else if (data.action === "open") openProfile(data.profileId);
+      else if (data.action === "open") void openProfile(data.profileId).catch(() => {});
       else if (data.action === "retry") void loader?.retry();
       else showAddress();
     } else if (page === "address" && isAddressPageMessage(data)) {
@@ -247,16 +300,36 @@ async function main(): Promise<void> {
     splash,
     errorView,
     profiles: () => list(),
+    opened: (profile) => void support.check(profile),
   });
 
-  const route = await start;
-  const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
-  if (first) {
-    await loader.open(first);
-  } else {
+  const toAddress = () => {
     splash.failed();
     showAddress();
+  };
+  if (profiles && managed) {
+    access = createProfileAccess({
+      store: profiles,
+      policy: managed,
+      loader,
+      showAddress: toAddress,
+    });
   }
+
+  const route = await start;
+  if (access) {
+    // Changes received during start are applied first; a hidden route falls back.
+    const first = await access.start(route);
+    if (first?.open) await loader.open(first.profile);
+    else if (!first) toAddress();
+  } else {
+    const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
+    if (first) await loader.open(first);
+    else toAddress();
+  }
+  // Orphaned stores of earlier removals whose native deletion failed; after the first screen, so
+  // a slow native removal never holds up the launch.
+  void profiles?.sweep().catch(() => {});
 }
 
 main().catch(() => {

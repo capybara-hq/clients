@@ -572,7 +572,7 @@ describe("the Android transport", () => {
     return {
       win: { capybaraShellPort: port },
       sent,
-      fire: (data: unknown) => listener?.({ data }),
+      fire: (data: unknown) => listener?.(new MessageEvent("message", { data })),
     };
   }
 
@@ -615,5 +615,465 @@ describe("the Android transport", () => {
       event: "onSelect",
       payload: 1,
     });
+  });
+});
+
+/**
+ * A platform Response as the Android transport sees it at document start (`window.Response`):
+ * its getters and `text` check the brand (a private field), like the real ones, so an object the
+ * page made up fails them; `url` is the fetched URL (a page-made Response has none).
+ */
+class FakeResponse {
+  readonly #url: string;
+  readonly #status: number;
+  readonly #body: string;
+  constructor(url: string, status: number, body: unknown) {
+    this.#url = url;
+    this.#status = status;
+    this.#body = typeof body === "string" ? body : JSON.stringify(body);
+  }
+  get url(): string {
+    return this.#url;
+  }
+  get status(): number {
+    return this.#status;
+  }
+  get ok(): boolean {
+    return this.#status >= 200 && this.#status < 300;
+  }
+  text(): Promise<string> {
+    return Promise.resolve(this.#body);
+  }
+  json(): Promise<unknown> {
+    return Promise.resolve(JSON.parse(this.#body));
+  }
+}
+
+describe("the Android sign-in post (Task 17 fix I1: never through the page's fetch)", () => {
+  const ORIGIN = "https://a.example";
+  function setup(
+    answer: { status: number; body: unknown } = { status: 200, body: { account: {} } },
+  ) {
+    const sent: string[] = [];
+    let listener: ((e: { data: unknown }) => void) | undefined;
+    const port = {
+      postMessage: (m: string) => sent.push(m),
+      addEventListener: (_t: "message", l: (e: { data: unknown }) => void) => {
+        listener = l;
+      },
+    };
+    const original = vi.fn(
+      async (url: string, _init: Record<string, unknown>) =>
+        new FakeResponse(url, answer.status, answer.body),
+    );
+    const win: Record<string, unknown> = {
+      capybaraShellPort: port,
+      fetch: original,
+      Response: FakeResponse,
+      location: { origin: ORIGIN },
+    };
+    const t = androidTransport(win);
+    const pushes = vi.fn();
+    t?.onPush(pushes);
+    t?.hello("doc-1234-5678");
+    sent.length = 0;
+    const results = async () => {
+      await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+      return sent.map((s) => JSON.parse(s));
+    };
+    return {
+      win,
+      original,
+      pushes,
+      results,
+      fire: (data: unknown) => listener?.(new MessageEvent("message", { data })),
+    };
+  }
+  const post = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "post",
+      id: "p-1",
+      url: `${ORIGIN}/api/v1/app-auth/token`,
+      body: '{"code":"c","codeVerifier":"v","redirectUri":"r"}',
+      ...over,
+    });
+
+  test("the port is gone from the page's window once the script took it", () => {
+    const { win } = setup();
+    expect("capybaraShellPort" in win).toBe(false);
+  });
+
+  test("runs the fetch captured at document start with the fixed request and answers 3 fields", async () => {
+    const { win, original, pushes, results, fire } = setup();
+    // A page script patches fetch later: it must never see the post.
+    const patched = vi.fn();
+    win.fetch = patched;
+    fire(post());
+    expect(await results()).toEqual([
+      {
+        type: "post-result",
+        docId: "doc-1234-5678",
+        id: "p-1",
+        ok: true,
+        status: 200,
+        hasAccount: true,
+      },
+    ]);
+    expect(patched).not.toHaveBeenCalled();
+    expect(pushes).not.toHaveBeenCalled();
+    const [url, init] = original.mock.calls[0] ?? [];
+    expect(url).toBe(`${ORIGIN}/api/v1/app-auth/token`);
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
+      body: '{"code":"c","codeVerifier":"v","redirectUri":"r"}',
+      credentials: "include",
+      redirect: "error",
+      cache: "no-store",
+    });
+  });
+
+  test("a logout post has no body; a refused one reports its status only", async () => {
+    const { original, results, fire } = setup({ status: 400, body: { secret: "x" } });
+    fire(post({ id: "p-2", url: `${ORIGIN}/api/v1/auth/logout`, body: null }));
+    expect(await results()).toEqual([
+      {
+        type: "post-result",
+        docId: "doc-1234-5678",
+        id: "p-2",
+        ok: false,
+        status: 400,
+        hasAccount: false,
+      },
+    ]);
+    expect(original.mock.calls[0]?.[1]).not.toHaveProperty("body");
+  });
+
+  test("a malformed post is never fetched (native checks the URL's origin: ProfileWebView.post)", async () => {
+    const { original, fire } = setup();
+    fire(post({ id: 7 }));
+    fire(post({ body: 1 }));
+    fire(post({ url: undefined }));
+    await Promise.resolve();
+    expect(original).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Android sign-in post survives page prototype tampering (Task 17 fix round 2)", () => {
+  const ORIGIN = "https://a.example";
+  const URL_TOKEN = `${ORIGIN}/api/v1/app-auth/token`;
+  const BODY = '{"code":"c","codeVerifier":"v-secret","redirectUri":"r"}';
+
+  function setup() {
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    const port = {
+      postMessage: (m: string) => sent.push(m),
+      addEventListener: (_t: "message", l: (e: unknown) => void) => {
+        listener = l;
+      },
+    };
+    const original = vi.fn(
+      async (url: string, _init: Record<string, unknown>) =>
+        new FakeResponse(url, 200, { account: {} }),
+    );
+    const win: Record<string, unknown> = {
+      capybaraShellPort: port,
+      fetch: original,
+      Response: FakeResponse,
+      location: { origin: ORIGIN },
+    };
+    const t = androidTransport(win as never);
+    t?.hello("doc-1234-5678");
+    sent.length = 0;
+    const fire = () =>
+      listener?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY }),
+        }),
+      );
+    const done = () => vi.waitFor(() => expect(sent.length).toBe(1));
+    return { original, fire, done };
+  }
+
+  test("a page getter on MessageEvent.prototype.data never runs", async () => {
+    const { original, fire, done } = setup();
+    const saved = Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data");
+    const leaked: unknown[] = [];
+    Object.defineProperty(MessageEvent.prototype, "data", {
+      configurable: true,
+      get() {
+        const v = saved?.get?.call(this);
+        leaked.push(v);
+        return v;
+      },
+    });
+    try {
+      fire();
+      await done();
+    } finally {
+      if (saved) Object.defineProperty(MessageEvent.prototype, "data", saved);
+    }
+    expect(leaked).toEqual([]);
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  test("an event with its own data value is read from the descriptor; an accessor is ignored", async () => {
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    const original = vi.fn(async (url: string) => new FakeResponse(url, 200, { account: {} }));
+    const win: Record<string, unknown> = {
+      capybaraShellPort: {
+        postMessage: (m: string) => sent.push(m),
+        addEventListener: (_t: "message", l: (e: unknown) => void) => {
+          listener = l;
+        },
+      },
+      fetch: original,
+      Response: FakeResponse,
+    };
+    androidTransport(win as never)?.hello("doc-1234-5678");
+    sent.length = 0;
+    const data = JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY });
+    const touched = vi.fn(() => data);
+    listener?.(Object.defineProperty({}, "data", { get: touched }));
+    listener?.({ data });
+    await vi.waitFor(() => expect(sent.length).toBe(1));
+    expect(touched).not.toHaveBeenCalled();
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  test("a page getter on Object.prototype never sees the request init", async () => {
+    const { original, fire, done } = setup();
+    const leaked: unknown[] = [];
+    for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+      Object.defineProperty(Object.prototype, name, {
+        configurable: true,
+        get() {
+          leaked.push((this as { body?: unknown }).body);
+          return undefined;
+        },
+      });
+    }
+    try {
+      fire();
+      await done();
+      const init = original.mock.calls[0]?.[1] as Record<string, unknown>;
+      // What fetch reads off the init (every dictionary member) never reaches Object.prototype.
+      for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+        void init[name];
+        void (init.headers as Record<string, unknown>)[name];
+      }
+      expect(Object.getPrototypeOf(init)).toBeNull();
+      expect(Object.getPrototypeOf(init.headers)).toBeNull();
+    } finally {
+      for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+        delete (Object.prototype as Record<string, unknown>)[name];
+      }
+    }
+    expect(leaked).toEqual([]);
+  });
+
+  test("a page getter on URL.prototype never redirects the post", async () => {
+    const { original, fire, done } = setup();
+    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href");
+    const origin = Object.getOwnPropertyDescriptor(URL.prototype, "origin");
+    const touched: string[] = [];
+    Object.defineProperty(URL.prototype, "href", {
+      configurable: true,
+      get() {
+        touched.push("href");
+        return "https://attacker.example/steal";
+      },
+    });
+    Object.defineProperty(URL.prototype, "origin", {
+      configurable: true,
+      get() {
+        touched.push("origin");
+        return ORIGIN;
+      },
+    });
+    try {
+      fire();
+      await done();
+    } finally {
+      if (href) Object.defineProperty(URL.prototype, "href", href);
+      if (origin) Object.defineProperty(URL.prototype, "origin", origin);
+    }
+    expect(touched).toEqual([]);
+    expect(original.mock.calls[0]?.[0]).toBe(URL_TOKEN);
+  });
+});
+
+describe("the Android sign-in outcome cannot be forged by the page (wave T2: N1, N2)", () => {
+  const ORIGIN = "https://a.example";
+  const URL_TOKEN = `${ORIGIN}/api/v1/app-auth/token`;
+  const BODY = '{"code":"c","codeVerifier":"v-secret","redirectUri":"r"}';
+
+  /** The transport made at document start; `answer` is what the deployment really sends. */
+  function setup(answer: { status: number; body: unknown }) {
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    const original = vi.fn(
+      async (url: string, _init: Record<string, unknown>) =>
+        new FakeResponse(url, answer.status, answer.body),
+    );
+    const win: Record<string, unknown> = {
+      capybaraShellPort: {
+        postMessage: (m: string) => sent.push(m),
+        addEventListener: (_t: "message", l: (e: unknown) => void) => {
+          listener = l;
+        },
+      },
+      fetch: original,
+      Response: FakeResponse,
+    };
+    androidTransport(win as never)?.hello("doc-1234-5678");
+    sent.length = 0;
+    const fire = () =>
+      listener?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY }),
+        }),
+      );
+    const result = async () => {
+      await vi.waitFor(() => expect(sent.length).toBe(1));
+      return JSON.parse(sent[0] ?? "") as Record<string, unknown>;
+    };
+    return { original, fire, result };
+  }
+  const real = (ok: boolean, status: number, hasAccount: boolean) => ({
+    type: "post-result",
+    docId: "doc-1234-5678",
+    id: "p-1",
+    ok,
+    status,
+    hasAccount,
+  });
+
+  test("a patched Promise.prototype.then never forges the outcome (the M1 revoke stays)", async () => {
+    const { fire, result } = setup({ status: 200, body: {} });
+    const then = Promise.prototype.then;
+    // biome-ignore lint/suspicious/noThenProperty: the page's patch under test
+    Promise.prototype.then = function (this: Promise<unknown>, onOk?: unknown, onErr?: unknown) {
+      const forge = (v: unknown) =>
+        v !== null && typeof v === "object" && "hasAccount" in v ? { ...v, hasAccount: true } : v;
+      const wrapped =
+        typeof onOk === "function"
+          ? (v: unknown) => (onOk as (x: unknown) => unknown)(forge(v))
+          : onOk;
+      return Reflect.apply(then, this, [wrapped, onErr]);
+    } as typeof then;
+    try {
+      fire();
+      expect(await result()).toEqual(real(true, 200, false));
+    } finally {
+      // biome-ignore lint/suspicious/noThenProperty: restoring the original
+      Promise.prototype.then = then;
+    }
+  });
+
+  test("a page getter on Response.prototype after start is never asked", async () => {
+    const { fire, result } = setup({ status: 400, body: {} });
+    const ok = Object.getOwnPropertyDescriptor(FakeResponse.prototype, "ok");
+    Object.defineProperty(FakeResponse.prototype, "ok", { configurable: true, get: () => true });
+    try {
+      fire();
+      expect(await result()).toEqual(real(false, 400, false));
+    } finally {
+      if (ok) Object.defineProperty(FakeResponse.prototype, "ok", ok);
+    }
+  });
+
+  test("Object.prototype.then cannot swap in another response or other data", async () => {
+    // Resolving a promise with an object asks it for `then`: a page getter on Object.prototype
+    // answers for the Response fetch resolves with and for any parsed body.
+    const forgedResponse = new FakeResponse("https://attacker.example/x", 200, { account: {} });
+    // biome-ignore lint/suspicious/noThenProperty: the page's patch under test
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get(this: unknown) {
+        if (this instanceof FakeResponse && this !== forgedResponse) {
+          return (resolve: (v: unknown) => void) => resolve(forgedResponse);
+        }
+        if (
+          this !== null &&
+          typeof this === "object" &&
+          Object.getPrototypeOf(this) === Object.prototype &&
+          !Object.hasOwn(this, "account") &&
+          Object.keys(this).length === 0
+        ) {
+          return (resolve: (v: unknown) => void) => resolve({ account: {} });
+        }
+        return undefined;
+      },
+    });
+    try {
+      const swapped = setup({ status: 400, body: {} });
+      swapped.fire();
+      const first = await swapped.result();
+      expect(first.ok).toBe(false);
+      expect(first.hasAccount).toBe(false);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).then;
+    }
+  });
+
+  test("a parsed body never takes `account` from Object.prototype", async () => {
+    const { fire, result } = setup({ status: 200, body: {} });
+    Object.defineProperty(Object.prototype, "account", { configurable: true, get: () => ({}) });
+    try {
+      fire();
+      expect(await result()).toEqual(real(true, 200, false));
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).account;
+    }
+  });
+
+  test("Object.prototype.toJSON never rewrites the result native reads", async () => {
+    const { fire, result } = setup({ status: 200, body: {} });
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value(this: Record<string, unknown>) {
+        return "type" in this && this.type === "post-result" ? { ...this, hasAccount: true } : this;
+      },
+    });
+    try {
+      fire();
+      expect(await result()).toEqual(real(true, 200, false));
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).toJSON;
+    }
+  });
+
+  test("works without Object.hasOwn (Chromium before 93)", async () => {
+    const hasOwn = Object.hasOwn;
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    // @ts-expect-error: an older WebView has none
+    delete Object.hasOwn;
+    try {
+      androidTransport({
+        capybaraShellPort: {
+          postMessage: (m: string) => sent.push(m),
+          addEventListener: (_t: "message", l: (e: unknown) => void) => {
+            listener = l;
+          },
+        },
+        fetch: async (url: string) => new FakeResponse(url, 200, { account: {} }),
+        Response: FakeResponse,
+      } as never)?.hello("doc-1234-5678");
+      sent.length = 0;
+      listener?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY }),
+        }),
+      );
+      // The assertion library itself needs Object.hasOwn: wait without it.
+      for (let i = 0; i < 20 && sent.length === 0; i++) await Promise.resolve();
+    } finally {
+      Object.hasOwn = hasOwn;
+    }
+    expect(sent.map((m) => JSON.parse(m))).toEqual([real(true, 200, true)]);
   });
 });

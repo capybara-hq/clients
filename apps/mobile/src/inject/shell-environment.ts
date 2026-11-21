@@ -280,24 +280,199 @@ interface AndroidPort {
   addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
 }
 
-/** Android: the web message port; replies, drops and pushes all arrive on it as JSON. */
+type FetchLike = (url: string, init: Record<string, unknown>) => Promise<unknown>;
+type Getter = (this: unknown) => unknown;
+
+/**
+ * Android: the web message port; replies, drops and pushes all arrive on it as JSON.
+ *
+ * Sign-in (Task 17 fix I1): the port is taken off `window` here, before any page script runs, so a
+ * page can neither listen on it nor post through it; only this closure holds it. Native sends the
+ * code exchange (and the logout of an unwanted session) as a `post` push, and this script runs it
+ * with the `fetch` it captured at document start: a page that patches `fetch` later never sees the
+ * code, the verifier or the redirect URI. Only `{ ok, status, hasAccount }` goes back.
+ *
+ * Android has no isolated world, so everything on the post's path is taken at document start
+ * (fix round 2): the message data is read through the original `MessageEvent.prototype.data`
+ * getter, the request init and headers have no prototype (a page getter on `Object.prototype` is
+ * never asked for a missing member), and native's checked URL string goes to the saved `fetch`
+ * as is (no `URL.prototype` getter re-derives it).
+ *
+ * The outcome is computed the same way (wave T2, N1), so a page cannot forge it (for example
+ * `hasAccount` to skip the revoke of an unwanted session): promises are chained with the saved
+ * `Promise.prototype.then`, each with an own `constructor` of undefined (no species lookup); the
+ * response is read through `Response.prototype` getters and `text` saved at start; a response
+ * whose URL is not the one posted (one a page's `Object.prototype.then` swapped in while fetch
+ * resolved) is a failure; the body is text (a string resolves without a `then` lookup) parsed by
+ * the saved `JSON.parse`, and `account` is read as an own value; the result native reads is a
+ * record with no prototype (no `toJSON`). `Object.hasOwn` is not used: it needs Chromium 93, and
+ * the saved `Object.prototype.hasOwnProperty` works on every WebView with the gate's features.
+ */
 export function androidTransport(win: Record<string, unknown>): NativeTransport | null {
   const port = win[ANDROID_PORT_NAME] as AndroidPort | undefined;
   if (!port || typeof port.postMessage !== "function") return null;
   const post = port.postMessage.bind(port);
+  try {
+    delete win[ANDROID_PORT_NAME];
+  } catch {
+    // Native checks the port is gone before it sends a post (`"capybaraShellPort" in window`).
+  }
   const stringify = JSON.stringify;
   const parse = JSON.parse;
+  const apply = Reflect.apply;
+  const createObject = Object.create;
+  const defineProperty = Object.defineProperty;
+  const ownDescriptor = Object.getOwnPropertyDescriptor;
+  const ownPropertyCheck = Object.prototype.hasOwnProperty;
+  const hasOwn = (o: object, key: string): boolean => apply(ownPropertyCheck, o, [key]) === true;
+  const promiseThen = Promise.prototype.then;
+  const messageData =
+    typeof MessageEvent === "function"
+      ? Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data")?.get
+      : undefined;
+  const fetchAtStart =
+    typeof win.fetch === "function" ? (win.fetch as FetchLike).bind(win) : undefined;
+  const responseClass = win.Response as ((...args: never[]) => unknown) | undefined;
+  const responseProto =
+    typeof responseClass === "function" ? (responseClass.prototype as object) : undefined;
+  const getterAtStart = (name: string): Getter | undefined => {
+    const d = responseProto ? ownDescriptor(responseProto, name) : undefined;
+    return typeof d?.get === "function" ? (d.get as Getter) : undefined;
+  };
+  const responseOk = getterAtStart("ok");
+  const responseStatus = getterAtStart("status");
+  const responseUrl = getterAtStart("url");
+  const textDescriptor = responseProto ? ownDescriptor(responseProto, "text") : undefined;
+  const responseText =
+    typeof textDescriptor?.value === "function" ? (textDescriptor.value as Getter) : undefined;
+  const timeout =
+    typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout.bind(AbortSignal)
+      : undefined;
   const pending = new Map<string, (result: ShellCallResult) => void>();
   let receiver: ((push: { type: string }) => void) | undefined;
+  let docId = "";
+
+  /** A record with no prototype: reading a member it lacks never reaches a page getter. */
+  const bare = (): Record<string, unknown> => createObject(null) as Record<string, unknown>;
+
+  /** `p.then(onOk, onErr)` with nothing looked up on the page's prototypes. */
+  const chain = (p: unknown, onOk: (v: unknown) => void, onErr: () => void): void => {
+    const noSpecies = bare();
+    noSpecies.value = undefined;
+    defineProperty(p, "constructor", noSpecies as PropertyDescriptor);
+    apply(promiseThen, p, [onOk, onErr]);
+  };
+
+  /** Runs the post; `done` is called once with the outcome, never with a page-made value. */
+  function runPost(
+    url: string,
+    body: string | null,
+    done: (ok: boolean, status: number, hasAccount: boolean) => void,
+  ): void {
+    let finished = false;
+    const finish = (ok: boolean, status: number, hasAccount: boolean) => {
+      if (finished) return;
+      finished = true;
+      done(ok, status, hasAccount);
+    };
+    const fail = () => finish(false, 0, false);
+    if (!fetchAtStart || !responseOk || !responseStatus || !responseUrl || !responseText) {
+      fail();
+      return;
+    }
+    const headers = bare();
+    if (body !== null) headers["Content-Type"] = "application/json";
+    headers["X-Capybara-Csrf"] = "1";
+    const init = bare();
+    init.method = "POST";
+    init.headers = headers;
+    init.credentials = "include";
+    init.redirect = "error";
+    init.cache = "no-store";
+    if (body !== null) init.body = body;
+    if (timeout) init.signal = timeout(30000);
+    try {
+      // Native checked `url` is on the profile origin; it goes to fetch as the string it sent.
+      chain(
+        fetchAtStart(url, init),
+        (res) => {
+          try {
+            // `redirect: "error"`: the response fetch made carries the URL posted, one a page made
+            // up carries none (the brand-checked getters throw on anything but a Response).
+            if (apply(responseUrl, res, []) !== url) return fail();
+            const status = apply(responseStatus, res, []);
+            if (typeof status !== "number") return fail();
+            if (apply(responseOk, res, []) !== true) return finish(false, status, false);
+            chain(
+              apply(responseText, res, []),
+              (text) => {
+                let hasAccount = false;
+                try {
+                  const data: unknown = typeof text === "string" ? parse(text) : null;
+                  if (data !== null && typeof data === "object" && hasOwn(data, "account")) {
+                    const own = ownDescriptor(data, "account");
+                    const account = own && hasOwn(own, "value") ? own.value : null;
+                    hasAccount = account !== null && typeof account === "object";
+                  }
+                } catch {}
+                finish(true, status, hasAccount);
+              },
+              () => finish(true, status, false),
+            );
+          } catch {
+            fail();
+          }
+        },
+        fail,
+      );
+    } catch {
+      fail();
+    }
+  }
+
   port.addEventListener("message", (event) => {
     let push: unknown;
     try {
-      push = typeof event.data === "string" ? parse(event.data) : undefined;
+      // Only the platform dispatches on this port. Its event carries `data` as an own value (read
+      // from the descriptor, so no getter runs), or it is a MessageEvent whose `data` getter is
+      // the one saved at document start: a page's later patch of either is never asked.
+      const own = ownDescriptor(event, "data");
+      let data: unknown;
+      if (own) {
+        if (!("value" in own)) return;
+        data = own.value;
+      } else if (messageData) {
+        data = apply(messageData, event, []);
+      } else {
+        return;
+      }
+      push = typeof data === "string" ? parse(data) : undefined;
     } catch {
       return;
     }
     if (typeof push !== "object" || push === null) return;
     const p = push as Record<string, unknown>;
+    // A sign-in post first, reading own members only: a lookup of a member it lacks would walk to
+    // `Object.prototype`, where a page getter could read the body.
+    if (hasOwn(p, "type") && p.type === "post") {
+      const id = hasOwn(p, "id") ? p.id : undefined;
+      const url = hasOwn(p, "url") ? p.url : undefined;
+      const body = hasOwn(p, "body") ? p.body : undefined;
+      if (typeof id !== "string" || typeof url !== "string") return;
+      if (body !== null && typeof body !== "string") return;
+      runPost(url, body, (ok, status, hasAccount) => {
+        const result = bare();
+        result.type = "post-result";
+        result.docId = docId;
+        result.id = id;
+        result.ok = ok;
+        result.status = status;
+        result.hasAccount = hasAccount;
+        post(stringify(result));
+      });
+      return;
+    }
     if ((p.type === "reply" || p.type === "denied") && typeof p.callId === "string") {
       const resolve = pending.get(p.callId);
       if (!resolve) return;
@@ -318,8 +493,9 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
         post(stringify(message));
       });
     },
-    hello(docId) {
-      post(stringify({ type: "hello", docId }));
+    hello(id) {
+      docId = id;
+      post(stringify({ type: "hello", docId: id }));
     },
     open(message) {
       post(stringify(message));
@@ -355,7 +531,14 @@ function main(): void {
       activationGetter && activationObject
         ? activationGetter.call(activationObject) === true
         : false,
-    transport: init?.platform === "android" ? androidTransport(win) : iosTransport(win),
+    // Android: only the top frame takes its port (off its window); a same-origin frame keeps its
+    // own, whose posts the gate drops and which never receives the top document's pushes.
+    transport:
+      init?.platform === "android"
+        ? win.top === win
+          ? androidTransport(win)
+          : null
+        : iosTransport(win),
     baseUrl: () => String((win.location as { href?: unknown } | undefined)?.href ?? ""),
     onRestore: (listener) => {
       const target = win as unknown as {

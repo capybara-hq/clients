@@ -16,10 +16,12 @@ final class ProfileHost {
         let base: String
         let dataStoreId: String
         let state: [String: Any]
+        /// The sign-in block rules (`blockRulesFor(base)`), compiled before the first load.
+        let blockRules: String
     }
 
     enum OpenError: Error {
-        case noStore, noScript, notCreated(Error)
+        case noStore, noScript, notCreated(Error), noBlockRules(Error)
     }
 
     weak var controller: CAPBridgeViewController?
@@ -33,7 +35,8 @@ final class ProfileHost {
     private var background: UIColor?
     private let container = UIView()
 
-    init(controller: CAPBridgeViewController) {
+    /// `controller` nil (tests): the container is never attached to a window.
+    init(controller: CAPBridgeViewController?) {
         self.controller = controller
         sheet = { _ in }
         sheet = { [weak self] url in
@@ -57,14 +60,29 @@ final class ProfileHost {
         }
     }
 
-    func open(_ spec: Spec) throws {
+    /// Shows the profile's WebView and loads its base once its sign-in block rules are in force;
+    /// when they cannot be compiled nothing loads (fail closed) and `done` gets the error.
+    func open(_ spec: Spec, done: @escaping (Error?) -> Void) {
         attachContainer()
-        let view = try views[spec.profileId] ?? make(spec)
+        let view: ProfileWebView
+        do {
+            view = try views[spec.profileId] ?? make(spec)
+        } catch {
+            return done(error)
+        }
         shown = spec.profileId
         for (id, v) in views { v.isHidden = id != spec.profileId }
         container.isHidden = false
-        view.loadBase()
+        view.installBlockRules(spec.blockRules) { [weak self, weak view] error in
+            if let error { return done(OpenError.noBlockRules(error)) }
+            guard let self, let view, self.shown == spec.profileId else { return done(nil) }
+            view.loadBase()
+            done(nil)
+        }
     }
+
+    /// The profile's WebView, if it was made (sign-in runs its exchange there).
+    func view(for profileId: String) -> ProfileWebView? { views[profileId] }
 
     /// Hides the profile's WebView: the local error page underneath shows instead of its page.
     func showError(_ profileId: String) {
@@ -72,6 +90,20 @@ final class ProfileHost {
         view.stopLoading()
         view.isHidden = true
         if shown == profileId { container.isHidden = true }
+    }
+
+    /// Tears the profile's WebView down: a profile hidden by a managed lock or removed. The view
+    /// leaves the container and the host's map; with no other owner it is released, so its data
+    /// store is no longer in use and a scheduled deletion can run. A later `open` makes a new one.
+    func close(_ profileId: String) {
+        guard let view = views.removeValue(forKey: profileId) else { return }
+        view.close()
+        view.removeFromSuperview()
+        if shown == profileId {
+            shown = nil
+            container.isHidden = true
+        }
+        DataStores.shared.webViewReleased()
     }
 
     func setAppearance(_ profileId: String, background: UIColor, lightContent: Bool) {

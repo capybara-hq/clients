@@ -35,7 +35,8 @@ final class AddressPageTests: XCTestCase {
 
         let opened = expectation(description: "the added deployment opened in a profile WebView")
         server.onReport(doc: "address-deployment") { opened.fulfill() }
-        // The primary button of the found view ("Sign in" / "登录": Task 17 signs in; for now it opens).
+        // The primary button of the found view ("Sign in" / "登录"): the deployment opens and the
+        // browser sign-in starts over it (its sheet is not driven here).
         let signIn = web.buttons.matching(NSPredicate(format: "label IN %@", ["Sign in", "登录"])).firstMatch
         XCTAssertTrue(signIn.waitForExistence(timeout: 30))
         let signInHittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: signIn)
@@ -47,7 +48,8 @@ final class AddressPageTests: XCTestCase {
         let report = server.snapshot().reports.first { $0["doc"] as? String == "address-deployment" }
         let results = report?["results"] as? [String: Any]
         XCTAssertEqual(results?["capabilities"] as? [String],
-                       ["chrome@1", "haptics@1", "menu@1", "openExternal@1", "share@1"], "\(report ?? [:])")
+                       ["chrome@1", "haptics@1", "menu@1", "openExternal@1", "share@1", "signIn@1"],
+                       "\(report ?? [:])")
         XCTAssertEqual(results?["capacitor"] as? String, "undefined", "a profile WebView never has the bridge")
     }
 }

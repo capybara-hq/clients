@@ -1,0 +1,218 @@
+name: Release mobile
+
+# Manual only. dry_run (default true) validates the setup without building or signing: the
+# secret check, the brand drift check and the fastlane lane list. A real build is
+# dry_run=false; upload=true additionally sends the IPA to TestFlight and, when
+# PLAY_SERVICE_ACCOUNT_JSON is set, the AAB to the Play internal track. Mainland Android stores
+# are never uploaded (spec section 10). Secrets live in the `mobile-release` GitHub environment
+# of the repository that runs this workflow (a fork sets its own); see the mobile release docs.
+# Restrict that environment to the main branch with required reviewers (documented with the release
+# docs): any run of this workflow can read its secrets. Secrets are set only on the steps that use
+# them, never on the job, so dependency install scripts and third-party actions never see them.
+on:
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: Build the iOS app (IPA)
+        type: boolean
+        default: true
+      android:
+        description: Build the Android app (APK and AAB)
+        type: boolean
+        default: true
+      upload:
+        description: "Upload to TestFlight and the Play internal track (needs dry_run off)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Validate only: no build, no signing, no upload"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release-mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    if: inputs.ios
+    runs-on: macos-15
+    environment: mobile-release
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      UPLOAD: ${{ inputs.upload && !inputs.dry_run }}
+    steps:
+      - name: Check the iOS secrets
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          missing=""
+          for name in APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_KEY_P8 IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD IOS_PROVISIONING_PROFILE; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing iOS secrets in the mobile-release environment:$missing"
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: apps/mobile
+      - run: pnpm install --frozen-lockfile
+      - name: Check the brand file against the native projects
+        run: pnpm --filter @capybara-hq/mobile check:brand
+      - name: Read the application id from the generated brand files
+        run: |
+          app_id="$(sed -n 's/^applicationId=//p' apps/mobile/android/brand.properties)"
+          [ -n "$app_id" ] || { echo "::error::applicationId missing in apps/mobile/android/brand.properties"; exit 1; }
+          echo "CAPYBARA_APP_ID=$app_id" >> "$GITHUB_ENV"
+      - name: List the lanes (dry run)
+        if: inputs.dry_run
+        working-directory: apps/mobile
+        run: bundle exec fastlane lanes
+      - name: Build the local pages and sync iOS
+        if: "!inputs.dry_run"
+        run: |
+          pnpm --filter @capybara-hq/mobile build
+          pnpm --filter @capybara-hq/mobile exec cap sync ios
+      - name: Decode the certificate and the profile
+        if: "!inputs.dry_run"
+        env:
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          printf '%s' "$IOS_DIST_CERT_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          printf '%s' "$IOS_PROVISIONING_PROFILE" | base64 --decode > "$RUNNER_TEMP/app.mobileprovision"
+          echo "IOS_DIST_CERT_P12_PATH=$RUNNER_TEMP/dist.p12" >> "$GITHUB_ENV"
+          echo "IOS_PROVISIONING_PROFILE_PATH=$RUNNER_TEMP/app.mobileprovision" >> "$GITHUB_ENV"
+      - name: Build (and upload to TestFlight when asked)
+        if: "!inputs.dry_run"
+        working-directory: apps/mobile
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: bundle exec fastlane ios beta
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: "!inputs.dry_run"
+        with:
+          name: ios-ipa
+          path: apps/mobile/release/*.ipa
+          if-no-files-found: error
+
+  android:
+    if: inputs.android
+    runs-on: ubuntu-latest
+    environment: mobile-release
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Check the Android secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          CAPYBARA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CAPYBARA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          CAPYBARA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=""
+          for name in ANDROID_KEYSTORE_BASE64 CAPYBARA_KEYSTORE_PASSWORD CAPYBARA_KEY_ALIAS CAPYBARA_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Android secrets in the mobile-release environment (CAPYBARA_* are ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD):$missing"
+            exit 1
+          fi
+      - name: Record whether a Play service account is set
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$PLAY_SERVICE_ACCOUNT_JSON" ]; then flag=true; else flag=false; fi
+          echo "PLAY_SERVICE_ACCOUNT_JSON_SET=$flag" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: apps/mobile
+      - run: pnpm install --frozen-lockfile
+      - name: Check the brand file against the native projects
+        run: pnpm --filter @capybara-hq/mobile check:brand
+      - name: Read the application id from the generated brand files
+        run: |
+          app_id="$(sed -n 's/^applicationId=//p' apps/mobile/android/brand.properties)"
+          [ -n "$app_id" ] || { echo "::error::applicationId missing in apps/mobile/android/brand.properties"; exit 1; }
+          echo "CAPYBARA_APP_ID=$app_id" >> "$GITHUB_ENV"
+      - name: List the lanes (dry run)
+        if: inputs.dry_run
+        working-directory: apps/mobile
+        run: bundle exec fastlane lanes
+      - name: Build the local pages and sync Android
+        if: "!inputs.dry_run"
+        run: |
+          pnpm --filter @capybara-hq/mobile build
+          pnpm --filter @capybara-hq/mobile exec cap sync android
+      - name: Decode the keystore
+        if: "!inputs.dry_run"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          echo "CAPYBARA_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+      - name: Build the signed APK and AAB
+        if: "!inputs.dry_run"
+        working-directory: apps/mobile
+        env:
+          CAPYBARA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CAPYBARA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          CAPYBARA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bundle exec fastlane android release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: "!inputs.dry_run"
+        with:
+          name: android-release
+          path: |
+            apps/mobile/android/app/build/outputs/apk/release/*.apk
+            apps/mobile/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+      - name: Upload to the Play internal track
+        if: inputs.upload && !inputs.dry_run && env.PLAY_SERVICE_ACCOUNT_JSON_SET == 'true'
+        working-directory: apps/mobile
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: bundle exec fastlane android internal
+      - name: Note that the Android builds are artifacts only
+        if: "!inputs.dry_run && (!inputs.upload || env.PLAY_SERVICE_ACCOUNT_JSON_SET != 'true')"
+        run: |
+          echo "::notice::Not uploaded to Google Play (upload is off or PLAY_SERVICE_ACCOUNT_JSON is empty): the AAB and APK are workflow artifacts only."

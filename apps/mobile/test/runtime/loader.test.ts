@@ -9,6 +9,7 @@ import type {
 } from "../../src/runtime/host-port.ts";
 import { createLoader, type ErrorView, type LoaderProfile } from "../../src/runtime/loader.ts";
 import { createRegistry } from "../../src/runtime/registry.ts";
+import { blockRulesFor } from "../../src/runtime/sign-in-block.ts";
 import type { Splash } from "../../src/runtime/splash.ts";
 
 const p1: LoaderProfile = {
@@ -37,6 +38,9 @@ function fakeHost() {
     showError: vi.fn(async (profileId: string) => {
       order.push(`showError ${profileId}`);
     }),
+    close: vi.fn(async (profileId: string) => {
+      order.push(`close ${profileId}`);
+    }),
     setAppearance: vi.fn(async (profileId: string, _look: unknown) => {
       order.push(`setAppearance ${profileId}`);
     }),
@@ -61,7 +65,11 @@ function fakeHost() {
   };
 }
 
-function setup(stored: Record<string, string> = {}) {
+function setup(
+  stored: Record<string, string> = {},
+  allowed: () => LoaderProfile[] = () => [p1, p2],
+  opened: (profile: LoaderProfile) => void = () => {},
+) {
   const native = fakeHost();
   const pushState = vi.fn(async () => {});
   const calls: HostPort = {
@@ -89,10 +97,56 @@ function setup(stored: Record<string, string> = {}) {
     appearance,
     splash,
     errorView,
-    profiles: () => [p1, p2],
+    profiles: allowed,
+    opened,
   });
   return { native, pushState, registry, endDocument, splash, errorView, loader };
 }
+
+describe("loader: only allowed profiles", () => {
+  test("open refuses a profile that is not in profiles() (hidden by a lock)", async () => {
+    const { native, loader } = setup({}, () => [p1]);
+    await loader.open(p2);
+    expect(native.host.open).not.toHaveBeenCalled();
+    expect(loader.shown()).toBeNull();
+  });
+
+  test("retry refuses a shown profile that became hidden", async () => {
+    let allowed = [p1, p2];
+    const { native, loader } = setup({}, () => allowed);
+    await loader.open(p2);
+    expect(loader.shown()).toBe("p2");
+    allowed = [p1];
+    await loader.retry();
+    expect(native.host.open).toHaveBeenCalledTimes(1);
+  });
+
+  test("every open that reaches native asks opened (the sign-in meta check), refusals never", async () => {
+    const opened = vi.fn();
+    let allowed = [p1, p2];
+    const { native, loader } = setup({}, () => allowed, opened);
+    await loader.open(p1);
+    expect(opened).toHaveBeenCalledWith(p1);
+    await loader.retry();
+    expect(opened).toHaveBeenCalledTimes(2);
+    allowed = [p1];
+    await loader.open(p2);
+    expect(opened).toHaveBeenCalledTimes(2);
+    native.host.open.mockRejectedValueOnce(new Error("wipe_owed"));
+    await loader.open(p1);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  test("close tears the profile's WebView down and forgets it when shown", async () => {
+    const { native, loader } = setup();
+    await loader.open(p1);
+    await loader.close("p1");
+    expect(native.host.close).toHaveBeenCalledWith("p1");
+    expect(loader.shown()).toBeNull();
+    await loader.close("p2");
+    expect(native.host.close).toHaveBeenCalledWith("p2");
+  });
+});
 
 describe("loader", () => {
   test("opens the profile with its capabilities as the initial state", async () => {
@@ -108,7 +162,30 @@ describe("loader", () => {
         capabilities: { "test@1": ["run"] },
         events: {},
       },
+      // iOS compiles these into the WebView's content rule list before its first load.
+      blockRules: blockRulesFor("https://a.example/team"),
     });
+  });
+
+  test("a deployment too old for app sign-in shows the too-old state with the current state", async () => {
+    const { native, errorView, pushState, splash, loader } = setup();
+    await loader.open(p1);
+    loader.tooOld("p2");
+    expect(errorView.show).not.toHaveBeenCalled();
+    loader.tooOld("p1");
+    expect(native.host.showError).toHaveBeenCalledWith("p1");
+    expect(vi.mocked(errorView.show).mock.calls[0]?.[0]).toMatchObject({
+      kind: "too_old",
+      profileId: "p1",
+      host: "a.example",
+    });
+    expect(vi.mocked(errorView.show).mock.calls[0]?.[0]).not.toHaveProperty("code");
+    // The capabilities are pushed again (signIn@1 is no longer offered to it).
+    expect(pushState).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ capabilities: { "test@1": ["run"] } }),
+    );
+    expect(splash.failed).toHaveBeenCalled();
   });
 
   test("the stored background is applied before the WebView loads", async () => {
@@ -127,6 +204,25 @@ describe("loader", () => {
     const { native, loader } = setup();
     await loader.open(p1);
     expect(native.host.setAppearance).not.toHaveBeenCalled();
+  });
+
+  test("an owed single-store wipe shows its own error state and retry opens again", async () => {
+    // Native refuses to load while a wipe of the shared store is owed (and retries it inside open).
+    const { native, errorView, loader } = setup();
+    native.host.open.mockRejectedValueOnce(new Error("wipe_owed"));
+    await loader.open(p1);
+    const shown = vi.mocked(errorView.show).mock.calls[0]?.[0];
+    expect(shown).toMatchObject({ kind: "wipe_owed", profileId: "p1", host: "a.example" });
+    expect(native.host.showError).toHaveBeenCalledWith("p1");
+    await loader.retry();
+    expect(native.host.open).toHaveBeenCalledTimes(2);
+    expect(errorView.hide).toHaveBeenCalledTimes(2);
+  });
+
+  test("any other open failure still rejects", async () => {
+    const { native, loader } = setup();
+    native.host.open.mockRejectedValueOnce(new Error("not_created"));
+    await expect(loader.open(p1)).rejects.toThrow("not_created");
   });
 
   test("the main-frame load finishing starts the splash fallback", async () => {
@@ -247,11 +343,11 @@ describe("the error page model", () => {
 
   test("each kind has its own lead, in zh too", () => {
     const leads = new Set(
-      (["unreachable", "tls", "crashed"] as const).map(
+      (["unreachable", "tls", "crashed", "wipe_owed", "too_old"] as const).map(
         (kind) => errorModel({ ...base, kind }, "zh").lead,
       ),
     );
-    expect(leads.size).toBe(3);
+    expect(leads.size).toBe(5);
     for (const lead of leads) expect(lead).not.toMatch(/企业|agent/i);
   });
 });

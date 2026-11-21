@@ -115,6 +115,15 @@ class ShellPostTest {
     }
 
     @Test
+    fun acceptsAPostResultOfTheInjectedScript() {
+        val good = mapOf("type" to "post-result", "docId" to "doc-1234-5678", "id" to "6d0c6e2b-1f4a-4c1e-9b7e-0a11e5a7e514", "ok" to true, "status" to 200, "hasAccount" to true)
+        assertEquals(ShellPost.PostResult("doc-1234-5678", "6d0c6e2b-1f4a-4c1e-9b7e-0a11e5a7e514", true, 200, true), ShellPost.parse(good))
+        for (bad in listOf(good + ("id" to "x"), good + ("ok" to "yes"), good + ("status" to 1000), good - "hasAccount")) {
+            assertEquals(null, ShellPost.parse(bad))
+        }
+    }
+
+    @Test
     fun rejectsMalformedPosts() {
         val bad = listOf(
             mapOf("type" to "hello"),

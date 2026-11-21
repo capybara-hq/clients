@@ -18,6 +18,8 @@ describe("validateBrand", () => {
   test.each<[string, Partial<Brand>, RegExp]>([
     ["an app id that is not reverse DNS", { appId: "capybara" }, /appId/],
     ["an app id with an underscore", { appId: "com.cap_ybara.app" }, /appId/],
+    ["an app id with a hyphen (Android refuses it)", { appId: "com.cap-ybara.app" }, /appId/],
+    ["an app id segment starting with a digit", { appId: "com.example.1app" }, /appId/],
     ["a product name with a comment marker", { productName: "A // B" }, /productName/],
     ["a product name with an expansion", { productName: "A $(X)" }, /productName/],
     ["an icon with another name", { icon: "assets/logo.png" }, /icon/],

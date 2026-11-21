@@ -13,6 +13,7 @@ import { type AppearanceStore, nativeLook } from "./appearance.ts";
 import type { DocumentEvent, HostPort, LoadEvent, ProfileHostPort } from "./host-port.ts";
 import type { ProfileRef } from "./protocol.ts";
 import type { CapabilityRegistry } from "./registry.ts";
+import { blockRulesFor } from "./sign-in-block.ts";
 import type { Splash } from "./splash.ts";
 
 /** The fields of a profile the loader reads (Task 14's `Profile` has them). */
@@ -22,7 +23,8 @@ export interface LoaderProfile extends ProfileRef {
   name: string | null;
 }
 
-export type ErrorKind = "unreachable" | "tls" | "crashed";
+/** `too_old`: the deployment's meta has no `features.appSignIn` (mobile spec §4.3). */
+export type ErrorKind = "unreachable" | "tls" | "crashed" | "wipe_owed" | "too_old";
 
 /** What the error page shows; it is a local page, so it learns only these values. */
 export interface ErrorState {
@@ -41,11 +43,21 @@ export interface ErrorView {
 }
 
 export interface Loader {
+  /** Opens a profile; refused (nothing happens) when it is not in `profiles()`. */
   open(profile: LoaderProfile): Promise<void>;
+  /** The id of the profile on screen (or failed on the error page), or null. */
+  shown(): string | null;
+  /** Tears the profile's native WebView down; forgets it when it is the shown one. */
+  close(profileId: string): Promise<void>;
   /** `chrome@1.ready()` from a profile: drops the splash when it is the profile shown. */
   ready(profileId: string): void;
-  /** The error page's retry: opens the shown profile again. */
+  /** The error page's retry: opens the shown profile again, unless it is no longer allowed. */
   retry(): Promise<void>;
+  /**
+   * The profile's deployment is too old for app sign-in (`SignInSupport`): its capabilities are
+   * pushed again (no signIn@1) and, when it is the profile shown, the too-old state shows.
+   */
+  tooOld(profileId: string): void;
   stop(): void;
 }
 
@@ -57,8 +69,16 @@ export interface LoaderDeps<P extends LoaderProfile> {
   appearance: AppearanceStore;
   splash: Splash;
   errorView: ErrorView;
-  /** Every profile, for the error page's switcher. */
+  /**
+   * Every profile the person may use (under a managed lock only the preset's): the error page's
+   * switcher, and the only profiles `open` and `retry` load.
+   */
   profiles(): LoaderProfile[];
+  /**
+   * After native opened the profile, whatever asked (a switch, a managed lock, the start, a
+   * retry): the runtime asks the deployment whether it can do app sign-in (`SignInSupport`).
+   */
+  opened?(profile: LoaderProfile): void;
 }
 
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -115,27 +135,49 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
 
   const stops = [deps.host.onLoad(onLoad), deps.host.onDocument(onDocument)];
 
+  const allowed = (id: string) => deps.profiles().some((p) => p.id === id);
+
   const open = async (profile: P) => {
+    if (!allowed(profile.id)) return;
     shown = profile;
     deps.errorView.hide();
     const stored = await deps.appearance.load(profile.id);
     if (stored) await deps.host.setAppearance(profile.id, nativeLook(stored)).catch(() => {});
-    await deps.host.open({
-      profileId: profile.id,
-      origin: profile.origin,
-      base: profile.base,
-      dataStoreId: profile.dataStoreId,
-      state: stateOf(profile),
-    });
+    try {
+      await deps.host.open({
+        profileId: profile.id,
+        origin: profile.origin,
+        base: profile.base,
+        dataStoreId: profile.dataStoreId,
+        state: stateOf(profile),
+        blockRules: blockRulesFor(profile.base),
+      });
+    } catch (err) {
+      // Android single store: the wipe of the previous deployment's data is still owed, so native
+      // loads nothing. Opening again (retry) retries the wipe first.
+      if (err instanceof Error && err.message === "wipe_owed") return showError("wipe_owed");
+      throw err;
+    }
+    deps.opened?.(profile);
   };
 
   return {
     open: (profile) => open(profile as P),
+    shown: () => shown?.id ?? null,
+    async close(profileId) {
+      if (shown?.id === profileId) shown = null;
+      await deps.host.close(profileId).catch(() => {});
+    },
     ready(profileId) {
       if (shown?.id === profileId) deps.splash.ready();
     },
     async retry() {
       if (shown) await open(shown);
+    },
+    tooOld(profileId) {
+      const profile = deps.profiles().find((p) => p.id === profileId) as P | undefined;
+      if (profile) deps.calls.pushState(profile.id, stateOf(profile)).catch(() => {});
+      if (shown?.id === profileId) showError("too_old");
     },
     stop() {
       for (const stop of stops) stop();

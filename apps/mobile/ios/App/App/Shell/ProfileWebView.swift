@@ -11,6 +11,12 @@
 // popups never get a WebView. Main-frame load results go to the sink (`didFinish`,
 // `didFailProvisional` before anything committed; a TLS failure never gets a proceed path), and
 // so does every document's end. The back-forward swipe moves through the WebView's history.
+//
+// Sign-in (Task 17): the in-WebView sign-in routes are blocked by a content rule list compiled from
+// the shell's `signInBlockRules(base)` (`installBlockRules`, before the first load) and by the
+// navigation policy. The code exchange runs `ExchangeScript` with `callAsyncJavaScript` in the
+// `.defaultClient` world (page scripts cannot patch its `fetch`), only while the top document is on
+// the profile origin, so the session cookie lands in this WebView's data store only.
 
 import os
 import UIKit
@@ -187,6 +193,12 @@ final class ProfileWebView: WKWebView {
     private var oauthReturn: OauthReturn?
     /// The origin of the main frame's last committed page (a redirect keeps it).
     private var committedOrigin: Origin?
+    /// The sign-in block rules in force (`installBlockRules`).
+    fileprivate var blockRuleList: WKContentRuleList?
+    fileprivate var installedBlockRules: String?
+
+    /// The main frame's last committed page is on the profile origin.
+    var committedProfileOrigin: Bool { committedOrigin == profileOrigin }
 
     var currentDocId: String? { pushes.docId }
     private let gateHandler: ShellMessageHandler
@@ -313,6 +325,14 @@ final class ProfileWebView: WKWebView {
 
     // MARK: Document lifecycle
 
+    /// ProfileHost.close: no load continues and the document ends (owed calls answered "gone",
+    /// the runtime hears `ended`). No about:blank load: every navigation goes through the gate's
+    /// delegate; the WebView is released right after, which ends its page.
+    func close() {
+        stopLoading()
+        documentEnded()
+    }
+
     fileprivate func documentEnded() {
         let ended = pushes.docId
         pushes.end()
@@ -418,5 +438,123 @@ extension ProfileWebView: ShellMessageHandlerDelegate {
     func shellMessageHandler(dropped reason: String, callId: String?, isMainFrame: Bool, origin: String) {
         report(["event": "drop", "reason": reason, "id": callId ?? "", "isMainFrame": isMainFrame,
                 "origin": origin])
+    }
+}
+
+// MARK: Sign-in
+
+extension ProfileWebView {
+    /// The content rule list identifier of a profile (one list per profile, replaced on change).
+    static func blockRulesIdentifier(_ profileId: String) -> String { "capybara-sign-in-\(profileId)" }
+
+    /// M9: deletes a removed profile's compiled rule list from the store.
+    static func removeBlockRules(_ profileId: String, store: WKContentRuleListStore = .default(),
+                                 done: @escaping (Error?) -> Void) {
+        store.removeContentRuleList(forIdentifier: blockRulesIdentifier(profileId)) { error in
+            DispatchQueue.main.async { done(error) }
+        }
+    }
+
+    /// Compiles `json` (`blockRulesFor(base)` from the runtime) and adds it to this WebView. A list
+    /// already installed with the same text is kept. `done(nil)` once it is in force.
+    func installBlockRules(_ json: String, store: WKContentRuleListStore = .default(),
+                           done: @escaping (Error?) -> Void) {
+        if installedBlockRules == json { return done(nil) }
+        store.compileContentRuleList(forIdentifier: ProfileWebView.blockRulesIdentifier(profileId),
+                                     encodedContentRuleList: json) { [weak self] list, error in
+            DispatchQueue.main.async {
+                guard let self else { return done(ProfileWebViewError.badInit) }
+                guard let list else { return done(error ?? ProfileWebViewError.badInit) }
+                let controller = self.configuration.userContentController
+                if let old = self.blockRuleList { controller.remove(old) }
+                controller.add(list)
+                self.blockRuleList = list
+                self.installedBlockRules = json
+                done(nil)
+            }
+        }
+    }
+
+    /// The top document's origin when it is the profile origin (committed there and showing a URL
+    /// there now), else nil.
+    var currentProfileOrigin: String? {
+        let now = url.flatMap { NavURL($0.absoluteString)?.origin }
+        return committedProfileOrigin && now == profileOrigin ? profileOrigin.serialized : nil
+    }
+
+    /// After a sign-in: the page again when it is on the profile origin, else the base.
+    func reloadAfterSignIn() {
+        if currentProfileOrigin != nil { reload() } else { loadBase() }
+    }
+
+    /// The code exchange (decision 6), or with a nil `body` the logout of an unwanted session:
+    /// POSTs `body` to `url` from the top document in the
+    /// `.defaultClient` world. Refused unless the top document and `url` are on the profile
+    /// origin; the script checks the origin again. `done` gets `{ ok, status, hasAccount }` once:
+    /// the script's answer, a refusal or the total deadline (`ExchangeScript.deadline`).
+    func exchange(url target: String, body: String?, done: @escaping ([String: Any]) -> Void) {
+        let failed: [String: Any] = ["ok": false, "status": 0, "hasAccount": false]
+        guard currentProfileOrigin != nil, NavURL(target)?.origin == profileOrigin else { return done(failed) }
+        var finished = false
+        let finish: ([String: Any]) -> Void = { result in
+            if finished { return }
+            finished = true
+            done(result)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + ExchangeScript.deadline) { finish(failed) }
+        callAsyncJavaScript(ExchangeScript.source,
+                            arguments: ["url": target, "body": body ?? NSNull(), "origin": profileOrigin.serialized],
+                            in: nil, in: .defaultClient) { result in
+            switch result {
+            case .success(let value):
+                finish(ExchangeScript.result(value) ?? failed)
+            case .failure:
+                finish(failed)
+            }
+        }
+    }
+}
+
+/// The code exchange script: a fixed function body for `callAsyncJavaScript`, whose only inputs are
+/// its arguments (`url`, `body`, `origin`), never spliced into the text. It answers only
+/// `{ ok, status, hasAccount }`: the response body never leaves the script.
+enum ExchangeScript {
+    /// The total deadline, a little past the script's own 30 s `AbortSignal.timeout`.
+    static let deadline: TimeInterval = 31
+
+    static let source = """
+    if (location.origin !== origin) return { ok: false, status: 0, hasAccount: false };
+    const init = {
+      method: "POST",
+      headers: body === null
+        ? { "X-Capybara-Csrf": "1" }
+        : { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
+      credentials: "include",
+      redirect: "error",
+      cache: "no-store",
+    };
+    if (body !== null) init.body = body;
+    if (typeof AbortSignal.timeout === "function") init.signal = AbortSignal.timeout(30000);
+    let res;
+    try {
+      res = await fetch(url, init);
+    } catch (e) {
+      return { ok: false, status: 0, hasAccount: false };
+    }
+    if (!res.ok) return { ok: false, status: res.status, hasAccount: false };
+    let hasAccount = false;
+    try {
+      const data = await res.json();
+      const account = data !== null && typeof data === "object" ? data.account : null;
+      hasAccount = account !== null && typeof account === "object";
+    } catch (e) {}
+    return { ok: true, status: res.status, hasAccount };
+    """
+
+    /// The script's answer, reduced to the three fields; nil for anything else.
+    static func result(_ value: Any?) -> [String: Any]? {
+        guard let r = value as? [String: Any], let ok = r["ok"] as? Bool else { return nil }
+        let status = (r["status"] as? NSNumber)?.intValue ?? 0
+        return ["ok": ok, "status": status, "hasAccount": (r["hasAccount"] as? Bool) ?? false]
     }
 }

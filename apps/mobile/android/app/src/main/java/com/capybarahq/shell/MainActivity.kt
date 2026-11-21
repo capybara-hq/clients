@@ -6,7 +6,6 @@ import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
-import androidx.webkit.WebViewFeature
 import com.getcapacitor.BridgeActivity
 
 class MainActivity : BridgeActivity() {
@@ -14,6 +13,8 @@ class MainActivity : BridgeActivity() {
     val profileHost: ProfileHost by lazy { ProfileHost(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A single-store wipe that kept failing: end it before any WebView exists.
+        OwedWipeRecovery.run(this)
         // Plugins register before the bridge starts.
         registerPlugins(ShellPlugins.all)
         super.onCreate(savedInstanceState)
@@ -39,7 +40,7 @@ class MainActivity : BridgeActivity() {
      * never starts the bridge, so no local page runs and no remote origin loads.
      */
     override fun load() {
-        val missing = ProfileWebViewSupport.missingGate(WebViewFeature::isFeatureSupported)
+        val missing = ProfileWebViewSupport.missingGate(WebViewSupport::isSupported)
         if (missing.isEmpty()) {
             super.load()
             return
@@ -67,6 +68,17 @@ class MainActivity : BridgeActivity() {
                 },
             )
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AuthSession.attempts.onPause()
+    }
+
+    /** Decision 10: back from the Custom Tab with the attempt pending and no callback: cancelled. */
+    override fun onResume() {
+        super.onResume()
+        AuthSession.attempts.onResume()
     }
 
     override fun onDestroy() {

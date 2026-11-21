@@ -22,6 +22,7 @@ function fakePrefs(initial: Record<string, string> = {}) {
 
 function fakeStores(mode: "multi" | "single" = "multi") {
   const calls: string[] = [];
+  const cleared: string[][] = [];
   const stores: DataStorePort = {
     mode: async () => mode,
     create: async (id) => {
@@ -30,11 +31,12 @@ function fakeStores(mode: "multi" | "single" = "multi") {
     remove: async (id) => {
       calls.push(`remove:${id}`);
     },
-    clearAll: async () => {
+    clearAll: async (origins) => {
       calls.push("clearAll");
+      cleared.push(origins);
     },
   };
-  return { stores, calls };
+  return { stores, calls, cleared };
 }
 
 function setup(
@@ -46,7 +48,7 @@ function setup(
   } = {},
 ) {
   const { prefs, values } = fakePrefs(opts.prefs);
-  const { stores, calls } = fakeStores(opts.mode);
+  const { stores, calls, cleared } = fakeStores(opts.mode);
   const asked: { message: string; ok: string; cancel: string }[] = [];
   let n = 0;
   const store = createProfileStore({
@@ -61,7 +63,41 @@ function setup(
     now: () => 1_000 + n,
     ...(opts.locale ? { locale: () => opts.locale as "zh" | "en" } : {}),
   });
-  return { store, prefs, values, calls, asked };
+  return { store, prefs, values, calls, asked, cleared };
+}
+
+/** A store over shared prefs values whose native removal or prefs writes can fail. */
+function setupWith(opts: {
+  values: Map<string, string>;
+  removeFails?: () => boolean;
+  saveFails?: boolean;
+}) {
+  const calls: string[] = [];
+  const prefs: PrefsPort = {
+    get: (key) => opts.values.get(key) ?? null,
+    set: async (key, value) => {
+      if (opts.saveFails) throw new Error("disk full");
+      opts.values.set(key, value);
+    },
+  };
+  const stores: DataStorePort = {
+    mode: async () => "multi",
+    create: async (id) => void calls.push(`create:${id}`),
+    remove: async (id) => {
+      calls.push(`remove:${id}`);
+      if (opts.removeFails?.()) throw new Error("native down");
+    },
+    clearAll: async () => void calls.push("clearAll"),
+  };
+  let n = 100;
+  const store = createProfileStore({
+    prefs,
+    stores,
+    confirm: async () => true,
+    newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+    now: () => n,
+  });
+  return { store, calls };
 }
 
 const A = { base: "https://a.example", name: "A", iconUrl: null };
@@ -185,6 +221,91 @@ describe("remove", () => {
     expect(store.current()).toBeNull();
   });
 
+  test("a store removal that rejects still forgets the profile; sweep retries it", async () => {
+    const values = new Map<string, string>();
+    let fail = false;
+    const { store, calls } = setupWith({ values, removeFails: () => fail });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    fail = true;
+    await store.remove(a.id);
+    expect(store.list().map((p) => p.id)).toEqual([b.id]);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([a.dataStoreId]);
+    // A later process reads the orphan back and retries it.
+    fail = false;
+    const later = setupWith({ values });
+    await later.store.sweep();
+    expect(calls).toContain(`remove:${a.dataStoreId}`);
+    expect(later.calls).toEqual([`remove:${a.dataStoreId}`]);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([]);
+    expect(later.store.list().map((p) => p.id)).toEqual([b.id]);
+  });
+
+  test("an orphan id a live profile uses again is never deleted (fixed ids in test mode)", async () => {
+    const values = new Map<string, string>();
+    let fail = true;
+    const fixed = "00000000-0000-4000-8000-0000000000aa";
+    const calls: string[] = [];
+    const store = createProfileStore({
+      prefs: { get: (k) => values.get(k) ?? null, set: async (k, v) => void values.set(k, v) },
+      stores: {
+        mode: async () => "multi",
+        create: async (id) => void calls.push(`create:${id}`),
+        remove: async (id) => {
+          calls.push(`remove:${id}`);
+          if (fail) throw new Error("native down");
+        },
+        clearAll: async () => {},
+      },
+      confirm: async () => true,
+      newId: () => fixed,
+      now: () => 1,
+    });
+    const a = await store.add(A);
+    await store.remove(a.id);
+    fail = false;
+    await store.add(A);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "null").orphans).toEqual([]);
+    await store.sweep();
+    expect(calls.filter((c) => c.startsWith("remove:"))).toEqual([`remove:${fixed}`]);
+  });
+
+  test("sweep with no orphans touches nothing", async () => {
+    const values = new Map<string, string>();
+    const { store, calls } = setupWith({ values });
+    await store.add(A);
+    await store.sweep();
+    expect(calls.some((c) => c.startsWith("remove:"))).toBe(false);
+  });
+
+  test("a save that fails keeps the profile and never schedules its store's deletion", async () => {
+    const values = new Map<string, string>();
+    const ok = setupWith({ values });
+    const a = await ok.store.add(A);
+    const broken = setupWith({ values, saveFails: true });
+    await expect(broken.store.remove(a.id)).rejects.toThrow("disk full");
+    expect(broken.store.list().map((p) => p.id)).toEqual([a.id]);
+    expect(broken.calls).not.toContain(`remove:${a.dataStoreId}`);
+  });
+
+  test("a removed profile's store is gone before anything is saved without the orphan", async () => {
+    const { store, values, calls } = setup();
+    const a = await store.add(A);
+    const saved: unknown[] = [];
+    const orig = values.set.bind(values);
+    values.set = (k: string, v: string) => {
+      saved.push({ calls: [...calls], orphans: JSON.parse(v).orphans });
+      return orig(k, v);
+    };
+    await store.remove(a.id);
+    // First the profile goes with its store recorded as an orphan, then the store's deletion is
+    // scheduled, then the orphan entry is dropped.
+    expect(saved).toEqual([
+      { calls: [`create:${a.dataStoreId}`], orphans: [a.dataStoreId] },
+      { calls: [`create:${a.dataStoreId}`, `remove:${a.dataStoreId}`], orphans: [] },
+    ]);
+  });
+
   test("removing an unknown id does nothing", async () => {
     const { store, calls } = setup();
     await store.add(A);
@@ -272,6 +393,30 @@ describe("setCurrent", () => {
     expect(a.id).not.toBe(b.id);
   });
 
+  test("single mode: a store that cannot be cleared never lets the next deployment load", async () => {
+    const { prefs, values } = fakePrefs();
+    let n = 0;
+    const store = createProfileStore({
+      prefs,
+      stores: {
+        mode: async () => "single",
+        create: async () => {},
+        remove: async () => {},
+        clearAll: async () => {
+          throw new Error("clear failed");
+        },
+      },
+      confirm: async () => true,
+      newId: () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+      now: () => 0,
+    });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    await expect(store.setCurrent(b.id)).rejects.toThrow("clear failed");
+    expect(store.current()?.id).toBe(a.id);
+    expect(JSON.parse(values.get(PROFILES_PREF_KEY) ?? "{}").currentId).toBe(a.id);
+  });
+
   test("single mode uses the English copy by default", async () => {
     const { store, asked } = setup({ mode: "single", confirm: false });
     await store.add(A);
@@ -287,6 +432,16 @@ describe("setCurrent", () => {
     expect(asked).toEqual([]);
   });
 
+  test("forced: single mode clears the shared store without asking", async () => {
+    const { store, asked, calls } = setup({ mode: "single", confirm: false });
+    await store.add(A);
+    const b = await store.add(B);
+    expect(await store.setCurrent(b.id, { forced: true })).toBe("switched");
+    expect(asked).toEqual([]);
+    expect(calls).toContain("clearAll");
+    expect(store.current()?.id).toBe(b.id);
+  });
+
   test("an unknown id rejects", async () => {
     const { store } = setup();
     await expect(store.setCurrent("nope")).rejects.toThrow();
@@ -299,6 +454,21 @@ describe("setCurrent", () => {
     await store.remove(a.id);
     expect(calls).toContain("clearAll");
     expect(calls).not.toContain(`remove:${a.dataStoreId}`);
+  });
+
+  test("single mode: clearing names the origins whose workers and caches must go", async () => {
+    // Android's default profile keeps service workers and Cache API data across a plain clear;
+    // native unregisters them per origin, so every deployment of this device is named.
+    const { store, cleared } = setup({ mode: "single", confirm: true });
+    const a = await store.add(A);
+    const b = await store.add(B);
+    await store.setCurrent(b.id);
+    await store.remove(b.id);
+    expect(cleared).toEqual([
+      ["https://a.example", "https://b.example"],
+      ["https://a.example", "https://b.example"],
+    ]);
+    expect(a.id).not.toBe(b.id);
   });
 
   test("single mode: removing another profile leaves the shared store alone", async () => {
@@ -410,13 +580,17 @@ describe("dataStorePortFrom", () => {
       mode: async () => ({ mode: "single" }),
       create: async (o) => void calls.push(["create", o]),
       remove: async (o) => void calls.push(["remove", o]),
-      clearAll: async () => void calls.push(["clearAll"]),
+      clearAll: async (o) => void calls.push(["clearAll", o]),
     });
     expect(await port.mode()).toBe("single");
     await port.create("a");
     await port.remove("b");
-    await port.clearAll();
-    expect(calls).toEqual([["create", { id: "a" }], ["remove", { id: "b" }], ["clearAll"]]);
+    await port.clearAll(["https://a.example"]);
+    expect(calls).toEqual([
+      ["create", { id: "a" }],
+      ["remove", { id: "b" }],
+      ["clearAll", { origins: ["https://a.example"] }],
+    ]);
   });
 
   test("an unexpected mode reads as single (the conservative store)", async () => {

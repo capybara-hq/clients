@@ -14,9 +14,12 @@ android {
         resValue "string", "app_name", brandProperties.getProperty("appName")
         resValue "string", "title_activity_main", brandProperties.getProperty("appName")
         manifestPlaceholders = [brandScheme: brandProperties.getProperty("scheme")]
+        // The only scheme a sign-in callback may use (AuthSession.kt).
+        buildConfigField "String", "BRAND_SCHEME", "\"${brandProperties.getProperty("scheme")}\""
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        // The release workflow passes -PcapybaraVersionCode=<github.run_number>.
+        versionCode((project.findProperty("capybaraVersionCode") ?: "1").toInteger())
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -32,15 +35,31 @@ android {
     kotlinOptions {
         jvmTarget = "21"
     }
-    // The hostile-page test pages (apps/mobile/testpages/hostile) ship in the test APK's assets.
+    // The hostile-page test pages (apps/mobile/testpages/hostile) and the loopback sign-in block
+    // fixture (apps/mobile/test/fixtures/sign-in-block.json) ship in the test APK's assets.
     sourceSets {
-        androidTest.assets.srcDirs += ['../../testpages']
+        androidTest.assets.srcDirs += ['../../testpages', '../../test/fixtures']
     }
     buildFeatures {
         buildConfig = true
     }
+    // Release signing comes from CAPYBARA_KEYSTORE_* (set by CI); without them the release build is unsigned.
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("CAPYBARA_KEYSTORE_PATH")
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("CAPYBARA_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("CAPYBARA_KEY_ALIAS")
+                keyPassword System.getenv("CAPYBARA_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (System.getenv("CAPYBARA_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

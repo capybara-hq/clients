@@ -159,7 +159,14 @@ class HostileServer(private val assets: AssetManager, private val dir: String = 
                 if (text != null) {
                     out = text.replace("__ORIGIN_A__", originA).replace("__ORIGIN_B__", originB)
                         .toByteArray(Charsets.UTF_8)
-                    headers["Content-Type"] = if (name.endsWith(".js")) "text/javascript" else "text/html; charset=utf-8"
+                    headers["Content-Type"] = when {
+                        name.endsWith(".js") -> "text/javascript"
+                        name.endsWith(".json") -> "application/json"
+                        else -> "text/html; charset=utf-8"
+                    }
+                    // The single-store test counts requests for a response the HTTP cache may keep.
+                    if (name.startsWith("cacheable-")) headers["Cache-Control"] = "max-age=3600"
+                    if (name == "sw.js") headers["Service-Worker-Allowed"] = "/"
                 } else {
                     status = "404 Not Found"
                 }
