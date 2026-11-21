@@ -73,7 +73,12 @@ object PushChannels {
         val build = PushBuild.current()
         if (!build.jpush) return
         val chosen = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(JPUSH_CHOSEN, false)
-        if (startJPushAtLaunch(build, chosen)) JPushChannel.start(context) else JPushChannel.holdCollection(context)
+        // Never fatal at launch: a JPush that cannot start leaves the app as it is (no pushes).
+        try {
+            if (startJPushAtLaunch(build, chosen)) JPushChannel.start(context) else JPushChannel.holdCollection(context)
+        } catch (_: Exception) {
+            JPushChannel.holdCollection(context)
+        }
     }
 
     /** The token of [provider], or null when the channel cannot give one. Calls back on any thread. */

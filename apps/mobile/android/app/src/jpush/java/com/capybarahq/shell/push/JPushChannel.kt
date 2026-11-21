@@ -14,8 +14,8 @@ import cn.jpush.android.api.JPushInterface
 object JPushChannel {
     const val CARRIED = true
 
-    /** Whether JPush was started in this process (FCM chosen later stops it). */
-    @Volatile private var started = false
+    /** This process's JPush state: init once, then stop / resume (JPushLifecycle). */
+    private val lifecycle = JPushLifecycle()
 
     fun holdCollection(context: Context) {
         runCatching { JCollectionAuth.setAuth(context.applicationContext, false) }
@@ -24,19 +24,17 @@ object JPushChannel {
     fun start(context: Context) {
         val app = context.applicationContext
         JCollectionAuth.setAuth(app, true)
-        if (started) {
-            JPushInterface.resumePush(app)
-        } else {
-            JPushInterface.init(app)
+        when (lifecycle.start()) {
+            JPushLifecycle.Step.INIT -> JPushInterface.init(app)
+            JPushLifecycle.Step.RESUME -> JPushInterface.resumePush(app)
+            JPushLifecycle.Step.NONE -> {}
         }
-        started = true
     }
 
     /** FCM took over: JPush stops in this process and its collection is off again. */
     fun stop(context: Context) {
         val app = context.applicationContext
-        if (started) runCatching { JPushInterface.stopPush(app) }
-        started = false
+        if (lifecycle.stop()) runCatching { JPushInterface.stopPush(app) }
         holdCollection(app)
     }
 

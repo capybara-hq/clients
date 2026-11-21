@@ -64,6 +64,19 @@ class PushModuleTest {
     }
 
     @Test
+    fun jpushInitsOnceAndResumesAfterAStop() {
+        val life = JPushLifecycle()
+        assertFalse(life.stop())
+        assertEquals(JPushLifecycle.Step.INIT, life.start())
+        assertEquals(JPushLifecycle.Step.NONE, life.start())
+        assertTrue(life.stop())
+        assertFalse(life.stop())
+        assertEquals(JPushLifecycle.Step.RESUME, life.start())
+        assertTrue(life.stop())
+        assertEquals(JPushLifecycle.Step.RESUME, life.start())
+    }
+
+    @Test
     fun onlySuccessIsUsablePlayServices() {
         assertTrue(PlayServices.usable(SUCCESS))
         assertFalse(PlayServices.usable(SERVICE_MISSING))

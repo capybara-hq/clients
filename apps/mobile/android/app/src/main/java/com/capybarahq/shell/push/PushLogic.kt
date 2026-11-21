@@ -189,3 +189,35 @@ object PushUrls {
         return if (sameOrigin(url)) url else null
     }
 }
+
+/**
+ * JPush in one process: `init` the first time it starts, `resumePush` when it starts again after
+ * FCM stopped it (a second `init` would leave it stopped), nothing while it runs; `stop` only
+ * stops what runs.
+ */
+class JPushLifecycle {
+    enum class Step { INIT, RESUME, NONE }
+
+    private var initialized = false
+    private var running = false
+
+    @Synchronized
+    fun start(): Step {
+        val step = when {
+            !initialized -> Step.INIT
+            !running -> Step.RESUME
+            else -> Step.NONE
+        }
+        initialized = true
+        running = true
+        return step
+    }
+
+    /** True when JPush runs and must be stopped. */
+    @Synchronized
+    fun stop(): Boolean {
+        val wasRunning = running
+        running = false
+        return wasRunning
+    }
+}
