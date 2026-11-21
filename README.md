@@ -9,12 +9,15 @@ their own beyond a deployment address page and load the deployment's own web app
 Only the official builds, with the Capybara name and icon, are published from this repository. To
 ship your own brand, fork it and publish your own build.
 
+To ship your own mobile app, follow the [fork guide](docs/fork-guide.md). The App Store review notes
+are in `apps/mobile/store/review-notes.md`.
+
 Licensed under Apache-2.0.
 
 ## Development
 
-Node 24 and pnpm 10 (`corepack enable`). Packages: `packages/shell` (pure logic) and `apps/desktop`
-(Electron). See [AGENTS.md](AGENTS.md) for the rules.
+Node 24 and pnpm 10 (`corepack enable`). Packages: `packages/shell` (pure logic), `apps/desktop`
+(Electron) and `apps/mobile` (Capacitor). See [AGENTS.md](AGENTS.md) for the rules.
 
 ```bash
 pnpm install

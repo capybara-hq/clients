@@ -48,7 +48,7 @@ final class AddressPageTests: XCTestCase {
         let report = server.snapshot().reports.first { $0["doc"] as? String == "address-deployment" }
         let results = report?["results"] as? [String: Any]
         XCTAssertEqual(results?["capabilities"] as? [String],
-                       ["chrome@1", "haptics@1", "menu@1", "openExternal@1", "share@1", "signIn@1"],
+                       ["chrome@1", "haptics@1", "menu@1", "openExternal@1", "profiles@1", "share@1", "signIn@1"],
                        "\(report ?? [:])")
         XCTAssertEqual(results?["capacitor"] as? String, "undefined", "a profile WebView never has the bridge")
     }

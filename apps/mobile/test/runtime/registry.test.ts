@@ -379,3 +379,46 @@ describe("a document that ends (M3)", () => {
     expect(await pending).toEqual({ ok: true, value: "picked" });
   });
 });
+
+describe("refresh", () => {
+  test("re-evaluates availability and pushes one change only when the descriptors changed", () => {
+    const { host, registry } = setup();
+    let on = false;
+    registry.register(
+      "test@1",
+      { functions: { run: async () => 1 }, events: ["onTick"] },
+      {
+        available: () => on,
+      },
+    );
+    registry.descriptors(profile);
+    registry.refresh("p1");
+    expect(host.pushState).not.toHaveBeenCalled();
+
+    on = true;
+    registry.refresh("p1");
+    expect(host.pushState).toHaveBeenCalledTimes(1);
+    expect(host.pushState).toHaveBeenCalledWith("p1", {
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      capabilities: { "test@1": ["run"] },
+      events: { "test@1": ["onTick"] },
+    });
+    registry.refresh("p1");
+    expect(host.pushState).toHaveBeenCalledTimes(1);
+
+    on = false;
+    registry.refresh("p1");
+    expect(host.pushState).toHaveBeenCalledTimes(2);
+    expect(host.pushState).toHaveBeenLastCalledWith("p1", {
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      capabilities: {},
+      events: {},
+    });
+  });
+
+  test("an unknown profile gets nothing", () => {
+    const { host, registry } = setup();
+    registry.refresh("gone");
+    expect(host.pushState).not.toHaveBeenCalled();
+  });
+});

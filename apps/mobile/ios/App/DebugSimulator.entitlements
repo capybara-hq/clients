@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Debug simulator builds only (the Debug configuration, sdk=iphonesimulator): lets the UI
+	     test aid DuoSwap (App/Shell/DuoSwap.swift, DEBUG and simulator only) ask SpringBoard to
+	     open / close the simulated iPhone Duo (spike 1.1). Device and Release builds carry none. -->
+	<key>com.apple.springboard.sbdisplay</key>
+	<true/>
+	<key>com.apple.springboard.sbdisplay.service</key>
+	<true/>
+	<key>com.apple.springboard.testautomation</key>
+	<true/>
+	<key>com.apple.internal.suiuntool</key>
+	<true/>
+</dict>
+</plist>

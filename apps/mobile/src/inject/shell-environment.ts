@@ -128,7 +128,15 @@ export function bootShellEnvironment(deps: InjectDeps): boolean {
 
   transport.onPush((push) => {
     if (push.type === "state") {
-      if (isState(push.state)) changed?.(push.state);
+      if (!isState(push.state)) return;
+      // An event the new state no longer offers (nav@1 when the strip goes) drops its listeners:
+      // the page subscribes again on the capability object a later change hands it.
+      const events = push.state.events ?? {};
+      for (const name of [...subscribers.keys()]) {
+        const [key = "", event = ""] = name.split(" ");
+        if (!events[key]?.includes(event)) subscribers.delete(name);
+      }
+      changed?.(push.state);
     } else if (push.type === "event") {
       if (typeof push.key !== "string" || typeof push.event !== "string") return;
       for (const listener of [...(subscribers.get(`${push.key} ${push.event}`) ?? [])]) {
