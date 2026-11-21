@@ -104,7 +104,7 @@ final class PushCenter: NSObject {
     /// Taps that came before the sink: a tap that launched the app.
     private var held: [[String: Any]] = []
     private var token: String?
-    private var waiting: [(Result<String, Error>) -> Void] = []
+    private var waiting: [(id: UUID, done: (Result<String, Error>) -> Void)] = []
 
     init(decide: @escaping ([AnyHashable: Any]) -> Bool = { PushPayload.presented(from: $0) != nil }) {
         self.decide = decide
@@ -112,11 +112,26 @@ final class PushCenter: NSObject {
 
     // MARK: The token
 
-    /// The current token, or registers with APNs and waits; several waits share one registration.
-    func token(register: () -> Void, done: @escaping (Result<String, Error>) -> Void) {
-        if let token { return done(.success(token)) }
-        waiting.append(done)
+    /// The current token, or registers with APNs and waits; waits that overlap share one
+    /// registration. Returns the wait's id for `expire` (nil when answered at once).
+    @discardableResult
+    func token(register: () -> Void, done: @escaping (Result<String, Error>) -> Void) -> UUID? {
+        if let token {
+            done(.success(token))
+            return nil
+        }
+        let id = UUID()
+        waiting.append((id, done))
         if waiting.count == 1 { register() }
+        return id
+    }
+
+    /// A wait ran out of time: it fails and leaves, so a later `token` registers again instead of
+    /// queueing behind a registration APNs never answered.
+    func expire(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        let wait = waiting.remove(at: index)
+        wait.done(.failure(PushError.registrationFailed))
     }
 
     /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
@@ -126,7 +141,7 @@ final class PushCenter: NSObject {
         token = next
         let waits = waiting
         waiting = []
-        for wait in waits { wait(.success(next)) }
+        for wait in waits { wait.done(.success(next)) }
         if let previous, previous != next {
             sink?.push(event: "token", data: ["provider": PushProvider.apns, "token": next], retain: false)
         }
@@ -136,7 +151,7 @@ final class PushCenter: NSObject {
     func didFail() {
         let waits = waiting
         waiting = []
-        for wait in waits { wait(.failure(PushError.registrationFailed)) }
+        for wait in waits { wait.done(.failure(PushError.registrationFailed)) }
     }
 
     // MARK: Received pushes

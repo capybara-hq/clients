@@ -115,6 +115,31 @@ final class PushModuleTests: XCTestCase {
         XCTAssertEqual(sink.events.first?.data as NSDictionary?, ["provider": "push-apns", "token": "cd"] as NSDictionary)
     }
 
+    func testAnExpiredWaitLeavesSoTheNextCallRegistersAgain() {
+        let center = PushCenter()
+        var registrations = 0
+        var results: [String] = []
+        let record: (Result<String, Error>) -> Void = {
+            switch $0 {
+            case .success(let t): results.append(t)
+            case .failure: results.append("failed")
+            }
+        }
+        let first = center.token(register: { registrations += 1 }, done: record)
+        XCTAssertEqual(registrations, 1)
+        center.expire(try! XCTUnwrap(first))
+        XCTAssertEqual(results, ["failed"])
+        // Expiring again (or after an answer) does nothing.
+        center.expire(first!)
+        XCTAssertEqual(results, ["failed"])
+        center.token(register: { registrations += 1 }, done: record)
+        XCTAssertEqual(registrations, 2)
+        center.didRegister(Data([0x01]))
+        XCTAssertEqual(results, ["failed", "01"])
+        XCTAssertNil(center.token(register: { registrations += 1 }, done: record))
+        XCTAssertEqual(registrations, 2)
+    }
+
     func testTokenWaitersFailWhenRegistrationFails() {
         let center = PushCenter()
         var failed = 0
@@ -135,25 +160,29 @@ final class PushModuleTests: XCTestCase {
 
     // MARK: The profile WebView side (CapybaraHost)
 
-    func testRegistrationDeleteUrlMustBeTheProfilesRegistrationRoute() {
-        let origin = Origin(string: "https://cap.example")!
-        let ok = [
-            "https://cap.example/api/v1/me/push-registrations/abc_DEF-1",
-            "https://cap.example/prefix/api/v1/me/push-registrations/r1",
+    func testRegistrationDeleteUrlIsExactlyTheBasesRegistrationRoute() {
+        let ok: [(String, String)] = [
+            ("https://cap.example", "https://cap.example/api/v1/me/push-registrations/abc_DEF-1"),
+            ("https://cap.example/capy", "https://cap.example/capy/api/v1/me/push-registrations/r1"),
+            ("https://cap.example", "https://cap.example/api/v1/me/push-registrations/" + String(repeating: "a", count: 128)),
         ]
-        for url in ok { XCTAssertTrue(PushRegistrationURL.accept(url, origin: origin), url) }
+        for (base, url) in ok { XCTAssertTrue(PushRegistrationURL.accept(url, base: base), url) }
+        let base = "https://cap.example/capy"
         let bad = [
-            "https://other.example/api/v1/me/push-registrations/r1",
-            "http://cap.example/api/v1/me/push-registrations/r1",
-            "https://cap.example/api/v1/me/push-registrations/",
-            "https://cap.example/api/v1/me/push-registrations/a/b",
-            "https://cap.example/api/v1/me/push-registrations/r1?x=1",
-            "https://cap.example/api/v1/me/push-registrations/r%2F1",
-            "https://cap.example/api/v1/me/sessions/r1",
-            "https://cap.example/api/v1/me/push-registrations/" + String(repeating: "a", count: 129),
+            "https://cap.example/api/v1/me/push-registrations/r1",
+            "https://cap.example/other/api/v1/me/push-registrations/r1",
+            "https://other.example/capy/api/v1/me/push-registrations/r1",
+            "http://cap.example/capy/api/v1/me/push-registrations/r1",
+            "https://cap.example/capy/api/v1/me/push-registrations/",
+            "https://cap.example/capy/api/v1/me/push-registrations/a/b",
+            "https://cap.example/capy/api/v1/me/push-registrations/r1?x=1",
+            "https://cap.example/capy/api/v1/me/push-registrations/r1#x",
+            "https://cap.example/capy/api/v1/me/push-registrations/r%2F1",
+            "https://cap.example/capy/api/v1/me/sessions/r1",
+            "https://cap.example/capy/api/v1/me/push-registrations/" + String(repeating: "a", count: 129),
             "not a url",
         ]
-        for url in bad { XCTAssertFalse(PushRegistrationURL.accept(url, origin: origin), url) }
+        for url in bad { XCTAssertFalse(PushRegistrationURL.accept(url, base: base), url) }
     }
 
     func testOpenPathResolvesOnlyOnTheOrigin() {

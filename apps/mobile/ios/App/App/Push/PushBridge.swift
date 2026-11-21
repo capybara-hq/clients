@@ -79,11 +79,12 @@ public class PushPlugin: CAPPlugin, CAPBridgedPlugin, PushSink {
                 case .failure: call.reject("APNs gave no device token")
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + PushPlugin.tokenDeadline) {
-                finish(.failure(PushError.registrationFailed))
-            }
-            PushCenter.shared.token(register: { UIApplication.shared.registerForRemoteNotifications() },
+            let center = PushCenter.shared
+            let wait = center.token(register: { UIApplication.shared.registerForRemoteNotifications() },
                                     done: finish)
+            if let wait {
+                DispatchQueue.main.asyncAfter(deadline: .now() + PushPlugin.tokenDeadline) { center.expire(wait) }
+            }
         }
     }
 
@@ -128,22 +129,18 @@ extension PushCenter: NotificationHandlerProtocol {
 
 // MARK: The profile WebView's side
 
-/// The URL `pushDeleteRegistration` may DELETE: on the profile origin, no query or fragment, and
-/// a path ending in `/api/v1/me/push-registrations/<id>` with an id the runtime accepts.
+/// The URL `pushDeleteRegistration` may DELETE: exactly
+/// `<base>/api/v1/me/push-registrations/<id>` as the runtime builds it (Android: PushUrls).
 enum PushRegistrationURL {
-    private static let pathPattern = try! NSRegularExpression(
-        pattern: "^(/[^\\\\?#%]*)?/api/v1/me/push-registrations/[A-Za-z0-9_-]{1,128}$")
+    static let path = "/api/v1/me/push-registrations/"
+    private static let idPattern = try! NSRegularExpression(pattern: "^[A-Za-z0-9_-]{1,128}$")
 
-    static func accept(_ raw: String, origin: Origin) -> Bool {
-        guard !raw.contains("\\"), let components = URLComponents(string: raw),
-              let scheme = components.scheme, let host = components.host,
-              components.user == nil, components.password == nil,
-              components.query == nil, components.fragment == nil,
-              Origin(scheme: scheme, host: host, port: components.port ?? 0) == origin
-        else { return false }
-        let path = components.percentEncodedPath
-        let range = NSRange(path.startIndex..., in: path)
-        return pathPattern.firstMatch(in: path, options: [.anchored], range: range)?.range == range
+    static func accept(_ raw: String, base: String) -> Bool {
+        let prefix = base + path
+        guard raw.hasPrefix(prefix) else { return false }
+        let id = String(raw.dropFirst(prefix.count))
+        let range = NSRange(id.startIndex..., in: id)
+        return idPattern.firstMatch(in: id, options: [.anchored], range: range)?.range == range
     }
 }
 
@@ -179,13 +176,13 @@ extension ProfileWebView {
     }
 
     /// DELETEs a push registration from the top document (its session cookie), like the sign-in
-    /// exchange: nil (refused) unless the top document is on the profile origin and `target` is
-    /// the profile's registration route; else `{ ok, status }` once (the script or the deadline).
+    /// exchange: nil (refused) unless `target` is the profile's registration URL; `{ ok: false,
+    /// status: 0 }` while the top document is off the profile origin; else `{ ok, status }` once
+    /// (the script or the deadline). The same contract as Android.
     func deleteRegistration(url target: String, done: @escaping ([String: Any]?) -> Void) {
-        guard currentProfileOrigin != nil, PushRegistrationURL.accept(target, origin: profileOrigin) else {
-            return done(nil)
-        }
+        guard PushRegistrationURL.accept(target, base: base) else { return done(nil) }
         let failed: [String: Any] = ["ok": false, "status": 0]
+        guard currentProfileOrigin != nil else { return done(failed) }
         var finished = false
         let finish: ([String: Any]) -> Void = { result in
             if finished { return }

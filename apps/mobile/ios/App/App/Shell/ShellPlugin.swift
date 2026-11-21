@@ -384,8 +384,9 @@ extension ShellPlugin {
     }
 
     /// Profile removal (src/push/connect.ts): DELETEs the profile's push registration from its page.
-    /// Rejects when the profile has no WebView, its page is off the profile origin or `url` is not
-    /// its registration route (PushBridge.swift); else `{ ok, status }`.
+    /// Rejects when the profile has no WebView or `url` is not its registration URL
+    /// (PushBridge.swift); `{ ok: false, status: 0 }` while its page is off the profile origin; else
+    /// `{ ok, status }`.
     @objc func pushDeleteRegistration(_ call: CAPPluginCall) {
         guard let profileId = call.getString("profileId"), let url = call.getString("url") else {
             return call.reject("pushDeleteRegistration needs profileId and url")
