@@ -2,12 +2,10 @@
 // and the channels this platform's binary carries. The official brand has no `push` field, so it
 // yields no build and `push@1` is never offered.
 
-/** The brand's `push` field (`apps/mobile/brand.ts`; K4 adds it to `Brand`). */
-export interface BrandPushField {
-  apns?: { environment: "production" | "sandbox" };
-  fcm?: { googleServicesFile: string };
-  aggregator?: { appId: string; appKey: string };
-}
+import type { BrandPushConfig } from "../../brand.ts";
+
+/** The brand's `push` field (`apps/mobile/brand.ts`). */
+export type BrandPushField = BrandPushConfig;
 
 /** The push side of a build: what `push@1` registers with and `offersPush` matches. */
 export interface BrandPush extends BrandPushField {
@@ -23,16 +21,21 @@ export const PUSH_PROVIDERS = {
   aggregator: "push-jpush",
 } as const;
 
-/** The channels a brand carries on a platform: APNs on iOS, FCM and the aggregator on Android. */
+/**
+ * The channels a brand carries: on one platform (APNs on iOS, FCM and the aggregator on Android),
+ * or without a platform every channel of the brand (what the deployment needs set up).
+ */
 export function carriedProviders(
   push: BrandPushField | undefined,
-  platform: "ios" | "android",
+  platform?: "ios" | "android",
 ): string[] {
   if (!push) return [];
-  if (platform === "ios") return push.apns ? [PUSH_PROVIDERS.apns] : [];
+  const ios = platform !== "android";
+  const android = platform !== "ios";
   return [
-    ...(push.fcm ? [PUSH_PROVIDERS.fcm] : []),
-    ...(push.aggregator ? [PUSH_PROVIDERS.aggregator] : []),
+    ...(ios && push.apns ? [PUSH_PROVIDERS.apns] : []),
+    ...(android && push.fcm ? [PUSH_PROVIDERS.fcm] : []),
+    ...(android && push.aggregator ? [PUSH_PROVIDERS.aggregator] : []),
   ];
 }
 

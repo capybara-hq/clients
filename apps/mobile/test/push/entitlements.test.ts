@@ -1,9 +1,10 @@
 // The APNs entitlement plumbing (K2): Push.entitlements carries only `aps-environment`, its value
-// from Brand.xcconfig; only a brand with APNs push names the file there (apply-brand, K4), so the
+// from Brand.xcconfig; only a brand with APNs push names the file there (apply-brand), so the
 // official build's device builds carry no entitlements file.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { brand } from "../../brand.ts";
 
 const app = join(import.meta.dirname, "..", "..", "ios", "App");
 
@@ -17,9 +18,12 @@ describe("APNs entitlements", () => {
     );
   });
 
-  test("the official brand names no entitlements file", () => {
+  test("Brand.xcconfig names the entitlements file only when the brand carries APNs", () => {
     const xcconfig = readFileSync(join(app, "Brand.xcconfig"), "utf8");
-    expect(xcconfig).not.toContain("CODE_SIGN_ENTITLEMENTS");
-    expect(xcconfig).not.toContain("BRAND_APS_ENVIRONMENT");
+    const apns = brand.push?.apns !== undefined;
+    expect(xcconfig.includes("CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = Push.entitlements")).toBe(
+      apns,
+    );
+    expect(xcconfig.includes("BRAND_APS_ENVIRONMENT = ")).toBe(apns);
   });
 });

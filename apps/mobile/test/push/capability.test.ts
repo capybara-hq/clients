@@ -180,8 +180,8 @@ describe("push@1 availability", () => {
     expect(brandPush({ appId: APP_ID }, "ios")).toBeNull();
     const push = {
       apns: { environment: "production" as const },
-      fcm: { googleServicesFile: "google-services.json" },
-      aggregator: { appId: "j", appKey: "k" },
+      fcm: { googleServicesFile: "android/app/google-services.json" },
+      aggregator: { appKey: "k" },
     };
     expect(brandPush({ appId: APP_ID, push }, "ios")?.providers).toEqual(["push-apns"]);
     expect(brandPush({ appId: APP_ID, push }, "android")?.providers).toEqual([

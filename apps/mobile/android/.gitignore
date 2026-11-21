@@ -61,8 +61,8 @@ captures/
 .externalNativeBuild
 .cxx/
 
-# Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Google Services (e.g. APIs or Firebase): an FCM brand's file comes from a secret at build time.
+app/google-services.json
 
 # Freeline
 freeline.py
