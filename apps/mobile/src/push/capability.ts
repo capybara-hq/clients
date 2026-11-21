@@ -36,62 +36,78 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** A profile as the offers read it: its id and the deployment it points at. */
+export type OfferProfile = ProfileRef & { base: string };
+
 /**
  * What each profile's deployment offers for push, from its meta (`features.push`). The runtime
  * sets it when a profile's meta is read and refreshes the registry, so `push@1` comes and goes.
+ * An entry holds only for the deployment it was read from: a profile re-pointed to another base
+ * or origin is offered nothing until its new meta is read; a removed profile's entry is forgotten.
  */
 export interface PushOffers {
-  set(profileId: string, meta: { features?: { push?: readonly PushApp[] } } | null): void;
+  /** null (a too-old or unreadable meta) drops the entry. */
+  set(profile: OfferProfile, meta: { features?: { push?: readonly PushApp[] } } | null): void;
+  forget(profileId: string): void;
   /** The deployment's channels for the build's app id; empty when unknown. */
-  providers(profileId: string): string[];
+  providers(profile: OfferProfile): string[];
   /** The registry's `available` for `push@1`. */
-  available(profile: ProfileRef): boolean;
+  available(profile: OfferProfile): boolean;
 }
 
 export function createPushOffers(build: {
   appId: string;
   providers: readonly string[];
 }): PushOffers {
-  const apps = new Map<string, readonly PushApp[]>();
+  const apps = new Map<string, { origin: string; base: string; push: readonly PushApp[] }>();
+  const appsOf = (profile: OfferProfile) => {
+    const entry = apps.get(profile.id);
+    return entry && entry.origin === profile.origin && entry.base === profile.base
+      ? entry.push
+      : undefined;
+  };
   return {
-    set(profileId, meta) {
+    set(profile, meta) {
       const push = meta?.features?.push;
-      if (push) apps.set(profileId, push);
-      else apps.delete(profileId);
+      if (push) apps.set(profile.id, { origin: profile.origin, base: profile.base, push });
+      else apps.delete(profile.id);
     },
-    providers(profileId) {
-      const listed = apps.get(profileId) ?? [];
+    forget(profileId) {
+      apps.delete(profileId);
+    },
+    providers(profile) {
+      const listed = appsOf(profile) ?? [];
       return [
         ...new Set(listed.filter((a) => a.appId === build.appId).flatMap((a) => a.providers)),
       ];
     },
     available(profile) {
-      const push = apps.get(profile.id);
+      const push = appsOf(profile);
       return push !== undefined && offersPush({ features: { push } }, build);
     },
   };
 }
 
-export interface PushCapabilityDeps {
+export interface PushCapabilityDeps<P extends OfferProfile> {
   native: PushNative;
   store: RegistrationStore;
   build: BrandPush;
   platform: PushPlatform;
   /** The channels the profile's deployment covers for the build's app id (`PushOffers.providers`). */
-  offered(profileId: string): readonly string[];
+  offered(profile: P): readonly string[];
   hash?: (text: string) => Promise<string>;
 }
 
-export function createPushCapability<P extends ProfileRef>(
-  deps: PushCapabilityDeps,
+export function createPushCapability<P extends OfferProfile>(
+  deps: PushCapabilityDeps<P>,
 ): CapabilityImpl<P> {
   const hash = deps.hash ?? sha256Hex;
   // Profile id -> the token `register` last handed that profile's page, until `registered`.
   const pending = new Map<string, { provider: string; tokenHash: string }>();
 
   /** The channel to register with: carried by the build and covered by the deployment. */
-  async function provider(profileId: string): Promise<string | null> {
-    const offered = deps.offered(profileId);
+  async function provider(profile: P): Promise<string | null> {
+    const offered = deps.offered(profile);
     const usable = (p: string) => deps.build.providers.includes(p) && offered.includes(p);
     if (deps.platform === "ios") return usable(PUSH_PROVIDERS.apns) ? PUSH_PROVIDERS.apns : null;
     const googlePlayServices = await deps.native.googlePlayServices().catch(() => false);
@@ -136,7 +152,7 @@ export function createPushCapability<P extends ProfileRef>(
           permission = await deps.native.requestPermission();
         }
         if (permission !== "granted") refuse("cancelled");
-        const channel = await provider(ctx.profile.id);
+        const channel = await provider(ctx.profile);
         if (channel === null) return refuse();
         const token = await tokenFor(channel);
         if (token === null) return refuse();
@@ -144,6 +160,11 @@ export function createPushCapability<P extends ProfileRef>(
         return { platform: deps.platform, appId: deps.build.appId, provider: channel, token };
       },
 
+      /**
+       * Must follow `register` in the same runtime document: the token it handed out is kept
+       * only in memory (`pending`), so a `registered` after an app restart, or without a
+       * `register` first, fails and the web registers again.
+       */
       async registered(ctx, id) {
         if (typeof id !== "string" || !REGISTRATION_ID.test(id)) return refuse();
         const registration = pending.get(ctx.profile.id);

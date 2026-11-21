@@ -245,14 +245,16 @@ async function main(): Promise<void> {
   let loader: ReturnType<typeof createLoader> | undefined;
   const httpGet = httpGetPortFrom(plugin);
   const pushOffers = pushBuild ? createPushOffers(pushBuild) : null;
+  // A removed profile's offer goes with it (a re-pointed one is not matched, see PushOffers).
+  if (pushOffers) profiles?.onRemoved((p) => pushOffers.forget(p.id));
   const support = createSignInSupport({
     httpGet,
     onTooOld: (id) => loader?.tooOld(id),
     // The meta read on each open says whether the deployment covers this build for push.
-    onMeta: (id, meta) => {
+    onMeta: (profile, meta) => {
       if (!pushOffers) return;
-      pushOffers.set(id, meta);
-      registry.refresh(id);
+      pushOffers.set(profile, meta);
+      registry.refresh(profile.id);
     },
   });
   const info = await appInfoFrom(plugin);
@@ -303,7 +305,7 @@ async function main(): Promise<void> {
         store: pushStore,
         build: pushBuild,
         platform,
-        offered: (id) => offers.providers(id),
+        offered: (profile) => offers.providers(profile),
       }),
       { available: (profile) => offers.available(profile) },
     );

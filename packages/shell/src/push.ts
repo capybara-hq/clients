@@ -75,7 +75,11 @@ export function profileForPush(
   return profiles.find((p) => p.origin === origin)?.id ?? null;
 }
 
-/** An origin as the kernel sends it: `scheme://host[:port]`, http(s), nothing else. */
+/**
+ * An origin as the kernel sends it: `new URL(http.publicUrl).origin`, already normalized
+ * (`scheme://host[:port]`, lower case, punycode, no default port). Anything that is not exactly
+ * its own serialized origin is refused: fail closed rather than guess at a normalization.
+ */
 function isOrigin(v: string): boolean {
   let url: URL;
   try {

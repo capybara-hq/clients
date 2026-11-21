@@ -260,8 +260,11 @@ export function createSignInSupport(deps: {
   httpGet: HttpGetPort;
   /** The profile's deployment turned out too old: show the "too old" error state. */
   onTooOld(profileId: string): void;
-  /** Each meta read for a profile (push reads `features.push` from it, so it is read once). */
-  onMeta?(profileId: string, meta: Meta): void;
+  /**
+   * Each meta read for a profile (push reads `features.push` from it, so it is read once); null
+   * when the read failed or the deployment is too old.
+   */
+  onMeta?(profile: SignInProfile, meta: Meta | null): void;
 }): SignInSupport {
   const tooOld = new Set<string>();
   return {
@@ -270,16 +273,18 @@ export function createSignInSupport(deps: {
       try {
         result = await discover(profile.base, { httpGet: deps.httpGet });
       } catch {
+        deps.onMeta?.(profile, null);
         return "unknown";
       }
       if ("error" in result) {
+        deps.onMeta?.(profile, null);
         if (result.error !== "too_old") return "unknown";
         tooOld.add(profile.id);
         deps.onTooOld(profile.id);
         return "too_old";
       }
       tooOld.delete(profile.id);
-      deps.onMeta?.(profile.id, result.meta);
+      deps.onMeta?.(profile, result.meta);
       return "ok";
     },
     available: (profile) => !tooOld.has(profile.id),

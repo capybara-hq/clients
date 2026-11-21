@@ -9,6 +9,17 @@ import type { RegistrationStore } from "./store.ts";
 /** The registrations route under a deployment's base. */
 export const REGISTRATIONS_PATH = "/api/v1/me/push-registrations";
 
+/** How long profile removal waits for the DELETE before it forgets the registration anyway. */
+export const REMOVAL_DELETE_DEADLINE_MS = 5_000;
+
+function timer(ms: number): { done: Promise<void>; cancel(): void } {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<void>((resolve) => {
+    handle = setTimeout(resolve, ms);
+  });
+  return { done, cancel: () => clearTimeout(handle) };
+}
+
 export interface PushRouterDeps {
   native: Pick<PushNative, "present">;
   /** The profiles a push may open (the lock gates' visible list). */
@@ -62,22 +73,28 @@ export function connectPush(
 /**
  * Profile removal (decision 6): `DELETE <base>/api/v1/me/push-registrations/<id>` from the
  * profile's page (its session cookie), then the shell forgets the id. A DELETE that fails (no page,
- * offline, signed out) never keeps the registration here; the deployment drops it after 60 days.
+ * offline, signed out) or does not answer within `REMOVAL_DELETE_DEADLINE_MS` never keeps the
+ * registration here, nor holds up the removal; the deployment drops it after 60 days.
  * Register this before the listener that closes the profile's WebView.
  */
 export function forgetOnRemoval(deps: {
   store: RegistrationStore;
   deleteFromPage(profileId: string, url: string): Promise<void>;
+  /** The removal's deadline (tests inject one); `REMOVAL_DELETE_DEADLINE_MS` by default. */
+  deadline?: () => { done: Promise<void>; cancel(): void };
   onRemoved(listener: (p: { id: string; base: string }) => void | Promise<void>): () => void;
 }): () => void {
   return deps.onRemoved(async (p) => {
     const registration = deps.store.get(p.id);
     if (!registration) return;
     const url = `${p.base}${REGISTRATIONS_PATH}/${encodeURIComponent(registration.id)}`;
+    const deadline = (deps.deadline ?? (() => timer(REMOVAL_DELETE_DEADLINE_MS)))();
     try {
-      await deps.deleteFromPage(p.id, url);
+      await Promise.race([deps.deleteFromPage(p.id, url), deadline.done]);
     } catch {
       // Cleared below all the same.
+    } finally {
+      deadline.cancel();
     }
     await deps.store.clear(p.id);
   });

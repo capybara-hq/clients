@@ -438,9 +438,29 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
     });
     await support.check(profile);
     expect(onMeta).toHaveBeenCalledWith(
-      "p1",
+      profile,
       expect.objectContaining({ features: expect.objectContaining({ push }) }),
     );
+  });
+
+  test("a too-old or unreadable meta hands onMeta null", async () => {
+    const onMeta = vi.fn();
+    const old = createSignInSupport({
+      httpGet: port(meta({ localDevices: true })),
+      onTooOld: () => {},
+      onMeta,
+    });
+    await old.check(profile);
+    const down = createSignInSupport({
+      httpGet: { get: async () => Promise.reject(new Error("unreachable")) },
+      onTooOld: () => {},
+      onMeta,
+    });
+    await down.check(profile);
+    expect(onMeta.mock.calls).toEqual([
+      [profile, null],
+      [profile, null],
+    ]);
   });
 
   test("an upgraded deployment is offered again", async () => {

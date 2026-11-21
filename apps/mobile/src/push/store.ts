@@ -48,21 +48,33 @@ function read(prefs: PrefsPort): Record<string, StoredRegistration> {
 
 export function createRegistrationStore(prefs: PrefsPort): RegistrationStore {
   let state = read(prefs);
-  const save = async (next: Record<string, StoredRegistration>) => {
-    await prefs.set(PUSH_REGISTRATIONS_PREF_KEY, JSON.stringify(next));
-    state = next;
+  // Writes run one after another, each from the state the previous one left, so two profiles
+  // written at once never drop each other.
+  let queue: Promise<unknown> = Promise.resolve();
+  const update = (
+    change: (s: Record<string, StoredRegistration>) => Record<string, StoredRegistration> | null,
+  ): Promise<void> => {
+    const run = queue.then(async () => {
+      const next = change(state);
+      if (next === null) return;
+      await prefs.set(PUSH_REGISTRATIONS_PREF_KEY, JSON.stringify(next));
+      state = next;
+    });
+    queue = run.catch(() => undefined);
+    return run;
   };
   return {
     get: (profileId) => {
       const v = Object.hasOwn(state, profileId) ? state[profileId] : undefined;
       return v ? { ...v } : null;
     },
-    set: (profileId, value) => save({ ...state, [profileId]: { ...value } }),
-    async clear(profileId) {
-      if (!Object.hasOwn(state, profileId)) return;
-      const { [profileId]: _gone, ...rest } = state;
-      await save(rest);
-    },
+    set: (profileId, value) => update((s) => ({ ...s, [profileId]: { ...value } })),
+    clear: (profileId) =>
+      update((s) => {
+        if (!Object.hasOwn(s, profileId)) return null;
+        const { [profileId]: _gone, ...rest } = s;
+        return rest;
+      }),
     any: () => Object.keys(state).length > 0,
   };
 }

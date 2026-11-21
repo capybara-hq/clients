@@ -110,11 +110,11 @@ function setup(
       store,
       build,
       platform: opts.platform ?? "ios",
-      offered: (id) => offers.providers(id),
+      offered: (p) => offers.providers(p),
     }),
     { available: (p) => offers.available(p) },
   );
-  for (const p of profiles) offers.set(p.id, metaFor(opts.deployment ?? [...build.providers]));
+  for (const p of profiles) offers.set(p, metaFor(opts.deployment ?? [...build.providers]));
   let n = 0;
   const call = (
     fn: string,
@@ -146,10 +146,23 @@ describe("push@1 availability", () => {
       "registered",
       "unregister",
     ]);
-    offers.set(A.id, metaFor(["push-fcm"]));
+    offers.set(A, metaFor(["push-fcm"]));
     expect(registry.descriptors(A).capabilities[PUSH_KEY]).toBeUndefined();
-    offers.set(A.id, null);
+    offers.set(A, null);
     expect(registry.descriptors(A).capabilities[PUSH_KEY]).toBeUndefined();
+  });
+
+  test("a profile's offer is forgotten, and does not follow it to another base", () => {
+    const { registry, offers } = setup();
+    expect(offers.available(A)).toBe(true);
+    // Re-pointed: the same id on another deployment is not offered on the old meta.
+    const moved = { ...A, origin: "https://c.example", base: "https://c.example" };
+    expect(offers.available(moved)).toBe(false);
+    expect(offers.providers(moved)).toEqual([]);
+    expect(offers.available({ ...A, base: "https://a.example/other" })).toBe(false);
+    offers.forget(A.id);
+    expect(registry.descriptors(A).capabilities[PUSH_KEY]).toBeUndefined();
+    expect(offers.available(B)).toBe(true);
   });
 
   test("register is not confirming: it needs no dialog slot", () => {
@@ -316,6 +329,35 @@ describe("push@1.registered and unregister", () => {
     expect(store.any()).toBe(true);
   });
 
+  test("concurrent writes for two profiles both land", async () => {
+    const values = new Map<string, string>();
+    const prefs: PrefsPort = {
+      get: (key) => values.get(key) ?? null,
+      // Each write settles a turn later, so unserialised writes would race on stale state.
+      set: (key, value) =>
+        new Promise<void>((resolve) =>
+          queueMicrotask(() => {
+            values.set(key, value);
+            resolve();
+          }),
+        ),
+    };
+    const store = createRegistrationStore(prefs);
+    const reg = (id: string) => ({ id, provider: "push-apns", tokenHash: "h" });
+    await Promise.all([store.set(A.id, reg("ra")), store.set(B.id, reg("rb"))]);
+    expect([store.get(A.id)?.id, store.get(B.id)?.id]).toEqual(["ra", "rb"]);
+    const afterSet = createRegistrationStore(prefs);
+    expect([afterSet.get(A.id)?.id, afterSet.get(B.id)?.id]).toEqual(["ra", "rb"]);
+    await Promise.all([store.clear(A.id), store.set("p3", reg("r3"))]);
+    const reloaded = createRegistrationStore(prefs);
+    expect([reloaded.get(A.id), reloaded.get(B.id)?.id, reloaded.get("p3")?.id]).toEqual([
+      null,
+      "rb",
+      "r3",
+    ]);
+    expect(store.get(B.id)?.id).toBe("rb");
+  });
+
   test("the store survives a restart through its preferences", async () => {
     const { call, prefs } = setup();
     await call("register");
@@ -420,6 +462,33 @@ describe("foreground, taps and removal", () => {
       `delete https://b.example/capy${REGISTRATIONS_PATH}/rb-1 (stored: rb-1)`,
     ]);
     expect(deleteFromPage).toHaveBeenCalledWith(B.id, expect.any(String));
+    expect(store.get(B.id)).toBeNull();
+  });
+
+  test("a DELETE that never answers is cut at the deadline and the entry cleared", async () => {
+    const { call, store } = setup();
+    await call("register", [], false, B);
+    await call("registered", ["rb-1"], false, B);
+    let removed: ((p: typeof B) => void | Promise<void>) | undefined;
+    let expire = () => {};
+    forgetOnRemoval({
+      store,
+      deleteFromPage: () => new Promise<void>(() => {}),
+      deadline: () => ({
+        done: new Promise<void>((resolve) => {
+          expire = resolve;
+        }),
+        cancel: () => {},
+      }),
+      onRemoved: (listener) => {
+        removed = listener;
+        return () => {};
+      },
+    });
+    const removal = removed?.(B);
+    await vi.waitFor(() => expect(store.get(B.id)).not.toBeNull());
+    expire();
+    await removal;
     expect(store.get(B.id)).toBeNull();
   });
 
