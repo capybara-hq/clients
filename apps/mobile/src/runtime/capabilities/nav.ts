@@ -123,9 +123,14 @@ export interface Nav<P extends ProfileRef> {
   sectionSelected(id: string): void;
   /** Native: the strip's menu button was tapped. */
   menuTapped(): void;
-  /** The runtime showed this profile: the strip draws the sections its page last set. */
+  /**
+   * The runtime showed this profile: the strip draws the sections its page last set, or none until
+   * it sets them.
+   */
   profileShown(profileId: string): void;
 }
+
+const EMPTY: NavNativeState = { items: [], current: null, menu: null };
 
 export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
   let strip = deps.strip;
@@ -167,7 +172,13 @@ export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
       emit("onMenu", null);
     },
     profileShown(profileId) {
-      draw(profileId);
+      // A removed profile's sections go with it (an id is never trusted to mean the same page).
+      const known = new Set(deps.profiles().map((p) => p.id));
+      for (const id of [...states.keys()]) if (!known.has(id)) states.delete(id);
+      if (deps.shown() !== profileId) return;
+      // A page that has not set its sections yet (still loading, or an older web) gets an empty
+      // strip: never the previous profile's labels and badges over this profile's page.
+      deps.native.set(states.get(profileId) ?? EMPTY).catch(() => {});
     },
   };
 }

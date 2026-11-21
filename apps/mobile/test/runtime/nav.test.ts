@@ -390,3 +390,66 @@ describe("the native strip events", () => {
     expect(navSet).toHaveBeenCalledWith({ state });
   });
 });
+
+describe("switching profiles", () => {
+  const a = { id: "a", origin: "https://a.example" };
+  const b = { id: "b", origin: "https://b.example" };
+  const empty = { items: [], current: null, menu: null };
+
+  function twoProfiles() {
+    const native = fakeNative();
+    let list = [a, b];
+    let shown: string | null = a.id;
+    const registry = createRegistry({ host: fakeHost(), profiles: { list: () => list } });
+    const nav = createNav({
+      registry,
+      native,
+      profiles: () => list,
+      shown: () => shown,
+      strip: true,
+    });
+    const set = (p: typeof a) =>
+      nav.capability.functions.set?.(
+        {
+          profile: p,
+          origin: p.origin,
+          docId: "d",
+          activation: false,
+          signal: new AbortController().signal,
+        },
+        four,
+      );
+    return {
+      native,
+      nav,
+      set,
+      show(id: string) {
+        shown = id;
+        nav.profileShown(id);
+      },
+      remove(id: string) {
+        list = list.filter((p) => p.id !== id);
+      },
+    };
+  }
+
+  test("a profile that has not set its sections shows an empty strip, not the previous one's", async () => {
+    const { native, set, show } = twoProfiles();
+    await set(a);
+    show(b.id);
+    expect(native.set).toHaveBeenLastCalledWith(empty);
+    show(a.id);
+    expect(native.set.mock.lastCall?.[0]).toMatchObject({ current: "chats" });
+  });
+
+  test("a removed profile's saved sections are dropped", async () => {
+    const { native, set, show, remove } = twoProfiles();
+    await set(a);
+    show(b.id);
+    remove(a.id);
+    show(b.id);
+    // Re-added under the same id (a fresh profile): nothing of the old page is drawn.
+    show(a.id);
+    expect(native.set).toHaveBeenLastCalledWith(empty);
+  });
+});
