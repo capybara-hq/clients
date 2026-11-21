@@ -11,6 +11,7 @@ enum ShellPlugins {
             DataStoresPlugin(),
             MenuHostPlugin(),
             ManagedConfigPlugin(),
+            PushPlugin(),
         ]
     }
 }

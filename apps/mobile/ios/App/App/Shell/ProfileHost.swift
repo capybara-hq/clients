@@ -22,6 +22,9 @@ final class ProfileHost {
         let state: [String: Any]
         /// The sign-in block rules (`blockRulesFor(base)`), compiled before the first load.
         let blockRules: String
+        /// A tapped push's in-app path, loaded on the origin instead of the base (also when the
+        /// WebView already exists); nil for the base.
+        var path: String? = nil
     }
 
     enum OpenError: Error {
@@ -142,7 +145,7 @@ final class ProfileHost {
         placeContainer()
     }
 
-    /// Shows the profile's WebView and loads its base once its sign-in block rules are in force;
+    /// Shows the profile's WebView and loads its base (or the spec's push path) once its sign-in block rules are in force;
     /// when they cannot be compiled nothing loads (fail closed) and `done` gets the error.
     func open(_ spec: Spec, done: @escaping (Error?) -> Void) {
         attachContainer()
@@ -159,7 +162,7 @@ final class ProfileHost {
         view.installBlockRules(spec.blockRules) { [weak self, weak view] error in
             if let error { return done(OpenError.noBlockRules(error)) }
             guard let self, let view, self.shown == spec.profileId else { return done(nil) }
-            view.loadBase()
+            view.loadEntry(path: spec.path)
             done(nil)
         }
     }

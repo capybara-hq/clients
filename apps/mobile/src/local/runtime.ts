@@ -31,6 +31,7 @@ import {
   type PushNative,
   unsupportedPushNative,
 } from "../push/native.ts";
+import { PUSH_PLUGIN_NAME, type PushPlugin, pushNativeFrom } from "../push/plugin.ts";
 import {
   createRegistrationStore,
   PUSH_REGISTRATIONS_PREF_KEY,
@@ -164,9 +165,13 @@ async function main(): Promise<void> {
   const options = await plugin.launchOptions().catch((): LaunchOptions => ({}));
   const platform = Capacitor.getPlatform() === "android" ? "android" : "ios";
   // push@1: only a build whose brand carries a channel on this platform (K4's brand `push`).
-  // The native module (K2 / K3) replaces the unsupported stand-in.
+  // iOS: the CapybaraPush plugin over APNs (Push/PushBridge.swift); elsewhere the stand-in until
+  // that platform's module is wired in.
   const pushBuild = brandPush(brand, platform);
-  const pushNative: PushNative = unsupportedPushNative;
+  const pushNative: PushNative =
+    pushBuild && platform === "ios"
+      ? pushNativeFrom(registerPlugin<PushPlugin>(PUSH_PLUGIN_NAME))
+      : unsupportedPushNative;
   let pushStore: RegistrationStore | null = null;
 
   let list: () => LoaderProfile[];
