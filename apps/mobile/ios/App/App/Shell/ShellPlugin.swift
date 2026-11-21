@@ -43,6 +43,11 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
     private let http = HttpGetter()
 
     @MainActor private var host: ProfileHost?
+    #if DEBUG
+    /// The loader UI tests: whether the app's view takes touches (the launch splash turns them off
+    /// until it is gone, and XCUITest still reports the page under it as hittable).
+    private var touchable: NSKeyValueObservation?
+    #endif
     @MainActor private var auth: AuthSession?
 
     @MainActor private func profileHost() -> ProfileHost? {
@@ -66,6 +71,10 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
                 log.log(["event": "sheet", "url": url.absoluteString])
                 present(url)
             }
+            touchable = controller.view.observe(\.isUserInteractionEnabled, options: [.initial, .new]) { view, _ in
+                log.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
+            }
+            BrowserSheet.Observer.current = BrowserSheet.Observer(log: log.log)
         }
         #endif
         host = made
