@@ -2,6 +2,8 @@
 // `-loaderTestBase http://127.0.0.1:<p>/<page>`, the runtime opens that loopback address as its
 // only profile (ShellPlugin.launchOptions), and every gate, navigation, commit, load, appearance
 // and sheet event is posted to the test server's /native-log (an ephemeral session, loopback only).
+// In this mode each browser sheet closes again once presented (BrowserSheet.Observer), and the
+// app's view reports when it takes touches (the launch splash turns them off).
 
 #if DEBUG
 import Foundation

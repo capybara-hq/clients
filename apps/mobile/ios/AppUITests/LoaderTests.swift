@@ -26,6 +26,15 @@ final class LoaderTests: XCTestCase {
         wait(for: [seen], timeout: timeout)
     }
 
+    /// Waits until the launch splash is gone: it turns touches off on the app's view until then (a
+    /// tap is lost) while XCUITest still finds the page under it hittable. Pages that never call
+    /// `ready()` keep it until 3 s after their load.
+    private func waitForTheSplashToGo(_ server: HostileServer) {
+        waitNative(server, "the app takes touches") {
+            $0["event"] as? String == "touchable" && $0["enabled"] as? Bool == true
+        }
+    }
+
     /// The color at the middle of the screen, as 0...255 components.
     private func centerColor() -> (Int, Int, Int)? {
         guard let image = XCUIScreen.main.screenshot().image.cgImage else { return nil }
@@ -73,7 +82,7 @@ final class LoaderTests: XCTestCase {
         let ready = expectation(description: "nav page ready")
         server.onReport(doc: "nav-ready") { ready.fulfill() }
         wait(for: [ready], timeout: 120)
-        // The splash drops 3 s after the load (this page never calls ready()).
+        waitForTheSplashToGo(server)
         let web = app.webViews.firstMatch
         let open = web.buttons["Open window"]
         XCTAssertTrue(open.waitForExistence(timeout: 30))
@@ -85,7 +94,7 @@ final class LoaderTests: XCTestCase {
             (web.links["Blank link"], "\(server.originB)/foreign.html?via=blank"),
             (web.links["Redirect link"], "\(server.originB)/redirected.html"),
         ]
-        tapEachToTheSheet(app, server, cases)
+        tapEachToTheSheet(server, cases)
 
         let log = server.snapshot().nativeLog
         let commits = log.filter { $0["event"] as? String == "commit" }.compactMap { $0["url"] as? String }
@@ -98,27 +107,24 @@ final class LoaderTests: XCTestCase {
         XCTAssertEqual(allowedForeign.count, 0, "\(allowedForeign)")
         XCTAssertTrue(server.requestLog().contains { $0.hasSuffix(" /redirect") })
     }
+
     /// Taps each element; each must open the browser sheet with its URL, which is then closed.
-    private func tapEachToTheSheet(_ app: XCUIApplication, _ server: HostileServer, _ cases: [(XCUIElement, String)]) {
+    ///
+    /// The sheet is SFSafariViewController, whose bar and Done button are drawn by another process,
+    /// the Safari view service; a fresh CI simulator starts it cold for the first sheet, and CI saw
+    /// the bar 30-60 s after the sheet was up, or not within 60 s. So the test does not drive the
+    /// sheet's UI: in this mode the app reports each sheet once UIKit has presented it, closes it
+    /// and reports that (BrowserSheet.Observer).
+    private func tapEachToTheSheet(_ server: HostileServer, _ cases: [(XCUIElement, String)]) {
         for (element, url) in cases {
             XCTAssertTrue(element.waitForExistence(timeout: 30), url)
             element.tap()
-            waitNative(server, "sheet for \(url)", timeout: 30) {
-                $0["event"] as? String == "sheet" && $0["url"] as? String == url
+            for event in ["sheet", "sheetPresented", "sheetClosed"] {
+                waitNative(server, "\(event) for \(url)", timeout: 30) {
+                    $0["event"] as? String == event && $0["url"] as? String == url
+                }
             }
-            // The sheet's dismiss button, by its name (localized, so every language the simulator
-            // may run in): while the sheet is still presenting, the bar's first button can be
-            // another one (CI tapped a bar-wide button and the sheet stayed up).
-            let bar = app.otherElements["TopBrowserBar"]
-            let names = ["Done", "Close", "完成", "关闭"]
-            let done = bar.buttons.matching(NSPredicate(format: "identifier IN %@ OR label IN %@", names, names)).firstMatch
-            XCTAssertTrue(done.waitForExistence(timeout: 30), "the browser sheet for \(url)")
-            wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: done)], timeout: 30)
-            done.tap()
-            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: bar)
-            wait(for: [gone], timeout: 30)
         }
-
     }
 
     func testEveryNewWindowGoesToTheSheetWhateverItsOrigin() throws {
@@ -129,13 +135,14 @@ final class LoaderTests: XCTestCase {
         let ready = expectation(description: "popups page ready")
         server.onReport(doc: "popups-ready") { ready.fulfill() }
         wait(for: [ready], timeout: 120)
+        waitForTheSplashToGo(server)
         let web = app.webViews.firstMatch
         let oauth = web.links["OAuth link"]
         XCTAssertTrue(oauth.waitForExistence(timeout: 30))
         let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: oauth)
         wait(for: [hittable], timeout: 30)
         let a = server.originA, b = server.originB
-        tapEachToTheSheet(app, server, [
+        tapEachToTheSheet(server, [
             // An OAuth-shaped target=_blank link must never leave in place (fix round 1, I1).
             (oauth, "\(b)/foreign.html?via=oauth&response_type=code&client_id=c&state=s&redirect_uri=\(a)%2Fcb"),
             (web.links["Same-origin link"], "\(a)/foreign.html?via=same-blank"),
