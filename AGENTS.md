@@ -31,6 +31,10 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
 - Mobile: `apps/mobile/brand.ts` is the only brand file; native code namespaces are fixed (Swift
   module `App`, Kotlin package `com.capybarahq.shell`). Capacitor's bridge never reaches a profile
   WebView.
+- Mobile: the Shell capabilities reach only the top frame at the deployment's exact origin (the
+  gate, mobile spec section 5.3); a change to it needs the spec's spike rulings in mind
+  ([mobile app design](https://github.com/capybara-hq/core/blob/main/docs/superpowers/specs/2026-11-20-mobile-app-design.md)).
+  Change `brand.ts` only with `apply-brand` and commit the output (`check:brand` fails on drift).
 - Tests never touch the real Keychain, real login items or launchd; use injected fakes.
 
 ## Commands
@@ -43,6 +47,11 @@ pnpm test        # vitest run
 pnpm check:i18n  # the zh and en catalogs have the same keys and placeholders
 pnpm e2e         # builds the desktop app and runs the Playwright smoke (apps/desktop/e2e)
 pnpm changeset   # a version note for an app or package
+
+# The mobile app (apps/mobile; a fork: docs/fork-guide.md)
+pnpm --filter @capybara-hq/mobile apply-brand    # write native identifiers, icons and splash from brand.ts
+pnpm --filter @capybara-hq/mobile check:brand    # fail when they drift from brand.ts
+pnpm --filter @capybara-hq/mobile test:ios       # native unit tests (also test:ios:ui, test:android)
 
 # The desktop app (from the root)
 node apps/desktop/node_modules/electron/install.js   # once: the Electron binary (installs skip it)
