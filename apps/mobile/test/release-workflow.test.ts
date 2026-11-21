@@ -138,6 +138,42 @@ describe("the mobile release workflow", () => {
   });
 });
 
+describe("the push files", () => {
+  const android = workflow.jobs.android as Job;
+  const text = stepsOf(android);
+  const fastlane = text.findIndex((t) => /fastlane android release/.test(t));
+  const usesSecret = (s: Step) =>
+    Object.values(s.env ?? {}).some((v) => /secrets\.MOBILE_GOOGLE_SERVICES_JSON/.test(v));
+
+  test("fail before building when the brand carries FCM and the secret is empty", () => {
+    const index = android.steps.findIndex(
+      (s) => usesSecret(s) && /pushFcm=true/.test(s.run ?? "") && /::error/.test(s.run ?? ""),
+    );
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(android.steps[index]?.run).toMatch(/exit 1/);
+    expect(fastlane).toBeGreaterThan(index);
+  });
+
+  test("write google-services.json only when the secret is set, before the build, never echoed", () => {
+    const index = android.steps.findIndex(
+      (s) => usesSecret(s) && /android\/app\/google-services\.json/.test(s.run ?? ""),
+    );
+    const step = android.steps[index] as Step;
+    expect(step.if).toContain("!inputs.dry_run");
+    expect(step.run).toMatch(/if \[ -n "\$MOBILE_GOOGLE_SERVICES_JSON" \]/);
+    expect(step.run).toMatch(/printf '%s' "\$MOBILE_GOOGLE_SERVICES_JSON" >/);
+    expect(fastlane).toBeGreaterThan(index);
+    for (const s of steps)
+      expect(s.run ?? "").not.toMatch(/echo[^\n]*MOBILE_GOOGLE_SERVICES_JSON"/);
+  });
+
+  test("the iOS job needs no push secret (the APNs key lives on the deployment)", () => {
+    for (const s of workflow.jobs.ios?.steps ?? []) {
+      expect(JSON.stringify(s.env ?? {})).not.toMatch(/MOBILE_/);
+    }
+  });
+});
+
 describe("the fastlane lanes", () => {
   test("take the application id from the brand and sign through the project settings", async () => {
     const fastfile = await readFile(`${repo}apps/mobile/fastlane/Fastfile`, "utf8");

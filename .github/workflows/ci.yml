@@ -138,6 +138,20 @@ jobs:
           cache: gradle
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @capybara-hq/mobile test:android
+      # The push channel code (src/fcm, src/jpush) and its tests build only for a push brand: run
+      # the JVM tests once more with both channels on and a placeholder Firebase config.
+      - name: JVM tests with the push channels
+        working-directory: apps/mobile/android
+        run: |
+          app_id=$(sed -n 's/^applicationId=//p' brand.properties)
+          cat > app/google-services.json <<EOF
+          {"project_info":{"project_number":"000000000000","project_id":"ci-push"},
+           "client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000",
+           "android_client_info":{"package_name":"$app_id"}},"oauth_client":[],
+           "api_key":[{"current_key":"ci-placeholder"}],"services":{}}],"configuration_version":"1"}
+          EOF
+          ./gradlew :app:testDebugUnitTest -PpushFcm=true -PjpushAppKey=ci0000000000000000000000
+          rm app/google-services.json
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \

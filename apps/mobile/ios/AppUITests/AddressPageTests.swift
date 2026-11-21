@@ -25,7 +25,17 @@ final class AddressPageTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 120), "the framed address page")
         let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: field)
         wait(for: [hittable], timeout: 30)
-        field.tap()
+        // A tap on the framed page's field can land before WebKit routes keyboard focus into the
+        // frame (CI failed with "Neither element nor any descendant has keyboard focus"): wait for
+        // the focus itself and tap again while it has not arrived.
+        let focused = NSPredicate(format: "hasKeyboardFocus == true")
+        var hasFocus = false
+        for _ in 0..<3 where !hasFocus {
+            field.tap()
+            let focus = XCTNSPredicateExpectation(predicate: focused, object: field)
+            hasFocus = XCTWaiter().wait(for: [focus], timeout: 10) == .completed
+        }
+        XCTAssertTrue(hasFocus, "the address field takes keyboard focus")
         field.typeText("\(server.originA)\n")
 
         // Discovery ran in the runtime (native HttpGet): the page shows the deployment's name.

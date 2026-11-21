@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Device builds of a brand that carries APNs push only (brand.ts `push.apns`): apply-brand
+	     then writes into Brand.xcconfig
+	       BRAND_APS_ENVIRONMENT = production | development
+	       CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = Push.entitlements
+	     A brand without it (the official build) names no entitlements file for device builds. -->
+	<key>aps-environment</key>
+	<string>$(BRAND_APS_ENVIRONMENT)</string>
+</dict>
+</plist>

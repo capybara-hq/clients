@@ -19,7 +19,28 @@ export type Brand = {
   presetUrl: string | null;
   /** True: only the preset is usable (needs a preset). */
   lockToPreset: boolean;
+  /**
+   * The push channels the build carries; absent (the official build) = none, so the app never
+   * offers `push@1`. Each channel needs its push plugin set up on the deployment (fork guide).
+   */
+  push?: BrandPushConfig;
 };
+
+/** The brand's push channels: at least one when the field is present. */
+export type BrandPushConfig = {
+  /** APNs (iOS): the `aps-environment` entitlement; `sandbox` signs as `development`. */
+  apns?: { environment: "production" | "sandbox" };
+  /**
+   * FCM (Android): always `android/app/google-services.json` (the Firebase Gradle plugin reads it
+   * there). The file is not committed: the release workflow writes it from a secret.
+   */
+  fcm?: { googleServicesFile: string };
+  /** JPush (Android, mainland China): the JPush app's AppKey. It ships in the APK, so not a secret. */
+  aggregator?: { appKey: string };
+};
+
+/** The one place the Firebase Gradle plugin reads the Firebase app file from. */
+export const GOOGLE_SERVICES_FILE = "android/app/google-services.json";
 
 export const brand: Brand = {
   productName: "Capybara",
@@ -97,6 +118,25 @@ export function validateBrand(b: Brand): string[] {
     if (!HEX.test(b.splash.background[mode])) {
       problems.push(`splash.background.${mode} must be #rrggbb`);
     }
+  }
+  if (b.push !== undefined) problems.push(...validatePush(b.push));
+  return problems;
+}
+
+function validatePush(push: BrandPushConfig): string[] {
+  const problems: string[] = [];
+  if (!push.apns && !push.fcm && !push.aggregator) {
+    problems.push("push needs at least one channel (apns, fcm, aggregator); leave it out for none");
+  }
+  if (push.apns && !["production", "sandbox"].includes(push.apns.environment)) {
+    problems.push('push.apns.environment must be "production" or "sandbox"');
+  }
+  if (push.fcm && push.fcm.googleServicesFile !== GOOGLE_SERVICES_FILE) {
+    problems.push(`push.fcm.googleServicesFile must be "${GOOGLE_SERVICES_FILE}"`);
+  }
+  // The key lands in brand.properties and an Android manifest placeholder.
+  if (push.aggregator && !/^[A-Za-z0-9]+$/.test(push.aggregator.appKey)) {
+    problems.push("push.aggregator.appKey must be the JPush AppKey: letters and digits only");
   }
   return problems;
 }

@@ -23,6 +23,8 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         val base: String,
         val dataStoreId: String,
         val state: JSONObject,
+        /** A tapped push's in-app path: loaded instead of the base when it stays on the origin. */
+        val path: String? = null,
     )
 
     /** Where gate and load events go (the ShellPlugin). */
@@ -59,7 +61,10 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
     /** The profile's WebView, if it was made (sign-in runs its exchange there). */
     fun view(profileId: String): ProfileWebView? = views[profileId]
 
-    /** Shows the profile's WebView and loads its base; an error text when it cannot be made. */
+    /**
+     * Shows the profile's WebView and loads its base (or a tapped push's path); an error text when
+     * it cannot be made.
+     */
     fun open(spec: Spec): String? {
         // Single store (Decision 9): one deployment at a time, so no other profile's WebView lives.
         if (DataStores.get(activity).mode == DataStoreMode.SINGLE) closeAllBut(spec.profileId)
@@ -68,7 +73,7 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         shown = spec.profileId
         for ((id, v) in views) v.visibility = if (id == spec.profileId) View.VISIBLE else View.GONE
         container.visibility = View.VISIBLE
-        view.loadBase()
+        view.loadEntry(spec.path)
         return null
     }
 

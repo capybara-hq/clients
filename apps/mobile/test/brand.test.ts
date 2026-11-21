@@ -3,10 +3,21 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { type Brand, brand, validateBrand } from "../brand.ts";
-import { applyBrand } from "../scripts/apply-brand.ts";
+import { applyBrand, renderProperties, renderXcconfig } from "../scripts/apply-brand.ts";
+import { carriedProviders } from "../src/push/brand.ts";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const read = (rel: string) => readFile(`${appRoot}${rel}`, "utf8");
+
+const forkBrand: Brand = {
+  ...brand,
+  appId: "com.example.work",
+  push: {
+    apns: { environment: "production" },
+    fcm: { googleServicesFile: "android/app/google-services.json" },
+    aggregator: { appKey: "0123456789abcdef01234567" },
+  },
+};
 
 describe("validateBrand", () => {
   const bad = (patch: Partial<Brand>) => validateBrand({ ...brand, ...patch });
@@ -41,8 +52,61 @@ describe("validateBrand", () => {
     expect(bad(patch).join("\n")).toMatch(message);
   });
 
+  test.each<[string, NonNullable<Brand["push"]>, RegExp]>([
+    ["a push field with no channel", {}, /push needs at least one channel/],
+    [
+      "an APNs environment outside the two",
+      { apns: { environment: "staging" as "sandbox" } },
+      /push\.apns\.environment/,
+    ],
+    [
+      "a google-services.json elsewhere",
+      { fcm: { googleServicesFile: "google-services.json" } },
+      /push\.fcm\.googleServicesFile/,
+    ],
+    ["an empty JPush app key", { aggregator: { appKey: "" } }, /push\.aggregator\.appKey/],
+    ["a JPush app key with a newline", { aggregator: { appKey: "ab\ncd" } }, /appKey/],
+  ])("flags %s", (_name, push, message) => {
+    expect(validateBrand({ ...brand, push }).join("\n")).toMatch(message);
+  });
+
+  test("accepts a fork brand with every push channel", () => {
+    expect(validateBrand(forkBrand)).toEqual([]);
+  });
+
   test("accepts an https preset with a lock", () => {
     expect(bad({ presetUrl: "https://capybara.example", lockToPreset: true })).toEqual([]);
+  });
+});
+
+describe("the brand's push channels", () => {
+  test("the official brand carries none and writes no push setting", () => {
+    expect(brand.push).toBeUndefined();
+    expect(carriedProviders(brand.push)).toEqual([]);
+    const xcconfig = renderXcconfig(brand);
+    expect(xcconfig).not.toContain("BRAND_APS_ENVIRONMENT");
+    expect(xcconfig).not.toContain("CODE_SIGN_ENTITLEMENTS");
+    const properties = renderProperties(brand);
+    expect(properties).not.toContain("pushFcm");
+    expect(properties).not.toContain("jpushAppKey");
+  });
+
+  test("a fork brand with all three carries each and writes each setting", () => {
+    expect(carriedProviders(forkBrand.push)).toEqual(["push-apns", "push-fcm", "push-jpush"]);
+    expect(carriedProviders(forkBrand.push, "ios")).toEqual(["push-apns"]);
+    expect(carriedProviders(forkBrand.push, "android")).toEqual(["push-fcm", "push-jpush"]);
+    const xcconfig = renderXcconfig(forkBrand);
+    expect(xcconfig).toContain("BRAND_APS_ENVIRONMENT = production\n");
+    expect(xcconfig).toContain("CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = Push.entitlements\n");
+    const properties = renderProperties(forkBrand);
+    expect(properties).toContain("pushFcm=true\n");
+    expect(properties).toContain("jpushAppKey=0123456789abcdef01234567\n");
+  });
+
+  test("a sandbox APNs build signs with the development environment", () => {
+    const b = { ...brand, push: { apns: { environment: "sandbox" as const } } };
+    expect(renderXcconfig(b)).toContain("BRAND_APS_ENVIRONMENT = development\n");
+    expect(renderProperties(b)).not.toMatch(/pushFcm|jpushAppKey/);
   });
 });
 
@@ -66,6 +130,7 @@ describe("applyBrand --check", () => {
       "ios/App/App/Info.plist",
       "android/app/src/main/AndroidManifest.xml",
       "android/app/build.gradle",
+      "ios/App/Push.entitlements",
     ]) {
       await cp(`${appRoot}${file}`, `${root}${file}`, { recursive: true });
     }
@@ -133,6 +198,42 @@ describe("applyBrand --check", () => {
     const root = await copy();
     await edit(root, file, from, to);
     expect((await applyBrand({ check: true, root })).drift).toEqual([file]);
+  });
+
+  test("names Push.entitlements when the entitlement no longer comes from the brand", async () => {
+    const root = await copy();
+    await edit(root, "ios/App/Push.entitlements", "$(BRAND_APS_ENVIRONMENT)", "production");
+    expect((await applyBrand({ check: true, root })).drift).toEqual(["ios/App/Push.entitlements"]);
+  });
+
+  test("names Brand.xcconfig when its APNs environment disagrees with the brand", async () => {
+    const root = await copy();
+    await writeFile(`${root}ios/App/Brand.xcconfig`, renderXcconfig(forkBrand));
+    await writeFile(`${root}android/brand.properties`, renderProperties(forkBrand));
+    expect((await applyBrand({ check: true, root, brand: forkBrand })).drift).toEqual([]);
+    await edit(root, "ios/App/Brand.xcconfig", "= production", "= development");
+    expect((await applyBrand({ check: true, root, brand: forkBrand })).drift).toEqual([
+      "ios/App/Brand.xcconfig",
+    ]);
+  });
+
+  test("names both generated files when the brand gains push and they were not regenerated", async () => {
+    const root = await copy();
+    expect((await applyBrand({ check: true, root, brand: forkBrand })).drift).toEqual([
+      "ios/App/Brand.xcconfig",
+      "android/brand.properties",
+    ]);
+  });
+
+  test("names build.gradle when it no longer reads a push switch", async () => {
+    const root = await copy();
+    await edit(
+      root,
+      "android/app/build.gradle",
+      /brandProperties\.getProperty\("jpushAppKey", ""\)/,
+      '""',
+    );
+    expect((await applyBrand({ check: true, root })).drift).toEqual(["android/app/build.gradle"]);
   });
 
   test("writes nothing in check mode", async () => {

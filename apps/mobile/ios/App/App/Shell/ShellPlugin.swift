@@ -36,6 +36,8 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "removeBlockRules", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stripState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "navSet", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pushDeleteRegistration", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "currentUrl", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
@@ -152,10 +154,13 @@ extension ShellPlugin {
             call.reject("open needs profileId, origin, base, dataStoreId, state and blockRules")
             return
         }
+        // A tapped push's in-app path (optional); ProfileWebView.loadEntry checks it.
+        let path = call.getString("path")
         DispatchQueue.main.async {
             guard let host = self.profileHost() else { return call.reject("no profile host") }
             host.open(ProfileHost.Spec(profileId: profileId, origin: origin, base: base,
-                                       dataStoreId: dataStoreId, state: state, blockRules: blockRules)) { error in
+                                       dataStoreId: dataStoreId, state: state, blockRules: blockRules,
+                                       path: path)) { error in
                 if let error { call.reject("\(error)") } else { call.resolve() }
             }
         }
@@ -375,6 +380,35 @@ extension ShellPlugin {
         DispatchQueue.main.async {
             self.profileHost()?.view(for: profileId)?.reloadAfterSignIn()
             call.resolve()
+        }
+    }
+
+    /// Profile removal (src/push/connect.ts): DELETEs the profile's push registration from its page.
+    /// Rejects when the profile has no WebView or `url` is not its registration URL
+    /// (PushBridge.swift); `{ ok: false, status: 0 }` while its page is off the profile origin; else
+    /// `{ ok, status }`.
+    @objc func pushDeleteRegistration(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId"), let url = call.getString("url") else {
+            return call.reject("pushDeleteRegistration needs profileId and url")
+        }
+        DispatchQueue.main.async {
+            guard let view = self.profileHost()?.view(for: profileId) else { return call.reject("no profile WebView") }
+            view.deleteRegistration(url: url) { result in
+                if let result { call.resolve(result) } else { call.reject("not the profile's registration") }
+            }
+        }
+    }
+
+    /// `{ url }` of the profile WebView's top document while it is on the profile origin, else
+    /// `{}` (a foreground push is shown unless its page is on screen).
+    @objc func currentUrl(_ call: CAPPluginCall) {
+        guard let profileId = call.getString("profileId") else { return call.reject("currentUrl needs profileId") }
+        DispatchQueue.main.async {
+            if let url = self.profileHost()?.view(for: profileId)?.currentProfileURL {
+                call.resolve(["url": url])
+            } else {
+                call.resolve([:])
+            }
         }
     }
 

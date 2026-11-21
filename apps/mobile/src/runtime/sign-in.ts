@@ -12,6 +12,7 @@
 // the profile origin, so the session cookie lands in that profile's data store and nowhere else.
 // Nothing here logs or keeps a code, a verifier or a token; a page learns only the outcome.
 import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
+import type { Meta } from "@capybara-hq/shell";
 import { checkCallback, createPkceWeb, parseDeepLink, SIGN_IN_TTL_MS } from "@capybara-hq/shell";
 import { discover, type HttpGetPort } from "./discovery.ts";
 import type { ProfileRef } from "./protocol.ts";
@@ -259,6 +260,11 @@ export function createSignInSupport(deps: {
   httpGet: HttpGetPort;
   /** The profile's deployment turned out too old: show the "too old" error state. */
   onTooOld(profileId: string): void;
+  /**
+   * Each meta read for a profile (push reads `features.push` from it, so it is read once); null
+   * when the read failed or the deployment is too old.
+   */
+  onMeta?(profile: SignInProfile, meta: Meta | null): void;
 }): SignInSupport {
   const tooOld = new Set<string>();
   return {
@@ -267,15 +273,18 @@ export function createSignInSupport(deps: {
       try {
         result = await discover(profile.base, { httpGet: deps.httpGet });
       } catch {
+        deps.onMeta?.(profile, null);
         return "unknown";
       }
       if ("error" in result) {
+        deps.onMeta?.(profile, null);
         if (result.error !== "too_old") return "unknown";
         tooOld.add(profile.id);
         deps.onTooOld(profile.id);
         return "too_old";
       }
       tooOld.delete(profile.id);
+      deps.onMeta?.(profile, result.meta);
       return "ok";
     },
     available: (profile) => !tooOld.has(profile.id),

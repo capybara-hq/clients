@@ -54,6 +54,9 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+        <!-- Push (push/, core spec §9): FCM's and JPush's components and POST_NOTIFICATIONS come
+             from src/fcm and src/jpush, merged only for a brand that carries the channel
+             (app/build.gradle). -->
     </application>
 
     <!-- Permissions -->

@@ -9,6 +9,8 @@ name: Release mobile
 # Restrict that environment to the main branch with required reviewers (documented with the release
 # docs): any run of this workflow can read its secrets. Secrets are set only on the steps that use
 # them, never on the job, so dependency install scripts and third-party actions never see them.
+# Push: an FCM brand's google-services.json is written from MOBILE_GOOGLE_SERVICES_JSON just before
+# the Android build (only when set); APNs and JPush need no build secret (fork guide, push section).
 on:
   workflow_dispatch:
     inputs:
@@ -174,6 +176,14 @@ jobs:
           app_id="$(sed -n 's/^applicationId=//p' apps/mobile/android/brand.properties)"
           [ -n "$app_id" ] || { echo "::error::applicationId missing in apps/mobile/android/brand.properties"; exit 1; }
           echo "CAPYBARA_APP_ID=$app_id" >> "$GITHUB_ENV"
+      - name: Check the push secret of an FCM brand
+        env:
+          MOBILE_GOOGLE_SERVICES_JSON: ${{ secrets.MOBILE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if grep -qx 'pushFcm=true' apps/mobile/android/brand.properties && [ -z "$MOBILE_GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::The brand carries FCM push (pushFcm=true): set MOBILE_GOOGLE_SERVICES_JSON in the mobile-release environment"
+            exit 1
+          fi
       - name: List the lanes (dry run)
         if: inputs.dry_run
         working-directory: apps/mobile
@@ -190,6 +200,14 @@ jobs:
         run: |
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
           echo "CAPYBARA_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+      - name: Write the Firebase app file (FCM brands)
+        if: "!inputs.dry_run"
+        env:
+          MOBILE_GOOGLE_SERVICES_JSON: ${{ secrets.MOBILE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$MOBILE_GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$MOBILE_GOOGLE_SERVICES_JSON" > apps/mobile/android/app/google-services.json
+          fi
       - name: Build the signed APK and AAB
         if: "!inputs.dry_run"
         working-directory: apps/mobile

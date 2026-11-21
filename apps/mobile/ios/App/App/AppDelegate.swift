@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import UserNotifications
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Before launch ends, so a tap that launched the app reaches the push module (PushCenter);
+        // Capacitor's NotificationRouter takes over as delegate later and routes to the same place.
+        UNUserNotificationCenter.current().delegate = PushCenter.shared
         return true
+    }
+
+    // APNs (Push/PushModule.swift): the device token, or why there is none. Never logged.
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        PushCenter.shared.didRegister(deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        PushCenter.shared.didFail()
     }
 
     func applicationWillResignActive(_ application: UIApplication) {

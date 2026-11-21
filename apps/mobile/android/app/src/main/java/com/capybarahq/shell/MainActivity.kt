@@ -1,11 +1,17 @@
 package com.capybarahq.shell
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import com.capybarahq.shell.push.JPushChannel
+import com.capybarahq.shell.push.PushChannels
+import com.capybarahq.shell.push.PushHub
+import com.capybarahq.shell.push.PushIntents
+import com.capybarahq.shell.push.pushExtras
 import com.getcapacitor.BridgeActivity
 
 class MainActivity : BridgeActivity() {
@@ -15,6 +21,8 @@ class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // A single-store wipe that kept failing: end it before any WebView exists.
         OwedWipeRecovery.run(this)
+        // A JPush build: JPush's collection held off until the person turned push on through it.
+        PushChannels.onLaunch(this)
         // Plugins register before the bridge starts.
         registerPlugins(ShellPlugins.all)
         super.onCreate(savedInstanceState)
@@ -33,6 +41,35 @@ class MainActivity : BridgeActivity() {
                 }
             },
         )
+        // A tapped push that launched the app (not a recreated activity, not a launch from the
+        // recents list, which re-sends the old intent).
+        if (savedInstanceState == null) handlePushIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handlePushIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        PushHub.activityStarted()
+    }
+
+    override fun onStop() {
+        PushHub.activityStopped()
+        super.onStop()
+    }
+
+    /** A push tap (PushIntents) goes to the runtime through the push plugin (PushHub). */
+    private fun handlePushIntent(intent: Intent?) {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val tap = PushIntents.tap(pushExtras(intent), intent.dataString) ?: return
+        if (tap is PushIntents.Tap.JPushVendor) tap.report?.let { (id, rom) -> JPushChannel.reportOpened(this, id, rom) }
+        // Consumed: a later configuration change or restore does not tap again.
+        intent.removeExtra(PushIntents.EXTRA_PUSH)
+        intent.removeExtra(PushIntents.EXTRA_JPUSH)
+        PushHub.tap(tap.data)
     }
 
     /**

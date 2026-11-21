@@ -428,6 +428,41 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
     expect(tooOld).not.toHaveBeenCalled();
   });
 
+  test("hands each meta it reads to onMeta (push reads features.push from it)", async () => {
+    const onMeta = vi.fn();
+    const push = [{ appId: "com.example.app", providers: ["push-apns"] }];
+    const support = createSignInSupport({
+      httpGet: port(meta({ localDevices: true, appSignIn: true, push })),
+      onTooOld: () => {},
+      onMeta,
+    });
+    await support.check(profile);
+    expect(onMeta).toHaveBeenCalledWith(
+      profile,
+      expect.objectContaining({ features: expect.objectContaining({ push }) }),
+    );
+  });
+
+  test("a too-old or unreadable meta hands onMeta null", async () => {
+    const onMeta = vi.fn();
+    const old = createSignInSupport({
+      httpGet: port(meta({ localDevices: true })),
+      onTooOld: () => {},
+      onMeta,
+    });
+    await old.check(profile);
+    const down = createSignInSupport({
+      httpGet: { get: async () => Promise.reject(new Error("unreachable")) },
+      onTooOld: () => {},
+      onMeta,
+    });
+    await down.check(profile);
+    expect(onMeta.mock.calls).toEqual([
+      [profile, null],
+      [profile, null],
+    ]);
+  });
+
   test("an upgraded deployment is offered again", async () => {
     let body = meta({ localDevices: true });
     const support = createSignInSupport({

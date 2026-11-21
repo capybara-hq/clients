@@ -52,6 +52,7 @@ import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.capybarahq.shell.push.PushUrls
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
@@ -235,6 +236,9 @@ class ProfileWebView private constructor(
          */
         fun isSignInPostUrl(url: String, base: String): Boolean =
             url == "$base/api/v1/app-auth/token" || url == "$base/api/v1/auth/logout"
+
+        const val METHOD_POST = "POST"
+        const val METHOD_DELETE = "DELETE"
 
         /** A sign-in post's total deadline, a little past the script's 30 s `AbortSignal.timeout`. */
         const val POST_DEADLINE_MS: Long = 31_000
@@ -473,6 +477,9 @@ class ProfileWebView private constructor(
         return if (committedOrigin == profileOrigin && now == profileOrigin) profileOrigin.serialized else null
     }
 
+    /** The top document's URL when it is on the profile origin, else null (push foreground). */
+    fun currentProfileUrl(): String? = if (currentProfileOrigin() != null) url else null
+
     /** After a sign-in: the page again when it is on the profile origin, else the base. */
     fun reloadAfterSignIn() {
         if (currentProfileOrigin() != null) reload() else loadBase()
@@ -489,11 +496,17 @@ class ProfileWebView private constructor(
      * the code or the verifier. Refused unless the top document and `url` are on the profile
      * origin and the port is gone from the page (`"capybaraShellPort" in window` is false). `done`
      * gets `{ ok, status, hasAccount }` once: the script's answer, a refusal, the document ending,
-     * or the total deadline ([POST_DEADLINE_MS]).
+     * or the total deadline ([POST_DEADLINE_MS]). [METHOD_DELETE] (no body) is the removal of the
+     * profile's push registration, only to its route under the base (PushUrls).
      */
-    fun post(url: String, body: String?, done: (JSONObject) -> Unit) {
+    fun post(url: String, body: String?, method: String = METHOD_POST, done: (JSONObject) -> Unit) {
         val failed = { JSONObject().put("ok", false).put("status", 0).put("hasAccount", false) }
-        if (currentProfileOrigin() == null || !isSignInPostUrl(url, base) || current == null) {
+        val allowed = when (method) {
+            METHOD_POST -> isSignInPostUrl(url, base)
+            METHOD_DELETE -> body == null && PushUrls.isRegistrationUrl(url, base)
+            else -> false
+        }
+        if (currentProfileOrigin() == null || !allowed || current == null) {
             done(failed())
             return
         }
@@ -517,7 +530,7 @@ class ProfileWebView private constructor(
             main.postDelayed({ finish(failed()) }, POST_DEADLINE_MS)
             proxy.postMessage(
                 JSONObject().put("type", "post").put("id", id).put("url", url)
-                    .put("body", body ?: JSONObject.NULL).toString(),
+                    .put("body", body ?: JSONObject.NULL).put("method", method).toString(),
             )
         }
     }
@@ -532,6 +545,20 @@ class ProfileWebView private constructor(
 
     /** True while the main frame's last started page is not on the profile origin. */
     internal fun mainFrameOffOrigin(): Boolean = committedOrigin != profileOrigin
+
+    /**
+     * A tapped push's page (`origin + path`, PushUrls.entryUrl) when the path stays on the profile
+     * origin, else the base.
+     */
+    fun loadEntry(path: String?) {
+        val target = PushUrls.entryUrl(profileOrigin.serialized, path) { NavUrl.parse(it)?.origin == profileOrigin }
+            ?: return loadBase()
+        mainFrameFailed = false
+        mainTarget = profileOrigin
+        lastAllowedMain = target
+        stoppedUrl = null
+        loadUrl(target)
+    }
 
     /** Loads the deployment's base address. */
     fun loadBase() {

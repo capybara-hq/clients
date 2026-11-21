@@ -1,7 +1,8 @@
 // The capabilities the mobile runtime offers every profile (mobile spec §5.2, global constraints):
 // signIn@1 (unless the deployment is too old for app sign-in), chrome@1, haptics@1, share@1,
 // menu@1 and openExternal@1, and on iOS nav@1 while the window has a strip (nav.ts). Never
-// device@1 or notify@1. push@1 registers beside these when it lands.
+// device@1 or notify@1. push@1 is registered by the runtime itself, only for a build that carries
+// push (src/push/capability.ts).
 
 import type { ProfileRef } from "../protocol.ts";
 import type { CapabilityImpl, CapabilityRegistry } from "../registry.ts";

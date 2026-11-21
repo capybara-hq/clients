@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { brand } from "../brand.ts";
+import { type BrandPushConfig, brand } from "../brand.ts";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const guide = await readFile(`${repo}docs/fork-guide.md`, "utf8");
@@ -23,5 +23,28 @@ describe("the fork guide", () => {
     expect(guide).toContain("CAPYBARA_AUTH__APP_REDIRECT_URIS");
     expect(guide).toContain("auth.appRedirectUris");
     expect(guide).toContain("## Push notifications");
+  });
+
+  test("the push section covers every channel, the deployment side and the vendor channels", () => {
+    const section = guide.slice(guide.indexOf("## Push notifications"));
+    expect(section).not.toMatch(/Placeholder/);
+    const keys: (keyof BrandPushConfig)[] = ["apns", "fcm", "aggregator"];
+    for (const key of [...keys, "googleServicesFile", "appKey", "environment"]) {
+      expect(section, key).toContain(`\`${key}\``);
+    }
+    for (const text of [
+      "push-apns",
+      "push-fcm",
+      "push-jpush",
+      "MOBILE_GOOGLE_SERVICES_JSON",
+      "GET /api/v1/meta",
+      "features.push",
+      "push.previews",
+      ".p8",
+      "Huawei",
+      "Xiaomi",
+    ]) {
+      expect(section, text).toContain(text);
+    }
   });
 });

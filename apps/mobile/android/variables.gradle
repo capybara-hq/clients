@@ -14,4 +14,10 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    // Push (core spec §9): FCM where Google Play services work, JPush (vendor channels) elsewhere.
+    firebaseMessagingVersion = '26.0.1'
+    playServicesBaseVersion = '18.11.1'
+    jpushVersion = '6.3.0'
+    jcoreVersion = '5.6.0'
+    robolectricVersion = '4.17'
 }

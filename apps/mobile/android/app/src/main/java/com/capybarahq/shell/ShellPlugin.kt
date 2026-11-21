@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.Build
 import android.os.Looper
 import android.provider.Settings
+import com.capybarahq.shell.push.PushUrls
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -50,6 +51,8 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         val base = call.getString("base")
         val dataStoreId = call.getString("dataStoreId")
         val state = call.getObject("state")
+        // A tapped push's in-app path (optional); ProfileWebView.loadEntry checks it.
+        val path = call.getString("path")
         if (profileId == null || origin == null || base == null || dataStoreId == null || state == null) {
             call.reject("open needs profileId, origin, base, dataStoreId and state")
             return
@@ -57,7 +60,7 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         main.post {
             val h = host ?: return@post call.reject("no profile host")
             h.sink = this
-            val spec = ProfileHost.Spec(profileId, origin, base, dataStoreId, state)
+            val spec = ProfileHost.Spec(profileId, origin, base, dataStoreId, state, path)
             // An owed wipe of the single store finishes first (cold start after a timed-out one).
             DataStores.openWhenWipeSettled(
                 context, DataStores.get(context), open = { h.open(spec) },
@@ -246,6 +249,39 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         main.post {
             val view = host?.view(profileId) ?: return@post call.reject("no profile WebView")
             view.post(url, null) { call.resolve() }
+        }
+    }
+
+    /**
+     * Profile removal (src/push/connect.ts): DELETEs the profile's push registration from its page,
+     * through the same script-run request as the sign-in posts. Rejects when the profile has no
+     * WebView or `url` is not its registration route; else `{ ok, status }` (a page off the
+     * profile origin answers `ok: false`).
+     */
+    @PluginMethod
+    fun pushDeleteRegistration(call: PluginCall) {
+        val profileId = call.getString("profileId")
+        val url = call.getString("url")
+        if (profileId == null || url == null) {
+            call.reject("pushDeleteRegistration needs profileId and url")
+            return
+        }
+        main.post {
+            val view = host?.view(profileId) ?: return@post call.reject("no profile WebView")
+            if (!PushUrls.isRegistrationUrl(url, view.base)) return@post call.reject("not the profile's registration")
+            view.post(url, null, ProfileWebView.METHOD_DELETE) { result ->
+                call.resolve(JSObject().put("ok", result.optBoolean("ok")).put("status", result.optInt("status")))
+            }
+        }
+    }
+
+    /** `{ url }` of the profile WebView's top document while it is on the profile origin, else `{}`. */
+    @PluginMethod
+    fun currentUrl(call: PluginCall) {
+        val profileId = call.getString("profileId") ?: return call.reject("currentUrl needs profileId")
+        main.post {
+            val url = host?.view(profileId)?.currentProfileUrl()
+            call.resolve(if (url != null) JSObject().put("url", url) else JSObject())
         }
     }
 

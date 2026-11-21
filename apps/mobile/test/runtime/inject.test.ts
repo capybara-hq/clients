@@ -749,11 +749,24 @@ describe("the Android sign-in post (Task 17 fix I1: never through the page's fet
     expect(original.mock.calls[0]?.[1]).not.toHaveProperty("body");
   });
 
+  test("a DELETE post (push registration removal) goes without a body", async () => {
+    const { original, results, fire } = setup({ status: 204, body: "" });
+    const url = `${ORIGIN}/api/v1/me/push-registrations/reg_1`;
+    fire(post({ id: "p-3", url, body: null, method: "DELETE" }));
+    expect(await results()).toMatchObject([{ type: "post-result", id: "p-3", status: 204 }]);
+    const [sentUrl, init] = original.mock.calls[0] ?? [];
+    expect(sentUrl).toBe(url);
+    expect(init).toMatchObject({ method: "DELETE", credentials: "include", redirect: "error" });
+    expect(init).not.toHaveProperty("body");
+  });
+
   test("a malformed post is never fetched (native checks the URL's origin: ProfileWebView.post)", async () => {
     const { original, fire } = setup();
     fire(post({ id: 7 }));
     fire(post({ body: 1 }));
     fire(post({ url: undefined }));
+    fire(post({ method: "PUT" }));
+    fire(post({ method: "DELETE" }));
     await Promise.resolve();
     expect(original).not.toHaveBeenCalled();
   });
