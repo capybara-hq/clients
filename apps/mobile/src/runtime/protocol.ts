@@ -60,6 +60,11 @@ export interface CallContext<P extends ProfileRef = ProfileRef> {
   docId: string;
   /** Page-asserted, advisory. */
   activation: boolean;
+  /**
+   * Aborts when the profile's document ends (native's `document` event, M3): a function that
+   * waits on the person settles then; the registry answers the call `cancelled` either way.
+   */
+  signal: AbortSignal;
 }
 
 /** What a page posts to the native endpoint (`webkit.messageHandlers` / the web message port). */
@@ -67,6 +72,8 @@ export type PagePost =
   | { type: "hello"; docId: string }
   /** iOS: one outstanding post per document; native answers it with the queued pushes. */
   | { type: "listen"; docId: string }
+  /** Android: the profile document's wrapped `window.open`; native sends the URL to the sheet. */
+  | { type: "open"; docId: string; url: string }
   | {
       type: "call";
       docId: string;

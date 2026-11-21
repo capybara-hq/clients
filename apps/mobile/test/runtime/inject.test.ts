@@ -100,10 +100,12 @@ describe("a restored or restarted document", () => {
     let restart: (() => void) | undefined;
     let restore: (() => void) | undefined;
     const ids = ["doc-1", "doc-2", "doc-3"];
+    const restored = vi.fn();
     const transport = Object.assign(fakeTransport(), {
       onRestart(l: () => void) {
         restart = l;
       },
+      restored,
     });
     const { target } = boot({
       transport,
@@ -115,6 +117,8 @@ describe("a restored or restarted document", () => {
     restart?.();
     restore?.();
     expect(transport.hello.mock.calls.map(([d]) => d)).toEqual(["doc-1", "doc-2", "doc-3"]);
+    // Only the bfcache restore resets the transport's restart budget.
+    expect(restored).toHaveBeenCalledTimes(1);
     const haptics = (target.capybaraShell as CapybaraShell).capabilities["haptics@1"] as Record<
       string,
       (...a: unknown[]) => Promise<unknown>
@@ -346,6 +350,31 @@ describe("the iOS transport", () => {
     ]);
   });
 
+  test("a bfcache restore resets the restart budget", async () => {
+    const posted: { type: string; docId: string }[] = [];
+    const { win } = fakeWebkit((m) => {
+      posted.push(m as { type: string; docId: string });
+      if ((m as { type: string }).type === "hello") return Promise.resolve(true);
+      return Promise.reject(new Error("gone"));
+    });
+    const t = iosTransport(win);
+    let n = 0;
+    t?.onRestart?.(() => {
+      n += 1;
+      t.hello(`doc-${n}`);
+    });
+    t?.hello("doc-0");
+    await vi.waitFor(() => expect(posted.filter((p) => p.type === "listen")).toHaveLength(4));
+    await new Promise((r) => setImmediate(r));
+    expect(n).toBe(3);
+    // The page came back from the back/forward cache: a fresh hello gets a fresh budget.
+    t?.restored?.();
+    t?.hello("doc-r");
+    await vi.waitFor(() => expect(posted.filter((p) => p.type === "listen")).toHaveLength(8));
+    await new Promise((r) => setImmediate(r));
+    expect(n).toBe(6);
+  });
+
   test("a superseded document id's listen stops without restarting", async () => {
     const listens: ((v: unknown) => void)[] = [];
     const { win } = fakeWebkit((m) => {
@@ -423,6 +452,7 @@ describe("the host hop end to end", () => {
         flush();
       },
       event: async () => {},
+      openExternal: async () => {},
     };
     const handler = {
       postMessage: (raw: unknown) => {
@@ -484,6 +514,51 @@ describe("the host hop end to end", () => {
   });
 });
 
+describe("window.open on Android (R14: every new window goes to the browser sheet)", () => {
+  test("the profile document's window.open posts the resolved URL and opens nothing", () => {
+    const opened: string[] = [];
+    const transport = Object.assign(fakeTransport(), {
+      open: (post: { type: "open"; docId: string; url: string }) => {
+        expect(post).toMatchObject({ type: "open", docId: "doc-1234-5678" });
+        opened.push(post.url);
+      },
+    });
+    const target: { open?: unknown; capybaraShell?: unknown } = { open: () => "native window" };
+    bootShellEnvironment({
+      init: { ...init, platform: "android" },
+      target,
+      isTopFrame: true,
+      windowOrigin: ORIGIN,
+      randomId: () => "doc-1234-5678",
+      userActivation: () => true,
+      transport,
+      baseUrl: () => "https://a.example/chat/1",
+    });
+    const open = target.open as (url?: unknown) => unknown;
+    expect(open("/files/2")).toBeNull();
+    expect(open("https://b.example/x")).toBeNull();
+    expect(open()).toBeNull();
+    expect(open("javascript:alert(1)")).toBeNull();
+    expect(opened).toEqual(["https://a.example/files/2", "https://b.example/x"]);
+  });
+
+  test("on iOS window.open is left to WebKit (createWebViewWith routes it)", () => {
+    const original = () => "native window";
+    const target: { open?: unknown } = { open: original };
+    const transport = Object.assign(fakeTransport(), { open: vi.fn() });
+    bootShellEnvironment({
+      init,
+      target,
+      isTopFrame: true,
+      windowOrigin: ORIGIN,
+      randomId: () => "doc-1234-5678",
+      userActivation: () => true,
+      transport,
+    });
+    expect(target.open).toBe(original);
+  });
+});
+
 describe("the Android transport", () => {
   function fakePort() {
     const sent: string[] = [];
@@ -503,6 +578,10 @@ describe("the Android transport", () => {
 
   test("is null without the port", () => {
     expect(androidTransport({})).toBeNull();
+    const { win, sent } = fakePort();
+    const post = { type: "open", docId: "doc-1234-5678", url: "https://b.example/x" } as const;
+    androidTransport(win)?.open?.(post);
+    expect(sent.map((m) => JSON.parse(m))).toEqual([post]);
   });
 
   test("a reply resolves its call; a denied drop resolves failed instead of hanging", async () => {

@@ -21,3 +21,21 @@ test("the installed Capacitor Android only wipes session cookies when CapacitorC
   for (const line of calls)
     expect(line.trim()).toBe("if (isEnabled()) this.cookieManager.removeSessionCookies();");
 });
+
+// The same plugin installs a process-wide CookieHandler that bridges every HttpURLConnection (native
+// HttpGet included) into the default WebView profile: it would send the session cookies to a typed
+// host and store what that host sets (HttpGetCookiesTest).
+test("the installed Capacitor Android installs its CookieHandler only when CapacitorCookies is on", async () => {
+  const source = await readFile(
+    fileURLToPath(
+      new URL(
+        "../node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/plugin/CapacitorCookies.java",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  );
+  const calls = source.split("\n").filter((line) => line.includes("CookieHandler.setDefault("));
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.trim()).toBe("if (isEnabled()) CookieHandler.setDefault(this.cookieManager);");
+});

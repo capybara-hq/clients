@@ -9,5 +9,6 @@ object ShellPlugins {
     val all: List<Class<out Plugin>> = listOf(
         ShellPlugin::class.java,
         DataStoresPlugin::class.java,
+        MenuHostPlugin::class.java,
     )
 }

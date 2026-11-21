@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Origin A after the OAuth return. -->
+<html lang="en">
+  <head><meta charset="utf-8" /></head>
+  <body>
+    back
+    <script>
+      fetch("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ doc: "back-ready", results: {} }),
+      });
+    </script>
+  </body>
+</html>

@@ -82,7 +82,13 @@ describe("dispatch", () => {
       value: 42,
     });
     expect(run).toHaveBeenCalledWith(
-      { profile, origin: ORIGIN, docId: "doc-0001-aaaa", activation: true },
+      {
+        profile,
+        origin: ORIGIN,
+        docId: "doc-0001-aaaa",
+        activation: true,
+        signal: expect.any(AbortSignal),
+      },
       "x",
       2,
     );
@@ -297,6 +303,7 @@ describe("createHostPort", () => {
       reply: vi.fn(async () => {}),
       pushState: vi.fn(async () => {}),
       event: vi.fn(async () => {}),
+      openExternal: vi.fn(async () => {}),
     };
     const port = createHostPort(plugin);
     const seen: ShellCallMessage[] = [];
@@ -321,5 +328,54 @@ describe("createHostPort", () => {
     fire?.(msg());
     expect(seen).toHaveLength(1);
     await vi.waitFor(() => expect(remove).toHaveBeenCalled());
+  });
+});
+
+describe("a document that ends (M3)", () => {
+  test("a confirming call settles cancelled and frees the profile's slot", async () => {
+    const { registry } = setup();
+    let started!: () => void;
+    const begun = new Promise<void>((r) => {
+      started = r;
+    });
+    const seen: AbortSignal[] = [];
+    registry.register("dlg@1", {
+      functions: {
+        show: (ctx) => {
+          seen.push(ctx.signal);
+          started();
+          return new Promise(() => {});
+        },
+        quick: async () => "ok",
+      },
+      confirming: ["show", "quick"],
+    });
+    const pending = registry.dispatch(msg({ key: "dlg@1", fn: "show", activation: true }));
+    await begun;
+    expect(await registry.dispatch(msg({ key: "dlg@1", fn: "quick", activation: true }))).toEqual({
+      ok: false,
+      code: "busy",
+    });
+    registry.endDocument("p1");
+    expect(await pending).toEqual({ ok: false, code: "cancelled" });
+    expect(seen[0]?.aborted).toBe(true);
+    expect(await registry.dispatch(msg({ key: "dlg@1", fn: "quick", activation: true }))).toEqual({
+      ok: true,
+      value: "ok",
+    });
+  });
+
+  test("another profile's document ending changes nothing", async () => {
+    const { registry } = setup();
+    let resolve!: (v: string) => void;
+    registry.register("dlg@1", {
+      functions: { show: () => new Promise<string>((r) => (resolve = r)) },
+      confirming: ["show"],
+    });
+    const pending = registry.dispatch(msg({ key: "dlg@1", fn: "show", activation: true }));
+    await Promise.resolve();
+    registry.endDocument("p2");
+    resolve("picked");
+    expect(await pending).toEqual({ ok: true, value: "picked" });
   });
 });

@@ -9,7 +9,8 @@
 <body>
 <p>Origin A: window.open, without and with a user gesture.</p>
 <script>
-  // "same-window": the target loads in this WebView (Android, multiple windows off).
+  // Both platforms answer null: a new window goes to the browser sheet (Android wraps window.open
+  // in the injected script; "same-window" would mean it loaded in this WebView).
   const describe = (w) => (w === null ? "null" : w === window ? "same-window" : typeof w);
   window.__extraProbe = async (results) => {
     results.popup = { noGesture: describe(window.open("/popup-child.html?via=script")) };

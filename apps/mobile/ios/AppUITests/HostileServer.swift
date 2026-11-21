@@ -1,8 +1,11 @@
 // The loopback server of the hostile-page test, started by the test itself (Network.framework, on
 // the loopback interface only). Origin A is http://127.0.0.1:<port>, origin B http://localhost:<port>:
-// one server, told apart by the Host header. It serves apps/mobile/testpages/hostile, answers
+// one server, told apart by the Host header. It serves apps/mobile/testpages/hostile (or the
+// directory it is given), records every GET with its host, answers /redirect-oauth with an
+// OAuth-shaped redirect to origin B, answers
 // /redirect with a redirect to origin B, serves the sandbox-CSP pages, and collects the pages'
-// reports (POST /report) and the app's gate log (POST /native-log).
+// reports (POST /report) and the app's gate log (POST /native-log). GET /api/v1/meta serves
+// meta.json of the directory (the address page's discovery).
 
 import Foundation
 import Network
@@ -15,6 +18,8 @@ final class HostileServer {
     private var reports: [[String: Any]] = []
     private var nativeLog: [[String: Any]] = []
     private var waiters: [(doc: String, fire: () -> Void)] = []
+    private var nativeWaiters: [(match: ([String: Any]) -> Bool, fire: () -> Void)] = []
+    private var requests: [String] = []
 
     init(pagesDir: URL) throws {
         self.pagesDir = pagesDir
@@ -41,6 +46,22 @@ final class HostileServer {
 
     func snapshot() -> (reports: [[String: Any]], nativeLog: [[String: Any]]) {
         queue.sync { (reports, nativeLog) }
+    }
+
+    /// Every GET so far, as "<host> <path with query>".
+    func requestLog() -> [String] {
+        queue.sync { requests }
+    }
+
+    /// Calls `fire` once a native log entry matches (at once if one already has).
+    func onNative(_ match: @escaping ([String: Any]) -> Bool, fire: @escaping () -> Void) {
+        queue.async {
+            if self.nativeLog.contains(where: match) {
+                fire()
+            } else {
+                self.nativeWaiters.append((match, fire))
+            }
+        }
     }
 
     /// Calls `fire` once a report for `doc` arrives (at once if one already has).
@@ -79,6 +100,7 @@ final class HostileServer {
     private struct Request {
         let method: String
         let path: String
+        let host: String
         let body: Data
 
         init?(_ data: Data) {
@@ -89,22 +111,28 @@ final class HostileServer {
             let parts = lines.first?.split(separator: " ") ?? []
             guard parts.count >= 2 else { return nil }
             var length = 0
+            var host = "?"
             for line in lines.dropFirst() {
                 let pair = line.split(separator: ":", maxSplits: 1)
                 if pair.count == 2, pair[0].lowercased() == "content-length" {
                     length = Int(pair[1].trimmingCharacters(in: .whitespaces)) ?? 0
+                }
+                if pair.count == 2, pair[0].lowercased() == "host" {
+                    host = pair[1].trimmingCharacters(in: .whitespaces)
                 }
             }
             let body = data[end.upperBound...]
             guard body.count >= length else { return nil }
             method = String(parts[0])
             path = String(parts[1])
+            self.host = host
             self.body = Data(body.prefix(length))
         }
     }
 
     private func respond(_ connection: NWConnection, _ request: Request) {
         let path = String(request.path.split(separator: "?", maxSplits: 1).first ?? "/")
+        if request.method == "GET" { requests.append("\(request.host) \(request.path)") }
         var status = "200 OK"
         var headers = ["Cache-Control": "no-store", "Connection": "close",
                        "Access-Control-Allow-Origin": "*"]
@@ -121,6 +149,9 @@ final class HostileServer {
                 due.forEach { $0.fire() }
             } else {
                 nativeLog.append(entry)
+                let due = nativeWaiters.filter { $0.match(entry) }
+                nativeWaiters.removeAll { $0.match(entry) }
+                due.forEach { $0.fire() }
             }
             status = "204 No Content"
         case ("OPTIONS", _):
@@ -129,8 +160,13 @@ final class HostileServer {
         case ("GET", "/redirect"):
             status = "302 Found"
             headers["Location"] = "\(originB)/redirected.html"
+        case ("GET", "/redirect-oauth"):
+            // A server redirect shaped as an OAuth authorization URL back to origin A: the policy
+            // lets it leave the origin (a plain /redirect to origin B goes to the browser sheet).
+            status = "302 Found"
+            headers["Location"] = "\(originB)/redirected.html?response_type=code&client_id=c&state=s&redirect_uri=\(originA)%2Fcb"
         case ("GET", _):
-            var name = path == "/" ? "top.html" : String(path.dropFirst())
+            var name = path == "/" ? "top.html" : path == "/api/v1/meta" ? "meta.json" : String(path.dropFirst())
             if path.hasPrefix("/plugin-ui/") {
                 name = "plugin-ui.html"
             }
@@ -141,7 +177,8 @@ final class HostileServer {
             if allowed, let text = try? String(contentsOf: pagesDir.appendingPathComponent(name), encoding: .utf8) {
                 body = Data(text.replacingOccurrences(of: "__ORIGIN_A__", with: originA)
                     .replacingOccurrences(of: "__ORIGIN_B__", with: originB).utf8)
-                headers["Content-Type"] = name.hasSuffix(".js") ? "text/javascript" : "text/html; charset=utf-8"
+                headers["Content-Type"] = name.hasSuffix(".js") ? "text/javascript"
+                    : name.hasSuffix(".json") ? "application/json" : "text/html; charset=utf-8"
             } else {
                 status = "404 Not Found"
             }

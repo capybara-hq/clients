@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shell's own native text (the rest is in packages/shell's catalog, shown by local pages).
+     The unsupported state is native (R9, R17): an old WebView may not run the local pages. -->
+<resources>
+    <string name="unsupported_title">This device’s WebView is too old</string>
+    <string name="unsupported_body">Update Android System WebView (or Chrome) from the Play Store, then open the app again. Until then no platform can be opened here.</string>
+</resources>

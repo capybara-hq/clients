@@ -16,16 +16,19 @@
     "check:brand": "node scripts/apply-brand.ts --check"
   },
   "dependencies": {
-    "@capybara-hq/shell": "workspace:*",
     "@capacitor/android": "8.6.2",
     "@capacitor/core": "8.6.2",
-    "@capacitor/ios": "8.6.2"
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.6.2",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/share": "8.0.3",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capybara-hq/shell": "workspace:*"
   },
   "devDependencies": {
     "@capacitor/assets": "4.0.0",
     "@capacitor/cli": "8.6.2",
-    "@capybara-hq/plugin-sdk": "0.1.0-rc.41",
-    "@capybara-hq/shell": "workspace:*",
+    "@capybara-hq/plugin-sdk": "0.1.0-rc.44",
     "esbuild": "^0.28.2"
   }
 }

@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@capacitor/android@8.6.2':
-    hash: 376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3
+    hash: bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9
     path: patches/@capacitor__android@8.6.2.patch
 
 importers:
@@ -72,13 +72,25 @@ importers:
     dependencies:
       '@capacitor/android':
         specifier: 8.6.2
-        version: 8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)
+        version: 8.6.2(patch_hash=bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9)(@capacitor/core@8.6.2)
       '@capacitor/core':
         specifier: 8.6.2
         version: 8.6.2
+      '@capacitor/haptics':
+        specifier: 8.0.2
+        version: 8.0.2(@capacitor/core@8.6.2)
       '@capacitor/ios':
         specifier: 8.6.2
         version: 8.6.2(@capacitor/core@8.6.2)
+      '@capacitor/preferences':
+        specifier: 8.0.1
+        version: 8.0.1(@capacitor/core@8.6.2)
+      '@capacitor/share':
+        specifier: 8.0.3
+        version: 8.0.3(@capacitor/core@8.6.2)
+      '@capacitor/splash-screen':
+        specifier: 8.0.2
+        version: 8.0.2(@capacitor/core@8.6.2)
       '@capybara-hq/shell':
         specifier: workspace:*
         version: link:../../packages/shell
@@ -90,11 +102,8 @@ importers:
         specifier: 8.6.2
         version: 8.6.2
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.41
-        version: 0.1.0-rc.41
-      '@capybara-hq/shell':
-        specifier: workspace:*
-        version: link:../../packages/shell
+        specifier: 0.1.0-rc.44
+        version: 0.1.0-rc.44
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -198,10 +207,30 @@ packages:
   '@capacitor/core@8.6.2':
     resolution: {integrity: sha512-UEb9crRuqEAe2Iu2eGOEuQ8rLQxpwg7ZZIpl17UJoytEpnV1e4oXXW0K7yYS2NsCOGmJjyLeKjNlgG7tkAoX8g==}
 
+  '@capacitor/haptics@8.0.2':
+    resolution: {integrity: sha512-c2hZzRR5Fk1tbTvhG1jhh2XBAf3EhnIerMIb2sl7Mt41Gxx1fhBJFDa0/BI1IbY4loVepyyuqNC9820/GZuoWQ==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
   '@capacitor/ios@8.6.2':
     resolution: {integrity: sha512-YnVm0lRA1mQWK0SKd2bdJIOG+PXRRDDdndZ1+nGqeiob+QmHZmb4wWo5gVpWhoHO37pGi2qzH5w5WGvfKrs+Gg==}
     peerDependencies:
       '@capacitor/core': ^8.6.0
+
+  '@capacitor/preferences@8.0.1':
+    resolution: {integrity: sha512-T6no3ebi79XJCk91U3Jp/liJUwgBdvHR+s6vhvPkPxSuch7z3zx5Rv1bdWM6sWruNx+pViuEGqZvbfCdyBvcHQ==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/share@8.0.3':
+    resolution: {integrity: sha512-gnvZBV1NPu2B8vd1UKncR56G15ueHd0aZLqgDov++t3SmTBG9Q0VrAZ1VnHn5stxlmglVaTb4RwopMgbpLzroA==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor/splash-screen@8.0.2':
+    resolution: {integrity: sha512-0C6rYScr13WfAE9nPl4ScOQynmjFv9NT3Th+RZkD4ezYHmER6mcl1/lDYsv7jg3Rj3FOvLrlTlmNkUrr83kZzQ==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capybara-hq/device@0.1.0-rc.19':
     resolution: {integrity: sha512-jaK0f2devL5mjUqTRwm5ZcpvMQj+QhFHHCgD1el7phIwtpcOuDxESjoU+4ONMP71ohwGnsYGheBN6NAgArQ+JA==}
@@ -210,6 +239,9 @@ packages:
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.41':
     resolution: {integrity: sha512-n3qnCHS0s/rPlPP1a1drMxOsAi+wkYM2BcKZChH8b3ieCoga4j6GW1XErnISHNYd80rsHIMjgnBSn8hFsVLnow==}
+
+  '@capybara-hq/plugin-sdk@0.1.0-rc.44':
+    resolution: {integrity: sha512-B0qxKm8ppWLR2j74XImMkNWTHKDHQeOwnBwXK2APvuC/eQqvt9nC2PRJzJObMpbND1dfAiK9UWY+wDSi6Gu3uA==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -3024,7 +3056,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.8':
     optional: true
 
-  '@capacitor/android@8.6.2(patch_hash=376500c5d91e367ccbe517da00e62e0870482073a524a1a79826f5df580c00e3)(@capacitor/core@8.6.2)':
+  '@capacitor/android@8.6.2(patch_hash=bc431f1325a8ecf594948060cce1cf5a2c1947089a139cbeacbad820c68088b9)(@capacitor/core@8.6.2)':
     dependencies:
       '@capacitor/core': 8.6.2
 
@@ -3074,13 +3106,44 @@ snapshots:
     dependencies:
       tslib: 2.9.1
 
+  '@capacitor/haptics@8.0.2(@capacitor/core@8.6.2)':
+    dependencies:
+      '@capacitor/core': 8.6.2
+
   '@capacitor/ios@8.6.2(@capacitor/core@8.6.2)':
+    dependencies:
+      '@capacitor/core': 8.6.2
+
+  '@capacitor/preferences@8.0.1(@capacitor/core@8.6.2)':
+    dependencies:
+      '@capacitor/core': 8.6.2
+
+  '@capacitor/share@8.0.3(@capacitor/core@8.6.2)':
+    dependencies:
+      '@capacitor/core': 8.6.2
+
+  '@capacitor/splash-screen@8.0.2(@capacitor/core@8.6.2)':
     dependencies:
       '@capacitor/core': 8.6.2
 
   '@capybara-hq/device@0.1.0-rc.19': {}
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.41':
+    dependencies:
+      '@types/mdast': 4.0.4
+      kysely: 0.29.9
+      mdast-util-from-markdown: 2.1.0
+      mdast-util-gfm: 3.1.0
+      mdast-util-to-markdown: 2.2.0
+      micromark-extension-gfm: 3.0.0
+      saxes: 6.0.0
+      semver: 7.8.6
+      yaml: 2.9.1
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - supports-color
+
+  '@capybara-hq/plugin-sdk@0.1.0-rc.44':
     dependencies:
       '@types/mdast': 4.0.4
       kysely: 0.29.9
