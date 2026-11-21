@@ -6,13 +6,14 @@ import {
   type CapabilityDescriptors,
   type Controls,
   chromeState,
-  DESKTOP_CONTROLS,
   localPageUrl,
+  MAIN_TRAFFIC_LIGHT_POSITION,
   SHELL_CHANNELS,
   type ShellEventMessage,
   type ShellPlatform,
   type ShellState,
-  TRAFFIC_LIGHT_POSITION,
+  SMALL_CONTROLS,
+  SMALL_TRAFFIC_LIGHT_POSITION,
 } from "../shared/protocol.ts";
 import { type Profile, partitionFor } from "./profiles.ts";
 import { blockInWindowSignIn, type WebRequestSession } from "./request-guard.ts";
@@ -112,7 +113,7 @@ export const MAIN_MIN_SIZE = { width: 480, height: 400 } as const;
  * lights top left on macOS, the caption buttons top right elsewhere.
  */
 export function smallWindowControls(platform: ShellPlatform): Controls {
-  if (platform === "macos") return { ...DESKTOP_CONTROLS };
+  if (platform === "macos") return { ...SMALL_CONTROLS };
   return {
     x: SMALL_WINDOW_SIZE.width - CAPTION_BUTTONS_WIDTH,
     y: 0,
@@ -143,7 +144,7 @@ export function smallWindowOptions(
     fullscreenable: false,
     backgroundColor: colors.background,
     ...(platform === "macos"
-      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION } }
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { ...SMALL_TRAFFIC_LIGHT_POSITION } }
       : {
           titleBarStyle: "hidden",
           titleBarOverlay: {
@@ -154,6 +155,19 @@ export function smallWindowOptions(
         }),
     webPreferences: localWebPreferences({ preload: o.preload }),
   };
+}
+
+/**
+ * The main window's title bar (desktop spec §7.3): on macOS hidden, the web running to the top
+ * edge and the traffic lights centred in its top row (`chromeState` reports their rectangle);
+ * Windows and Linux keep the system title bar until they report a caption overlay.
+ */
+export function mainWindowChrome(
+  platform: ShellPlatform,
+): Pick<WindowOptions, "titleBarStyle" | "trafficLightPosition"> {
+  return platform === "macos"
+    ? { titleBarStyle: "hidden", trafficLightPosition: { ...MAIN_TRAFFIC_LIGHT_POSITION } }
+    : {};
 }
 
 /** A partition as the window manager configures it. */
@@ -341,8 +355,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       minHeight: MAIN_MIN_SIZE.height,
       show: false,
       title: profile.name,
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: { ...TRAFFIC_LIGHT_POSITION },
+      ...mainWindowChrome(deps.platform),
       ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
       webPreferences: profileWebPreferences({ partition, preload: deps.preloadPath }),
     });

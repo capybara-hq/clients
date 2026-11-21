@@ -2,15 +2,17 @@ import { describe, expect, test, vi } from "vitest";
 import type { Profile } from "../src/main/profiles.ts";
 import {
   createWindowManager,
+  mainWindowChrome,
   smallWindowControls,
   smallWindowOptions,
   type WindowManagerDeps,
 } from "../src/main/windows.ts";
 import {
-  DESKTOP_CONTROLS,
   localPageUrl,
+  MAIN_TRAFFIC_LIGHT_POSITION,
   SHELL_CHANNELS,
-  TRAFFIC_LIGHT_POSITION,
+  SMALL_CONTROLS,
+  SMALL_TRAFFIC_LIGHT_POSITION,
 } from "../src/shared/protocol.ts";
 import { fakeEmitter, fakeSession, fakeWebContents } from "./fakes.ts";
 
@@ -96,12 +98,12 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
 }
 
 describe("profile windows", () => {
-  test("hiddenInset title bar at the fixed traffic light position, the profile partition", () => {
+  test("macOS: a hidden title bar, the lights centred in the top row, the profile partition", () => {
     const { windows, options, created } = setup();
     windows.openProfileWindow(p1);
     expect(options[0]).toMatchObject({
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+      titleBarStyle: "hidden",
+      trafficLightPosition: { x: 16, y: 17 },
       webPreferences: {
         partition: "persist:profile-p1",
         preload: "/dist/preload/index.cjs",
@@ -363,7 +365,7 @@ describe("the small window", () => {
       maximizable: false,
       fullscreenable: false,
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+      trafficLightPosition: SMALL_TRAFFIC_LIGHT_POSITION,
       backgroundColor: "#0A0A0A",
       webPreferences: { partition: "local", preload: "/dist/preload/local.cjs", sandbox: true },
     });
@@ -421,7 +423,18 @@ describe("the small window", () => {
       expect(o).not.toHaveProperty("trafficLightPosition");
       expect(smallWindowControls(platform)).toEqual({ x: 342, y: 0, width: 138, height: 32 });
     }
-    expect(smallWindowControls("macos")).toEqual(DESKTOP_CONTROLS);
+    expect(smallWindowControls("macos")).toEqual(SMALL_CONTROLS);
+  });
+});
+
+describe("the main window's title bar", () => {
+  test("macOS hides it with the lights in the top row; Windows and Linux keep the system's", () => {
+    expect(mainWindowChrome("macos")).toEqual({
+      titleBarStyle: "hidden",
+      trafficLightPosition: MAIN_TRAFFIC_LIGHT_POSITION,
+    });
+    expect(mainWindowChrome("windows")).toEqual({});
+    expect(mainWindowChrome("linux")).toEqual({});
   });
 });
 

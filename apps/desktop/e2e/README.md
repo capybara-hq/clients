@@ -52,7 +52,7 @@ What it covers:
 - The small window's theme toggle before any profile is the app's choice and seeds the new
   profile's `cb-theme` cookie (path `/`, `SameSite=Lax`, not HttpOnly) in its partition.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
-  insets `{28,0,0,0}`, controls `{0,0,80,28}`) with `signIn@1`, `notify@1`, `openExternal@1`,
+  insets `{0,0,0,0}`, controls `{0,0,92,48}`) with `signIn@1`, `notify@1`, `openExternal@1`,
   `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
   range) without a reload. `executeInMainWorld` works.
 - Same-origin and `/plugin-ui/...` iframes do not see `capybaraShell`.
@@ -96,9 +96,9 @@ and a version that offers local devices.
 - [ ] 「在浏览器中登录」 opens the system browser; after approving, the callback returns to the app
       (the first `capybara://` link while the app is not running launches it; `open-url` before
       `ready` is not lost) and the window reloads signed in. Deny returns without signing in.
-- [ ] The traffic lights sit at the announced position, and the page's controls rectangle
-      (`{0,0,80,28}`) covers them on the built window; in full screen the inset is 0 and
-      `controls` is `null`.
+- [ ] The traffic lights sit in the web's top row, vertically centred on the sidebar's brand row,
+      and the page's controls rectangle (`{0,0,92,48}`) covers them on the built window; in full
+      screen `controls` is `null`.
 - [ ] After sign-in the app window comes forward from behind the browser (macOS may not bring a
       background app forward without `app.focus({ steal: true })`).
 - [ ] A signed-in session survives quitting and relaunching. 「移除平台」 (app menu 平台 and the
