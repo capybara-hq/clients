@@ -165,13 +165,12 @@ async function main(): Promise<void> {
   const options = await plugin.launchOptions().catch((): LaunchOptions => ({}));
   const platform = Capacitor.getPlatform() === "android" ? "android" : "ios";
   // push@1: only a build whose brand carries a channel on this platform (K4's brand `push`).
-  // iOS: the CapybaraPush plugin over APNs (Push/PushBridge.swift); elsewhere the stand-in until
-  // that platform's module is wired in.
+  // The CapybaraPush plugin: iOS over APNs (Push/PushBridge.swift), Android over FCM and JPush
+  // (push/PushModule.kt); the stand-in for a build without push.
   const pushBuild = brandPush(brand, platform);
-  const pushNative: PushNative =
-    pushBuild && platform === "ios"
-      ? pushNativeFrom(registerPlugin<PushPlugin>(PUSH_PLUGIN_NAME))
-      : unsupportedPushNative;
+  const pushNative: PushNative = pushBuild
+    ? pushNativeFrom(registerPlugin<PushPlugin>(PUSH_PLUGIN_NAME))
+    : unsupportedPushNative;
   let pushStore: RegistrationStore | null = null;
 
   let list: () => LoaderProfile[];

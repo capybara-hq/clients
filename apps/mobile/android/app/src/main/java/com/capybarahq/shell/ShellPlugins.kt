@@ -3,6 +3,7 @@
 
 package com.capybarahq.shell
 
+import com.capybarahq.shell.push.PushPlugin
 import com.getcapacitor.Plugin
 
 object ShellPlugins {
@@ -11,5 +12,6 @@ object ShellPlugins {
         DataStoresPlugin::class.java,
         MenuHostPlugin::class.java,
         ManagedConfigPlugin::class.java,
+        PushPlugin::class.java,
     )
 }

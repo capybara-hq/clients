@@ -1,6 +1,6 @@
-// `PushNative` over the Capacitor plugin `CapybaraPush` (iOS: Push/PushBridge.swift). The plugin
-// lives on the bridge of the app's local pages: only this runtime calls it, and a profile page
-// reaches push only as `push@1` through the shell's gated handler. Answers of the wrong shape count
+// `PushNative` over the Capacitor plugin `CapybaraPush` (iOS: Push/PushBridge.swift; Android:
+// push/PushModule.kt). The plugin lives on the bridge of the app's local pages: only this runtime
+// calls it, and a profile page reaches push only as `push@1` through the shell's gated handler. Answers of the wrong shape count
 // as nothing (a permission that is not one of the three is `denied`, a token that is not a
 // non-empty string is a rejection); events that are not objects are dropped.
 //

@@ -103,8 +103,11 @@ export type NativePush =
   | { type: "denied"; callId: string }
   | { type: "state"; state: unknown }
   | { type: "event"; key: string; event: string; payload: unknown }
-  /** Android: the sign-in exchange or logout, run by the injected script with its own `fetch`. */
-  | { type: "post"; id: string; url: string; body: string | null };
+  /**
+   * Android: the sign-in exchange or logout (`POST`, the default), or a removed profile's push
+   * registration (`DELETE`, no body), run by the injected script with its own `fetch`.
+   */
+  | { type: "post"; id: string; url: string; body: string | null; method?: "POST" | "DELETE" };
 
 /** The shapes native accepts too (`ShellMessageHandler.swift`, `ShellMessageListener.kt`). */
 export const DOC_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;

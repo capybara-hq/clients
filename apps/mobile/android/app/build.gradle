@@ -5,6 +5,19 @@ apply plugin: 'org.jetbrains.kotlin.android'
 def brandProperties = new Properties()
 file("../brand.properties").withInputStream { brandProperties.load(it) }
 
+// Push channels (core spec §9.2), switched on per brand by apply-brand through brand.properties:
+//   pushFcm=true          applies the google-services plugin (needs app/google-services.json)
+//                         and enables the FCM service;
+//   jpushAppKey=<appKey>  the JPush app key; non-empty enables the JPush components.
+// Absent (the official build): no google-services plugin, every push component disabled, and
+// JPush never initialised (PushChannels reads BuildConfig.JPUSH_APPKEY). The SDKs are always on
+// the classpath so the module compiles the same way for every brand.
+def pushFcm = brandProperties.getProperty("pushFcm", "false") == "true"
+def jpushAppKey = brandProperties.getProperty("jpushAppKey", "").trim()
+if (pushFcm) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
 android {
     // The app's own code lives in com.capybarahq.shell whatever the brand's application id.
     namespace = "com.capybarahq.shell"
@@ -13,9 +26,20 @@ android {
         applicationId brandProperties.getProperty("applicationId")
         resValue "string", "app_name", brandProperties.getProperty("appName")
         resValue "string", "title_activity_main", brandProperties.getProperty("appName")
-        manifestPlaceholders = [brandScheme: brandProperties.getProperty("scheme")]
+        manifestPlaceholders = [
+            brandScheme: brandProperties.getProperty("scheme"),
+            pushFcmEnabled: pushFcm.toString(),
+            pushJpushEnabled: (!jpushAppKey.isEmpty()).toString(),
+            // The JPush SDK's own manifest reads these three.
+            JPUSH_PKGNAME: brandProperties.getProperty("applicationId"),
+            JPUSH_APPKEY: jpushAppKey,
+            JPUSH_CHANNEL: "developer-default",
+        ]
         // The only scheme a sign-in callback may use (AuthSession.kt).
         buildConfigField "String", "BRAND_SCHEME", "\"${brandProperties.getProperty("scheme")}\""
+        // Which push channels this build carries (PushChannels.kt).
+        buildConfigField "boolean", "PUSH_FCM", pushFcm.toString()
+        buildConfigField "String", "JPUSH_APPKEY", "\"${jpushAppKey}\""
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // The release workflow passes -PcapybaraVersionCode=<github.run_number>.
@@ -82,9 +106,16 @@ dependencies {
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     // The browser sheet (Custom Tabs) for other origins and new windows.
     implementation "androidx.browser:browser:$androidxBrowserVersion"
+    // Push: FCM, Google Play services availability, and the JPush aggregator SDK (push/).
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
+    implementation "com.google.android.gms:play-services-base:$playServicesBaseVersion"
+    implementation "cn.jiguang.sdk:jpush:$jpushVersion"
+    // Pinned: the JPush POM asks for jcore [1.0.0,).
+    implementation "cn.jiguang.sdk:jcore:$jcoreVersion"
     testImplementation "junit:junit:$junitVersion"
     // The real org.json for JVM tests that read the shared vector files (android.jar's is a stub).
     testImplementation "org.json:json:20250517"
+    testImplementation "org.robolectric:robolectric:$robolectricVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

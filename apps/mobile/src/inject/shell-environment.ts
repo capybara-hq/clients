@@ -374,6 +374,7 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
 
   /** Runs the post; `done` is called once with the outcome, never with a page-made value. */
   function runPost(
+    method: "POST" | "DELETE",
     url: string,
     body: string | null,
     done: (ok: boolean, status: number, hasAccount: boolean) => void,
@@ -393,7 +394,7 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
     if (body !== null) headers["Content-Type"] = "application/json";
     headers["X-Capybara-Csrf"] = "1";
     const init = bare();
-    init.method = "POST";
+    init.method = method;
     init.headers = headers;
     init.credentials = "include";
     init.redirect = "error";
@@ -467,9 +468,12 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
       const id = hasOwn(p, "id") ? p.id : undefined;
       const url = hasOwn(p, "url") ? p.url : undefined;
       const body = hasOwn(p, "body") ? p.body : undefined;
+      // DELETE: a removed profile's push registration (no body); absent is the sign-in POST.
+      const method = hasOwn(p, "method") ? p.method : "POST";
       if (typeof id !== "string" || typeof url !== "string") return;
       if (body !== null && typeof body !== "string") return;
-      runPost(url, body, (ok, status, hasAccount) => {
+      if (method !== "POST" && !(method === "DELETE" && body === null)) return;
+      runPost(method, url, body, (ok, status, hasAccount) => {
         const result = bare();
         result.type = "post-result";
         result.docId = docId;
