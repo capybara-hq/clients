@@ -5,14 +5,19 @@ apply plugin: 'org.jetbrains.kotlin.android'
 def brandProperties = new Properties()
 file("../brand.properties").withInputStream { brandProperties.load(it) }
 
-// Push channels (core spec §9.2), switched on per brand by apply-brand through brand.properties:
-//   pushFcm=true          FCM: Firebase Messaging and Play services, src/fcm (code + manifest),
-//                         and the google-services plugin (needs app/google-services.json);
-//   jpushAppKey=<appKey>  JPush: the JPush SDK and src/jpush (code + manifest).
-// A channel that is off compiles src/fcmOff or src/jpushOff instead (empty stand-ins), so the
-// official build (neither key) contains no push SDK class, component or permission (ruling R20).
-def pushFcm = brandProperties.getProperty("pushFcm", "false") == "true"
-def jpushAppKey = brandProperties.getProperty("jpushAppKey", "").trim()
+// Push channels (core spec §9.2), switched on per brand by apply-brand through brand.properties
+// (a Gradle property of the same name can switch a channel on: CI's push leg passes
+// -PpushFcm=true -PjpushAppKey=...):
+//   pushFcm=true          FCM: Firebase Messaging and Play services, src/fcm (code, manifest with
+//                         POST_NOTIFICATIONS) and the google-services plugin (needs
+//                         app/google-services.json);
+//   jpushAppKey=<appKey>  JPush: the JPush SDK and src/jpush (code, manifest with
+//                         POST_NOTIFICATIONS).
+// A channel that is off compiles src/fcmOff or src/jpushOff instead (empty stand-ins) and merges
+// no manifest, so the official build (neither key) has no push SDK class, no push component and
+// no push permission, POST_NOTIFICATIONS included (ruling R20).
+def pushFcm = brandProperties.getProperty("pushFcm", "false") == "true" || project.findProperty("pushFcm") == "true"
+def jpushAppKey = (project.findProperty("jpushAppKey") ?: brandProperties.getProperty("jpushAppKey", "")).toString().trim()
 if (pushFcm) {
     apply plugin: 'com.google.gms.google-services'
 }
