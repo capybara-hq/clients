@@ -572,7 +572,7 @@ describe("the Android transport", () => {
     return {
       win: { capybaraShellPort: port },
       sent,
-      fire: (data: unknown) => listener?.({ data }),
+      fire: (data: unknown) => listener?.(new MessageEvent("message", { data })),
     };
   }
 
@@ -650,7 +650,13 @@ describe("the Android sign-in post (Task 17 fix I1: never through the page's fet
       await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
       return sent.map((s) => JSON.parse(s));
     };
-    return { win, original, pushes, results, fire: (data: unknown) => listener?.({ data }) };
+    return {
+      win,
+      original,
+      pushes,
+      results,
+      fire: (data: unknown) => listener?.(new MessageEvent("message", { data })),
+    };
   }
   const post = (over: Record<string, unknown> = {}) =>
     JSON.stringify({
@@ -712,21 +718,161 @@ describe("the Android sign-in post (Task 17 fix I1: never through the page's fet
     expect(original.mock.calls[0]?.[1]).not.toHaveProperty("body");
   });
 
-  test("a URL off the document's origin, or a malformed post, is never fetched", async () => {
-    const { original, results, fire } = setup();
-    fire(post({ id: "p-3", url: "https://evil.example/api/v1/app-auth/token" }));
-    expect(await results()).toEqual([
-      {
-        type: "post-result",
-        docId: "doc-1234-5678",
-        id: "p-3",
-        ok: false,
-        status: 0,
-        hasAccount: false,
-      },
-    ]);
+  test("a malformed post is never fetched (native checks the URL's origin: ProfileWebView.post)", async () => {
+    const { original, fire } = setup();
     fire(post({ id: 7 }));
     fire(post({ body: 1 }));
+    fire(post({ url: undefined }));
+    await Promise.resolve();
     expect(original).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Android sign-in post survives page prototype tampering (Task 17 fix round 2)", () => {
+  const ORIGIN = "https://a.example";
+  const URL_TOKEN = `${ORIGIN}/api/v1/app-auth/token`;
+  const BODY = '{"code":"c","codeVerifier":"v-secret","redirectUri":"r"}';
+
+  function setup() {
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    const port = {
+      postMessage: (m: string) => sent.push(m),
+      addEventListener: (_t: "message", l: (e: unknown) => void) => {
+        listener = l;
+      },
+    };
+    const original = vi.fn(async (_url: string, _init: Record<string, unknown>) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ account: {} }),
+    }));
+    const win: Record<string, unknown> = {
+      capybaraShellPort: port,
+      fetch: original,
+      location: { origin: ORIGIN },
+    };
+    const t = androidTransport(win as never);
+    t?.hello("doc-1234-5678");
+    sent.length = 0;
+    const fire = () =>
+      listener?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY }),
+        }),
+      );
+    const done = () => vi.waitFor(() => expect(sent.length).toBe(1));
+    return { original, fire, done };
+  }
+
+  test("a page getter on MessageEvent.prototype.data never runs", async () => {
+    const { original, fire, done } = setup();
+    const saved = Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data");
+    const leaked: unknown[] = [];
+    Object.defineProperty(MessageEvent.prototype, "data", {
+      configurable: true,
+      get() {
+        const v = saved?.get?.call(this);
+        leaked.push(v);
+        return v;
+      },
+    });
+    try {
+      fire();
+      await done();
+    } finally {
+      if (saved) Object.defineProperty(MessageEvent.prototype, "data", saved);
+    }
+    expect(leaked).toEqual([]);
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  test("an event with its own data value is read from the descriptor; an accessor is ignored", async () => {
+    const sent: string[] = [];
+    let listener: ((e: unknown) => void) | undefined;
+    const original = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ account: {} }),
+    }));
+    const win: Record<string, unknown> = {
+      capybaraShellPort: {
+        postMessage: (m: string) => sent.push(m),
+        addEventListener: (_t: "message", l: (e: unknown) => void) => {
+          listener = l;
+        },
+      },
+      fetch: original,
+    };
+    androidTransport(win as never)?.hello("doc-1234-5678");
+    sent.length = 0;
+    const data = JSON.stringify({ type: "post", id: "p-1", url: URL_TOKEN, body: BODY });
+    const touched = vi.fn(() => data);
+    listener?.(Object.defineProperty({}, "data", { get: touched }));
+    listener?.({ data });
+    await vi.waitFor(() => expect(sent.length).toBe(1));
+    expect(touched).not.toHaveBeenCalled();
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  test("a page getter on Object.prototype never sees the request init", async () => {
+    const { original, fire, done } = setup();
+    const leaked: unknown[] = [];
+    for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+      Object.defineProperty(Object.prototype, name, {
+        configurable: true,
+        get() {
+          leaked.push((this as { body?: unknown }).body);
+          return undefined;
+        },
+      });
+    }
+    try {
+      fire();
+      await done();
+      const init = original.mock.calls[0]?.[1] as Record<string, unknown>;
+      // What fetch reads off the init (every dictionary member) never reaches Object.prototype.
+      for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+        void init[name];
+        void (init.headers as Record<string, unknown>)[name];
+      }
+      expect(Object.getPrototypeOf(init)).toBeNull();
+      expect(Object.getPrototypeOf(init.headers)).toBeNull();
+    } finally {
+      for (const name of ["keepalive", "mode", "integrity", "referrer", "window", "priority"]) {
+        delete (Object.prototype as Record<string, unknown>)[name];
+      }
+    }
+    expect(leaked).toEqual([]);
+  });
+
+  test("a page getter on URL.prototype never redirects the post", async () => {
+    const { original, fire, done } = setup();
+    const href = Object.getOwnPropertyDescriptor(URL.prototype, "href");
+    const origin = Object.getOwnPropertyDescriptor(URL.prototype, "origin");
+    const touched: string[] = [];
+    Object.defineProperty(URL.prototype, "href", {
+      configurable: true,
+      get() {
+        touched.push("href");
+        return "https://attacker.example/steal";
+      },
+    });
+    Object.defineProperty(URL.prototype, "origin", {
+      configurable: true,
+      get() {
+        touched.push("origin");
+        return ORIGIN;
+      },
+    });
+    try {
+      fire();
+      await done();
+    } finally {
+      if (href) Object.defineProperty(URL.prototype, "href", href);
+      if (origin) Object.defineProperty(URL.prototype, "origin", origin);
+    }
+    expect(touched).toEqual([]);
+    expect(original.mock.calls[0]?.[0]).toBe(URL_TOKEN);
   });
 });

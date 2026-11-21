@@ -50,4 +50,20 @@ class SignInGuardTest {
         assertNull(SignInGuard.intercept(null, "$base/api/v1/auth/login", base) { s, _ -> s })
         assertEquals(403, SignInGuard.intercept(null, "$base/api/v1/auth/sso/x/start", base) { s, _ -> s })
     }
+
+    @Test
+    fun aSignInPostGoesOnlyToTheTokenOrLogoutRouteOfTheBase() {
+        val base = "https://cap.example.com/team"
+        assertTrue(ProfileWebView.isSignInPostUrl("$base/api/v1/app-auth/token", base))
+        assertTrue(ProfileWebView.isSignInPostUrl("$base/api/v1/auth/logout", base))
+        for (bad in listOf(
+            "https://cap.example.com/api/v1/app-auth/token",
+            "$base/api/v1/app-auth/token?x=1",
+            "https://cap.example.com\\@evil.example/team/api/v1/app-auth/token",
+            "https://evil.example/team/api/v1/app-auth/token",
+            "$base/api/v1/auth/login",
+        )) {
+            assertTrue(bad, !ProfileWebView.isSignInPostUrl(bad, base))
+        }
+    }
 }

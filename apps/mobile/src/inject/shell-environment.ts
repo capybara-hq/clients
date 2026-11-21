@@ -297,6 +297,13 @@ const POST_FAILED = { ok: false, status: 0, hasAccount: false };
  * code exchange (and the logout of an unwanted session) as a `post` push, and this script runs it
  * with the `fetch` it captured at document start: a page that patches `fetch` later never sees the
  * code, the verifier or the redirect URI. Only `{ ok, status, hasAccount }` goes back.
+ *
+ * Android has no isolated world, so everything on the secret's path is taken at document start
+ * (fix round 2): the message data is read through the original `MessageEvent.prototype.data`
+ * getter, the request init and headers have no prototype (a page getter on `Object.prototype` is
+ * never asked for a missing member), and native's checked URL string goes to the saved `fetch`
+ * as is (no `URL.prototype` getter re-derives it). What the page can still patch (`Response`,
+ * `Promise.prototype`) sees only the response, which holds no secret.
  */
 export function androidTransport(win: Record<string, unknown>): NativeTransport | null {
   const port = win[ANDROID_PORT_NAME] as AndroidPort | undefined;
@@ -309,43 +316,43 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
   }
   const stringify = JSON.stringify;
   const parse = JSON.parse;
+  const apply = Reflect.apply;
+  const createObject = Object.create;
+  const hasOwn = Object.hasOwn;
+  const ownDescriptor = Object.getOwnPropertyDescriptor;
+  const messageData =
+    typeof MessageEvent === "function"
+      ? Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data")?.get
+      : undefined;
   const fetchAtStart =
     typeof win.fetch === "function" ? (win.fetch as FetchLike).bind(win) : undefined;
-  const UrlAtStart = URL;
   const timeout =
     typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
       ? AbortSignal.timeout.bind(AbortSignal)
       : undefined;
-  const location = win.location as { origin?: unknown } | undefined;
   const pending = new Map<string, (result: ShellCallResult) => void>();
   let receiver: ((push: { type: string }) => void) | undefined;
   let docId = "";
 
+  /** A record with no prototype: reading a member it lacks never reaches a page getter. */
+  const bare = (): Record<string, unknown> => createObject(null) as Record<string, unknown>;
+
   async function runPost(url: string, body: string | null): Promise<typeof POST_FAILED> {
     if (!fetchAtStart) return POST_FAILED;
-    let target: string;
-    try {
-      const u = new UrlAtStart(url);
-      // `location` is unforgeable: the post goes only to this document's own origin.
-      if (u.origin !== String(location?.origin)) return POST_FAILED;
-      target = u.href;
-    } catch {
-      return POST_FAILED;
-    }
-    const init: Record<string, unknown> = {
-      method: "POST",
-      headers:
-        body === null
-          ? { "X-Capybara-Csrf": "1" }
-          : { "Content-Type": "application/json", "X-Capybara-Csrf": "1" },
-      credentials: "include",
-      redirect: "error",
-      cache: "no-store",
-    };
+    const headers = bare();
+    if (body !== null) headers["Content-Type"] = "application/json";
+    headers["X-Capybara-Csrf"] = "1";
+    const init = bare();
+    init.method = "POST";
+    init.headers = headers;
+    init.credentials = "include";
+    init.redirect = "error";
+    init.cache = "no-store";
     if (body !== null) init.body = body;
     if (timeout) init.signal = timeout(30000);
     try {
-      const res = await fetchAtStart(target, init);
+      // Native checked `url` is on the profile origin; it goes to fetch as the string it sent.
+      const res = await fetchAtStart(url, init);
       if (!res.ok) return { ok: false, status: res.status, hasAccount: false };
       let hasAccount = false;
       try {
@@ -365,12 +372,38 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
   port.addEventListener("message", (event) => {
     let push: unknown;
     try {
-      push = typeof event.data === "string" ? parse(event.data) : undefined;
+      // Only the platform dispatches on this port. Its event carries `data` as an own value (read
+      // from the descriptor, so no getter runs), or it is a MessageEvent whose `data` getter is
+      // the one saved at document start: a page's later patch of either is never asked.
+      const own = ownDescriptor(event, "data");
+      let data: unknown;
+      if (own) {
+        if (!("value" in own)) return;
+        data = own.value;
+      } else if (messageData) {
+        data = apply(messageData, event, []);
+      } else {
+        return;
+      }
+      push = typeof data === "string" ? parse(data) : undefined;
     } catch {
       return;
     }
     if (typeof push !== "object" || push === null) return;
     const p = push as Record<string, unknown>;
+    // A sign-in post first, reading own members only: a lookup of a member it lacks would walk to
+    // `Object.prototype`, where a page getter could read the body.
+    if (hasOwn(p, "type") && p.type === "post") {
+      const id = hasOwn(p, "id") ? p.id : undefined;
+      const url = hasOwn(p, "url") ? p.url : undefined;
+      const body = hasOwn(p, "body") ? p.body : undefined;
+      if (typeof id !== "string" || typeof url !== "string") return;
+      if (body !== null && typeof body !== "string") return;
+      void runPost(url, body).then((result) => {
+        post(stringify({ type: "post-result", docId, id, ...result }));
+      });
+      return;
+    }
     if ((p.type === "reply" || p.type === "denied") && typeof p.callId === "string") {
       const resolve = pending.get(p.callId);
       if (!resolve) return;
@@ -380,15 +413,6 @@ export function androidTransport(win: Record<string, unknown>): NativeTransport 
           ? p.result
           : { ok: false, code: "failed" },
       );
-      return;
-    }
-    if (p.type === "post") {
-      const { id, url, body } = p;
-      if (typeof id !== "string" || typeof url !== "string") return;
-      if (body !== null && typeof body !== "string") return;
-      void runPost(url, body).then((result) => {
-        post(stringify({ type: "post-result", docId, id, ...result }));
-      });
       return;
     }
     receiver?.(p as { type: string });

@@ -62,6 +62,29 @@ class SignInServer : AutoCloseable {
 
     override fun close() = socket.close()
 
+    companion object {
+        /**
+         * Pages that tamper with a prototype on the exchange's path (fix round 2); each patch pushes
+         * whatever it can reach into `window.leaked`.
+         */
+        val PATCHES = mapOf(
+            "/patch-data" to
+                "var d = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data');" +
+                " Object.defineProperty(MessageEvent.prototype, 'data', { configurable: true," +
+                " get: function () { var v = d.get.call(this); window.leaked.push(String(v)); return v; } });",
+            "/patch-proto" to
+                "['keepalive', 'mode', 'integrity', 'referrer', 'referrerPolicy', 'window', 'priority', 'duplex']" +
+                ".forEach(function (n) { Object.defineProperty(Object.prototype, n, { configurable: true," +
+                " get: function () { window.leaked.push(String(this && this.body)); return undefined; } }); });",
+            "/patch-url" to
+                "var h = Object.getOwnPropertyDescriptor(URL.prototype, 'href');" +
+                " Object.defineProperty(URL.prototype, 'href', { configurable: true," +
+                " get: function () { window.leaked.push('href'); return 'http://localhost:' + location.port + '/stolen'; } });" +
+                " Object.defineProperty(URL.prototype, 'origin', { configurable: true," +
+                " get: function () { window.leaked.push('origin'); return location.origin; } });",
+        )
+    }
+
     fun requests(): List<Request> = synchronized(lock) { log.toList() }
 
     fun clear() = synchronized(lock) { log.clear() }
@@ -103,6 +126,8 @@ class SignInServer : AutoCloseable {
         // The WebView asks for the page's icon on its own: not a request the test makes.
         if (!isMark && target != "/favicon.ico") synchronized(lock) { log.add(request) }
         val (type, extra, text) = when {
+            target in PATCHES ->
+                Triple("text/html", "", "<!doctype html><script>window.leaked = []; ${PATCHES[target]}</script><p>page</p>")
             target == "/patched" ->
                 // A page script patches fetch: it must never see the exchange (fix I1).
                 Triple(
@@ -308,4 +333,42 @@ class SignInBlockPageTest {
             }
         }
     }
+
+    /** Fix round 2: a page that patched `patch` before the exchange; `control` shows the patch is live. */
+    private fun tamperedExchange(page: String, profile: String, control: String) = withView("", profile, page) { server, scenario, view ->
+        val result = LinkedBlockingQueue<JSONObject>()
+        val body = "{\"code\":\"cap_ac_secret\",\"codeVerifier\":\"verifier-secret\",\"redirectUri\":\"capybara://auth/callback\"}"
+        server.clear()
+        scenario.onActivity { view.post("${server.origin}/api/v1/app-auth/token", body) { result.add(it) } }
+        val r = result.poll(40, TimeUnit.SECONDS)
+        assertNotNull(r)
+        assertTrue("$r", r!!.getBoolean("ok") && r.getBoolean("hasAccount"))
+        val posts = server.requests().filter { it.method == "POST" }
+        assertEquals(listOf("/api/v1/app-auth/token"), posts.map { it.target })
+        assertEquals(body, posts.first().body)
+        assertEquals("the page saw: ${eval(scenario, view, "JSON.stringify(window.leaked)")}", "0", eval(scenario, view, "window.leaked.length"))
+        eval(scenario, view, control)
+        assertTrue("the patch never ran", eval(scenario, view, "window.leaked.length").toInt() > 0)
+    }
+
+    @Test
+    fun aPatchedMessageEventDataGetterNeverSeesThePost() = tamperedExchange(
+        "/patch-data",
+        "sign-in-patch-data",
+        "new MessageEvent('message', { data: 'probe' }).data; 1",
+    )
+
+    @Test
+    fun objectPrototypeGettersNeverSeeTheRequestInit() = tamperedExchange(
+        "/patch-proto",
+        "sign-in-patch-proto",
+        "fetch('/x', { body: 'probe', method: 'POST' }).catch(function () {}); 1",
+    )
+
+    @Test
+    fun aPatchedUrlPrototypeNeverRedirectsThePost() = tamperedExchange(
+        "/patch-url",
+        "sign-in-patch-url",
+        "new URL('/x', location.href).href; 1",
+    )
 }

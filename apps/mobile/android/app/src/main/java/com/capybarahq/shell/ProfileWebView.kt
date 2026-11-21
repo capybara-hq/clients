@@ -228,6 +228,14 @@ class ProfileWebView private constructor(
     companion object {
         private const val TAG = "CapybaraGate"
 
+        /**
+         * The only URLs a sign-in post may go to, exactly as the runtime builds them: the token
+         * exchange and the logout under the profile's base. The script passes the string to
+         * `fetch` unchanged, so nothing else may get through here.
+         */
+        fun isSignInPostUrl(url: String, base: String): Boolean =
+            url == "$base/api/v1/app-auth/token" || url == "$base/api/v1/auth/logout"
+
         /** A sign-in post's total deadline, a little past the script's 30 s `AbortSignal.timeout`. */
         const val POST_DEADLINE_MS: Long = 31_000
 
@@ -474,7 +482,7 @@ class ProfileWebView private constructor(
      */
     fun post(url: String, body: String?, done: (JSONObject) -> Unit) {
         val failed = { JSONObject().put("ok", false).put("status", 0).put("hasAccount", false) }
-        if (currentProfileOrigin() == null || NavUrl.parse(url)?.origin != profileOrigin || current == null) {
+        if (currentProfileOrigin() == null || !isSignInPostUrl(url, base) || current == null) {
             done(failed())
             return
         }
