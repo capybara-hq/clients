@@ -102,8 +102,8 @@ importers:
         specifier: 8.6.2
         version: 8.6.2
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.45
-        version: 0.1.0-rc.45
+        specifier: 0.1.0-rc.46
+        version: 0.1.0-rc.46
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -240,8 +240,8 @@ packages:
   '@capybara-hq/plugin-sdk@0.1.0-rc.41':
     resolution: {integrity: sha512-n3qnCHS0s/rPlPP1a1drMxOsAi+wkYM2BcKZChH8b3ieCoga4j6GW1XErnISHNYd80rsHIMjgnBSn8hFsVLnow==}
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.45':
-    resolution: {integrity: sha512-7nEdgwpFvmOkroJ1xIHehUdlN/LOOywISMYr/1NEQGYnpzC1fiI5aAD9KNrzem/zMk6cWgM3Xxp/3pieLb3LKQ==}
+  '@capybara-hq/plugin-sdk@0.1.0-rc.46':
+    resolution: {integrity: sha512-7pOLVAF3f9Jt9g1OTM50YzcehSILLxRvOPpb4q7XFMxzK31rnuy4dFPX9PVoWWLnZp2FmYBcpRobt/yfABgf5g==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -3143,7 +3143,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.45':
+  '@capybara-hq/plugin-sdk@0.1.0-rc.46':
     dependencies:
       '@types/mdast': 4.0.4
       kysely: 0.29.9

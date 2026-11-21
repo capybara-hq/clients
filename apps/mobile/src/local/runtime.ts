@@ -13,7 +13,8 @@
 // address page discovers and adds a deployment through this document
 // (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser sign-in for it
 // (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment too old for
-// app sign-in gets the too-old state and no signIn@1.
+// app sign-in gets the too-old state and no signIn@1. A build whose brand carries push gets push@1
+// on the profiles whose meta lists its app id (src/push); the official build never does.
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Haptics, NotificationType } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
@@ -21,6 +22,20 @@ import { Share } from "@capacitor/share";
 import { SplashScreen } from "@capacitor/splash-screen";
 import type { Locale } from "@capybara-hq/shell";
 import { brand } from "../../brand.ts";
+import { brandPush } from "../push/brand.ts";
+import { createPushCapability, createPushOffers, PUSH_KEY } from "../push/capability.ts";
+import { connectPush, createPushRouter, forgetOnRemoval } from "../push/connect.ts";
+import {
+  currentUrlFrom,
+  type PushHostNative,
+  type PushNative,
+  unsupportedPushNative,
+} from "../push/native.ts";
+import {
+  createRegistrationStore,
+  PUSH_REGISTRATIONS_PREF_KEY,
+  type RegistrationStore,
+} from "../push/store.ts";
 import { createAddressHost, isAddressPageMessage } from "../runtime/address-bridge.ts";
 import { createAppearanceStore } from "../runtime/appearance.ts";
 import { createChrome } from "../runtime/capabilities/chrome.ts";
@@ -94,7 +109,8 @@ type HostPlugin = CapybaraHostPlugin &
   ProfileHostPlugin &
   HttpGetNative &
   SignInNative &
-  StripHostPlugin & {
+  StripHostPlugin &
+  PushHostNative & {
     removeBlockRules(options: { profileId: string }): Promise<void>;
     launchOptions(): Promise<LaunchOptions>;
     openExternal(options: { url: string }): Promise<void>;
@@ -146,6 +162,12 @@ async function main(): Promise<void> {
   };
   const stores = dataStorePortFrom(registerPlugin<DataStoresNative>(DATA_STORES_PLUGIN));
   const options = await plugin.launchOptions().catch((): LaunchOptions => ({}));
+  const platform = Capacitor.getPlatform() === "android" ? "android" : "ios";
+  // push@1: only a build whose brand carries a channel on this platform (K4's brand `push`).
+  // The native module (K2 / K3) replaces the unsupported stand-in.
+  const pushBuild = brandPush(brand, platform);
+  const pushNative: PushNative = unsupportedPushNative;
+  let pushStore: RegistrationStore | null = null;
 
   let list: () => LoaderProfile[];
   let profiles: ProfileStore | null = null;
@@ -167,9 +189,12 @@ async function main(): Promise<void> {
     switchTo = async () => test;
     start = Promise.resolve({ profileId: test.id });
   } else {
+    // The address UI test starts with no profile and keeps none; its one store id is fixed.
+    const prefs = options.testAddress
+      ? memoryPrefs()
+      : await preloadPrefs(backend, [PROFILES_PREF_KEY, PUSH_REGISTRATIONS_PREF_KEY]);
     const store = createProfileStore({
-      // The address UI test starts with no profile and keeps none; its one store id is fixed.
-      prefs: options.testAddress ? memoryPrefs() : await preloadPrefs(backend, [PROFILES_PREF_KEY]),
+      prefs,
       stores,
       confirm: async (text) => window.confirm(text.message),
       newId: options.testAddress ? () => TEST_STORE_ID : () => crypto.randomUUID(),
@@ -178,6 +203,17 @@ async function main(): Promise<void> {
     });
     profiles = store;
     removeBlockRulesOnRemoval(store, plugin);
+    if (pushBuild) {
+      // Before the lock gates close the removed profile's WebView: the DELETE runs in its page.
+      pushStore = createRegistrationStore(prefs);
+      forgetOnRemoval({
+        store: pushStore,
+        deleteFromPage: async (profileId, url) => {
+          await plugin.pushDeleteRegistration({ profileId, url });
+        },
+        onRemoved: (listener) => store.onRemoved(listener),
+      });
+    }
     const policy = await createManagedPolicy({
       brand,
       source: managedSourceFrom(registerPlugin<ManagedConfigNative>(MANAGED_CONFIG_PLUGIN)),
@@ -204,7 +240,17 @@ async function main(): Promise<void> {
   const appearance = createAppearanceStore(backend);
   let loader: ReturnType<typeof createLoader> | undefined;
   const httpGet = httpGetPortFrom(plugin);
-  const support = createSignInSupport({ httpGet, onTooOld: (id) => loader?.tooOld(id) });
+  const pushOffers = pushBuild ? createPushOffers(pushBuild) : null;
+  const support = createSignInSupport({
+    httpGet,
+    onTooOld: (id) => loader?.tooOld(id),
+    // The meta read on each open says whether the deployment covers this build for push.
+    onMeta: (id, meta) => {
+      if (!pushOffers) return;
+      pushOffers.set(id, meta);
+      registry.refresh(id);
+    },
+  });
   const info = await appInfoFrom(plugin);
   const signIn = createSignIn<LoaderProfile>({
     ...signInPortsFrom(plugin),
@@ -218,7 +264,6 @@ async function main(): Promise<void> {
   });
   // nav@1: iOS only, offered while the window has a strip (StripDetector.swift); native reports
   // each change and the registry tells the shown page with one `change`.
-  const platform = Capacitor.getPlatform() === "android" ? "android" : "ios";
   const nav = createNav<LoaderProfile>({
     registry,
     native: navNativeFrom(plugin),
@@ -245,6 +290,20 @@ async function main(): Promise<void> {
     platform,
     nav,
   });
+  if (pushBuild && pushStore && pushOffers) {
+    const offers = pushOffers;
+    registry.register(
+      PUSH_KEY,
+      createPushCapability({
+        native: pushNative,
+        store: pushStore,
+        build: pushBuild,
+        platform,
+        offered: (id) => offers.providers(id),
+      }),
+      { available: (profile) => offers.available(profile) },
+    );
+  }
   serveCalls(host, registry);
 
   // Local pages are framed over this document, never navigated to (I4); each talks over its port.
@@ -387,6 +446,28 @@ async function main(): Promise<void> {
     const first = route === "address" ? null : list().find((p) => p.id === route.profileId);
     if (first) await loader.open(first);
     else toAddress();
+  }
+  if (pushBuild && access) {
+    // After the first screen: a tap that launched the app opens its profile over the start one.
+    const [gate, shownLoader] = [access, loader];
+    connectPush(
+      pushNative,
+      createPushRouter({
+        native: pushNative,
+        profiles: () => gate.list(),
+        screen: async () => {
+          const id = shownLoader.shown();
+          const profile = id === null ? undefined : list().find((p) => p.id === id);
+          if (!profile) return null;
+          const url = await currentUrlFrom(plugin, profile.id);
+          return url === null ? null : { origin: profile.origin, url };
+        },
+        open: async (id, path) => {
+          const next = await gate.switchTo(id);
+          if (next) await shownLoader.open(next, { path });
+        },
+      }),
+    );
   }
   // Orphaned stores of earlier removals whose native deletion failed; after the first screen, so
   // a slow native removal never holds up the launch.

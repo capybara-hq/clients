@@ -43,8 +43,11 @@ export interface ErrorView {
 }
 
 export interface Loader {
-  /** Opens a profile; refused (nothing happens) when it is not in `profiles()`. */
-  open(profile: LoaderProfile): Promise<void>;
+  /**
+   * Opens a profile; refused (nothing happens) when it is not in `profiles()`. `path` (a tapped
+   * push, already checked by `parsePushPayload`) loads `origin + path` instead of the base.
+   */
+  open(profile: LoaderProfile, opts?: { path?: string }): Promise<void>;
   /** The id of the profile on screen (or failed on the error page), or null. */
   shown(): string | null;
   /** Tears the profile's native WebView down; forgets it when it is the shown one. */
@@ -137,7 +140,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
 
   const allowed = (id: string) => deps.profiles().some((p) => p.id === id);
 
-  const open = async (profile: P) => {
+  const open = async (profile: P, path?: string) => {
     if (!allowed(profile.id)) return;
     shown = profile;
     deps.errorView.hide();
@@ -151,6 +154,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
         dataStoreId: profile.dataStoreId,
         state: stateOf(profile),
         blockRules: blockRulesFor(profile.base),
+        ...(path !== undefined ? { path } : {}),
       });
     } catch (err) {
       // Android single store: the wipe of the previous deployment's data is still owed, so native
@@ -162,7 +166,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
   };
 
   return {
-    open: (profile) => open(profile as P),
+    open: (profile, opts) => open(profile as P, opts?.path),
     shown: () => shown?.id ?? null,
     async close(profileId) {
       if (shown?.id === profileId) shown = null;

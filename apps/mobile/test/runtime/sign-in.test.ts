@@ -428,6 +428,21 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
     expect(tooOld).not.toHaveBeenCalled();
   });
 
+  test("hands each meta it reads to onMeta (push reads features.push from it)", async () => {
+    const onMeta = vi.fn();
+    const push = [{ appId: "com.example.app", providers: ["push-apns"] }];
+    const support = createSignInSupport({
+      httpGet: port(meta({ localDevices: true, appSignIn: true, push })),
+      onTooOld: () => {},
+      onMeta,
+    });
+    await support.check(profile);
+    expect(onMeta).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ features: expect.objectContaining({ push }) }),
+    );
+  });
+
   test("an upgraded deployment is offered again", async () => {
     let body = meta({ localDevices: true });
     const support = createSignInSupport({

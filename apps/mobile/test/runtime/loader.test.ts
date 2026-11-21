@@ -167,6 +167,18 @@ describe("loader", () => {
     });
   });
 
+  test("a push tap opens the profile on its in-app path; a retry loads the base again", async () => {
+    const { native, loader } = setup();
+    await loader.open(p1, { path: "/chat/c1?org=o1" });
+    expect(native.host.open).toHaveBeenLastCalledWith(
+      expect.objectContaining({ profileId: "p1", path: "/chat/c1?org=o1" }),
+    );
+    await loader.retry();
+    expect(native.host.open).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ path: expect.anything() }),
+    );
+  });
+
   test("a deployment too old for app sign-in shows the too-old state with the current state", async () => {
     const { native, errorView, pushState, splash, loader } = setup();
     await loader.open(p1);

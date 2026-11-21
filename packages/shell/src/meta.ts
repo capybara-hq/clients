@@ -1,4 +1,5 @@
 import { normalizeAddress } from "./address.js";
+import { type PushApp, parsePushApps } from "./push.js";
 import { isRecord } from "./validate.js";
 
 /** Versioned icon URLs of `GET /api/v1/meta`; null for the default icon. Relative: resolve against the base. */
@@ -16,7 +17,12 @@ export interface Meta {
   /** Absent on a kernel that does not send it yet. */
   icons?: MetaIcons;
   protocols: { device: { min: number; max: number } };
-  features: { localDevices: boolean; appSignIn: boolean };
+  features: {
+    localDevices: boolean;
+    appSignIn: boolean;
+    /** The app ids and push channels the deployment covers; absent on older kernels. */
+    push?: PushApp[];
+  };
   /** Redirect URIs the deployment accepts for app sign-in; absent on older kernels. */
   appRedirectUris?: string[];
 }
@@ -62,7 +68,7 @@ function parseRedirectUris(v: unknown): string[] | undefined {
 
 /** A parsed meta; `appSignIn` is undefined when an older kernel leaves it out. */
 type ParsedMeta = Omit<Meta, "features"> & {
-  features: { localDevices: boolean; appSignIn: boolean | undefined };
+  features: { localDevices: boolean; appSignIn: boolean | undefined; push?: PushApp[] };
 };
 
 function parseMeta(v: unknown): ParsedMeta | null {
@@ -76,13 +82,14 @@ function parseMeta(v: unknown): ParsedMeta | null {
   if (!isRecord(features) || typeof features.localDevices !== "boolean") return null;
   const { appSignIn } = features;
   const appRedirectUris = parseRedirectUris(v.appRedirectUris);
+  const push = parsePushApps(features.push);
   if (appSignIn !== undefined && typeof appSignIn !== "boolean") return null;
   return {
     name,
     icon,
     ...(icons ? { icons } : {}),
     protocols: { device: { min: min as number, max: max as number } },
-    features: { localDevices: features.localDevices, appSignIn },
+    features: { localDevices: features.localDevices, appSignIn, ...(push ? { push } : {}) },
     ...(appRedirectUris ? { appRedirectUris } : {}),
   };
 }

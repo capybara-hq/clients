@@ -90,6 +90,11 @@ export interface OpenProfileRequest {
    * blocks the same routes with its Kotlin guard and ignores this.
    */
   blockRules: string;
+  /**
+   * An in-app path to load instead of the base (a tapped push): starts with one `/`; native loads
+   * `origin + path` and loads the base instead when it does not resolve on `origin`.
+   */
+  path?: string;
 }
 
 /** The profile WebView host on the native side (also the `CapybaraHost` plugin). */
