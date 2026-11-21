@@ -776,6 +776,9 @@ function start(): void {
       ...iconCache,
       log: (message, err) => console.error(message, err ?? ""),
     });
+    // Unpackaged (dev) the Dock shows the generic Electron icon: set ours first; a platform's
+    // custom icon, applied later by `updateDock`, wins.
+    if (!app.isPackaged && process.platform === "darwin") dockIcon.init();
     /** What the 「平台」 menu shows now (the app menu, and the overlay's 切换平台 popup). */
     function menuState(): PlatformMenuState {
       return {
