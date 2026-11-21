@@ -40,6 +40,13 @@ export interface CapabilityRegistry<P extends ProfileRef = ProfileRef> {
   dispatch(msg: ShellCallMessage): Promise<ShellCallResult>;
   emit(profileId: string, key: string, event: string, payload: unknown): void;
   /**
+   * Re-evaluates every `available` for the profile and, when its descriptors differ from the ones
+   * last described for it, sends them to its current document with one `pushState` (the page's
+   * `change`). A capability whose availability follows native state (nav@1 and the strip) calls
+   * this when that state changes.
+   */
+  refresh(profileId: string): void;
+  /**
    * The profile's document ended (a navigation committed, the web process died, the WebView
    * went away): every call still running for that profile answers `cancelled` and its signal
    * aborts. A WebView holds one document at a time, and the doc id a call carries is
@@ -54,6 +61,9 @@ export interface ProfileLookup<P extends ProfileRef> {
 }
 
 const FAILED: ShellCallResult = { ok: false, code: "failed" };
+
+/** Mobile insets stay 0 (mobile spec §5.1): the Duo strip arrives as `env(safe-area-inset-right)`. */
+const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function toCode(err: unknown): ShellCallError {
   if (typeof err === "object" && err !== null && "code" in err) {
@@ -75,6 +85,8 @@ export function createRegistry<P extends ProfileRef>(deps: {
   const registry = new Map<string, Registered<P>>();
   const gate = createDialogGate();
   const running = new Map<string, Set<AbortController>>();
+  // Profile id -> the descriptors last described for it (what its document was last told).
+  const described = new Map<string, string>();
 
   const profileById = (id: string) => deps.profiles.list().find((p) => p.id === id);
   const offered = (key: string, profile: P) => {
@@ -87,23 +99,39 @@ export function createRegistry<P extends ProfileRef>(deps: {
     }
   };
 
+  const describe = (profile: P) => {
+    const capabilities: Record<string, string[]> = {};
+    const events: Record<string, string[]> = {};
+    for (const key of registry.keys()) {
+      const entry = offered(key, profile);
+      if (!entry) continue;
+      capabilities[key] = Object.keys(entry.impl.functions);
+      if (entry.impl.events && entry.impl.events.length > 0) {
+        events[key] = [...entry.impl.events];
+      }
+    }
+    return { capabilities, events };
+  };
+
   return {
     register(key, impl, opts) {
       registry.set(key, { impl, available: opts?.available ?? (() => true) });
     },
 
     descriptors(profile) {
-      const capabilities: Record<string, string[]> = {};
-      const events: Record<string, string[]> = {};
-      for (const key of registry.keys()) {
-        const entry = offered(key, profile);
-        if (!entry) continue;
-        capabilities[key] = Object.keys(entry.impl.functions);
-        if (entry.impl.events && entry.impl.events.length > 0) {
-          events[key] = [...entry.impl.events];
-        }
-      }
-      return { capabilities, events };
+      const result = describe(profile);
+      described.set(profile.id, JSON.stringify(result));
+      return result;
+    },
+
+    refresh(profileId) {
+      const profile = profileById(profileId);
+      if (!profile) return;
+      const result = describe(profile);
+      const text = JSON.stringify(result);
+      if (described.get(profileId) === text) return;
+      described.set(profileId, text);
+      deps.host.pushState(profileId, { insets: { ...NO_INSETS }, ...result }).catch(() => {});
     },
 
     async dispatch(msg) {

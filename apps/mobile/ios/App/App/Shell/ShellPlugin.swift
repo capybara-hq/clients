@@ -4,7 +4,8 @@
 // `reply`, `pushState` and `event` go back to the profile's WebView. It also carries the
 // `ProfileHostPort` (Task 16): `open`, `showError`, `close`, `setAppearance`, and the `load` and
 // `document` events (the document events let the runtime cancel a dead document's calls and
-// push the current state to a new one).
+// push the current state to a new one). And the strip (Task 31): `stripState`, `navSet`, and the
+// `stripChanged`, `sectionSelected` and `menuTapped` events (src/runtime/capabilities/nav.ts).
 
 import AuthenticationServices
 import Capacitor
@@ -33,6 +34,8 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "appInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "signInRevoke", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "removeBlockRules", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stripState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "navSet", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
@@ -45,8 +48,16 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let controller = bridge?.viewController as? CAPBridgeViewController else { return nil }
         let made = ProfileHost(controller: controller)
         made.sink = self
+        made.onStrip = { [weak self] visible in
+            self?.notifyListeners("stripChanged", data: ["visible": visible])
+        }
+        made.onSection = { [weak self] id in self?.notifyListeners("sectionSelected", data: ["id": id]) }
+        made.onMenu = { [weak self] in self?.notifyListeners("menuTapped", data: [:]) }
         #if DEBUG
         if let log = LoaderTestLog.current {
+            #if targetEnvironment(simulator)
+            DuoSwap.listen()
+            #endif
             made.monitor = log
             let present = made.sheet
             made.sheet = { url in
@@ -56,6 +67,7 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         #endif
         host = made
+        made.start()
         return made
     }
 
@@ -207,6 +219,35 @@ extension ShellPlugin {
             UIApplication.shared.open(url, options: [:]) { opened in
                 if opened { call.resolve() } else { call.reject("nothing can open this URL") }
             }
+        }
+    }
+}
+
+// MARK: The strip (Task 31, StripHost.swift)
+
+extension ShellPlugin {
+    /// Whether the window has a strip now (StripDetector); later changes come as `stripChanged`.
+    @objc func stripState(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["visible": self.profileHost()?.stripVisible ?? false])
+        }
+    }
+
+    /// `nav@1.set`, validated by the runtime: the sections, their badge text and the menu button.
+    @objc func navSet(_ call: CAPPluginCall) {
+        guard let raw = call.getObject("state"), let state = StripState(json: raw) else {
+            #if DEBUG
+            LoaderTestLog.current?.log(["event": "navSet", "ok": false])
+            #endif
+            call.reject("navSet needs a state with items, current and menu")
+            return
+        }
+        DispatchQueue.main.async {
+            #if DEBUG
+            LoaderTestLog.current?.log(["event": "navSet", "ok": true, "items": state.items.map(\.id)])
+            #endif
+            self.profileHost()?.setStrip(state)
+            call.resolve()
         }
     }
 }

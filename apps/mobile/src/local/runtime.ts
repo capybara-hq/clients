@@ -14,7 +14,7 @@
 // (src/runtime/address-bridge.ts), then it opens and its Sign in starts the browser sign-in for it
 // (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment too old for
 // app sign-in gets the too-old state and no signIn@1.
-import { registerPlugin } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Haptics } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
 import { Share } from "@capacitor/share";
@@ -30,6 +30,13 @@ import {
   type MenuHostPlugin,
   menuHostPortFrom,
 } from "../runtime/capabilities/menu.ts";
+import {
+  connectStrip,
+  createNav,
+  navNativeFrom,
+  type StripHostPlugin,
+  stripAtStart,
+} from "../runtime/capabilities/nav.ts";
 import { openExternalPortFrom } from "../runtime/capabilities/open-external.ts";
 import { type HttpGetNative, httpGetPortFrom, startRoute } from "../runtime/discovery.ts";
 import { type ErrorStateMessage, isErrorPageMessage } from "../runtime/error-page.ts";
@@ -85,7 +92,8 @@ interface LaunchOptions {
 type HostPlugin = CapybaraHostPlugin &
   ProfileHostPlugin &
   HttpGetNative &
-  SignInNative & {
+  SignInNative &
+  StripHostPlugin & {
     removeBlockRules(options: { profileId: string }): Promise<void>;
     launchOptions(): Promise<LaunchOptions>;
     openExternal(options: { url: string }): Promise<void>;
@@ -207,6 +215,21 @@ async function main(): Promise<void> {
     // The stored profiles now: an attempt ends when its profile is removed or re-pointed.
     profiles: { list: () => list() },
   });
+  // nav@1: iOS only, offered while the window has a strip (StripDetector.swift); native reports
+  // each change and the registry tells the shown page with one `change`.
+  const platform = Capacitor.getPlatform() === "android" ? "android" : "ios";
+  const nav = createNav<LoaderProfile>({
+    registry,
+    native: navNativeFrom(plugin),
+    profiles: () => list(),
+    shown: () => loader?.shown() ?? null,
+    strip: false,
+  });
+  if (platform === "ios") {
+    // Listen first, then ask: a change between the two is not lost.
+    connectStrip(plugin, nav);
+    nav.stripChanged(await stripAtStart(plugin));
+  }
   registerMobileCapabilities(registry, {
     signIn: { capability: signIn.capability, available: (p) => support.available(p) },
     chrome: createChrome({
@@ -218,6 +241,8 @@ async function main(): Promise<void> {
     share: Share,
     menu: menuHostPortFrom(registerPlugin<MenuHostPlugin>(MENU_HOST_PLUGIN_NAME), locale),
     openExternal: openExternalPortFrom(plugin),
+    platform,
+    nav,
   });
   serveCalls(host, registry);
 
@@ -300,7 +325,10 @@ async function main(): Promise<void> {
     splash,
     errorView,
     profiles: () => list(),
-    opened: (profile) => void support.check(profile),
+    opened: (profile) => {
+      void support.check(profile);
+      nav.profileShown(profile.id);
+    },
   });
 
   const toAddress = () => {

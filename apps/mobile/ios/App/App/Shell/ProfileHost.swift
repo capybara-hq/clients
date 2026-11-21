@@ -3,6 +3,10 @@
 // pages: the runtime and the error state) and below the launch splash. The runtime drives it through ShellPlugin: open, showError (hide
 // the WebView so the local error page shows), setAppearance (the background behind the WebView
 // and the status bar style).
+//
+// While the window has a strip (StripDetector, the iPhone Duo) the container sits in StripHost's
+// selected tab, under the vertical system tab bar in the strip; else in the plain place above
+// Capacitor's WebView. It moves between them on each change, the WebViews inside untouched.
 
 import Capacitor
 import UIKit
@@ -34,6 +38,15 @@ final class ProfileHost {
     private var shown: String?
     private var background: UIColor?
     private let container = UIView()
+    /// The container should show (a profile is open and not on its error state).
+    private var containerShown = false
+    private let probe = StripProbe()
+    private var stripHost: StripHost?
+    /// The window gained or lost its strip.
+    var onStrip: ((Bool) -> Void)?
+    /// A strip section was tapped (the selected one too) / the strip's menu button was tapped.
+    var onSection: ((String) -> Void)?
+    var onMenu: (() -> Void)?
 
     /// `controller` nil (tests): the container is never attached to a window.
     init(controller: CAPBridgeViewController?) {
@@ -45,6 +58,78 @@ final class ProfileHost {
         }
         container.isHidden = true
         container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        probe.onChange = { [weak self] visible in
+            guard let self else { return }
+            self.placeContainer()
+            self.onStrip?(visible)
+        }
+    }
+
+    /// Starts watching the window for a strip (before the first open: the first state needs it).
+    func start() {
+        guard probe.superview == nil, let root = controller?.view else { return }
+        probe.frame = root.bounds
+        root.insertSubview(probe, at: 0)
+        probe.evaluate()
+    }
+
+    /// Whether the window has a strip now.
+    var stripVisible: Bool {
+        probe.evaluate()
+        return probe.visible
+    }
+
+    /// The web's sections for the strip (`nav@1.set`, already validated by the runtime).
+    func setStrip(_ state: StripState) {
+        strip().apply(state)
+    }
+
+    private func strip() -> StripHost {
+        if let stripHost { return stripHost }
+        let made = StripHost()
+        made.onSelect = { [weak self] id in self?.onSection?(id) }
+        made.onMenu = { [weak self] in self?.onMenu?() }
+        stripHost = made
+        return made
+    }
+
+    /// Over the local pages, under the splash: right above Capacitor's own scroll view.
+    private func insert(_ view: UIView, in root: UIView) {
+        view.frame = root.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let scroll = (root as? WKWebView)?.scrollView, scroll.superview === root {
+            root.insertSubview(view, aboveSubview: scroll)
+        } else {
+            root.addSubview(view)
+        }
+    }
+
+    /// Puts the container where it belongs now: in StripHost while the window has a strip, else in
+    /// its plain place. Nothing moves before the first open.
+    private func placeContainer() {
+        guard let controller, let root = controller.view, container.superview != nil || stripHost?.parent != nil
+        else { return }
+        if probe.visible {
+            let host = strip()
+            if host.parent == nil {
+                controller.addChild(host)
+                insert(host.view, in: root)
+                host.didMove(toParent: controller)
+            }
+            host.host(container)
+        } else if let host = stripHost, host.parent != nil {
+            host.release()
+            host.willMove(toParent: nil)
+            host.view.removeFromSuperview()
+            host.removeFromParent()
+            insert(container, in: root)
+        }
+        applyShown()
+    }
+
+    private func applyShown() {
+        container.isHidden = !containerShown
+        if let host = stripHost, host.parent != nil { host.view.isHidden = !containerShown }
     }
 
     /// Capacitor's controller view is its WKWebView itself (`loadView` is final), and the splash
@@ -52,12 +137,9 @@ final class ProfileHost {
     /// view: over the local pages, under the splash.
     private func attachContainer() {
         guard container.superview == nil, let root = controller?.view else { return }
-        container.frame = root.bounds
-        if let scroll = (root as? WKWebView)?.scrollView, scroll.superview === root {
-            root.insertSubview(container, aboveSubview: scroll)
-        } else {
-            root.addSubview(container)
-        }
+        start()
+        insert(container, in: root)
+        placeContainer()
     }
 
     /// Shows the profile's WebView and loads its base once its sign-in block rules are in force;
@@ -72,7 +154,8 @@ final class ProfileHost {
         }
         shown = spec.profileId
         for (id, v) in views { v.isHidden = id != spec.profileId }
-        container.isHidden = false
+        containerShown = true
+        applyShown()
         view.installBlockRules(spec.blockRules) { [weak self, weak view] error in
             if let error { return done(OpenError.noBlockRules(error)) }
             guard let self, let view, self.shown == spec.profileId else { return done(nil) }
@@ -89,7 +172,10 @@ final class ProfileHost {
         guard let view = views[profileId] else { return }
         view.stopLoading()
         view.isHidden = true
-        if shown == profileId { container.isHidden = true }
+        if shown == profileId {
+            containerShown = false
+            applyShown()
+        }
     }
 
     /// Tears the profile's WebView down: a profile hidden by a managed lock or removed. The view
@@ -101,7 +187,8 @@ final class ProfileHost {
         view.removeFromSuperview()
         if shown == profileId {
             shown = nil
-            container.isHidden = true
+            containerShown = false
+            applyShown()
         }
         DataStores.shared.webViewReleased()
     }
