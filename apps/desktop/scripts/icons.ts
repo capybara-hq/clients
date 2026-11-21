@@ -123,8 +123,14 @@ function appPixels(): Uint8Array {
         px.set([TILE[0], TILE[1], TILE[2], Math.round(255 * coverage)], (y * size + x) * 4);
     }
   }
-  const cell = 40;
-  const left = (size - COLS * cell) / 2;
+  // 46 px cells: the logo spans 644 of the tile's 824 points (about 78%), a little larger than
+  // the first 40 px cut (68%), which read small in the Dock (maintainer feedback 2026-11-21).
+  const cell = 46;
+  // Centred on the filled columns (the bitmap's first column is empty), not the 14-column box.
+  const used = BITMAP.flatMap((row) => [...row].flatMap((c, x) => (c === "." ? [] : [x])));
+  const first = Math.min(...used);
+  const width = Math.max(...used) - first + 1;
+  const left = (size - width * cell) / 2 - first * cell;
   const top = (size - ROWS * cell) / 2;
   drawLogo(px, size, cell, left, top, [255, 106, 19, 255]);
   return px;
