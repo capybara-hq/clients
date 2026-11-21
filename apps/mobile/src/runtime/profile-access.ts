@@ -76,6 +76,15 @@ export function createProfileAccess(deps: ProfileAccessDeps): ProfileAccess {
       const lockedIdle = shownBefore === null && policy.policy().locked;
       if (!hiddenShown && !lockedIdle) return;
       const next = currentVisible();
+      // What is shown is also what the store calls current (a failed enforcement may have left
+      // the hidden one current); a preset that cannot become current is not shown.
+      if (next && store.current()?.id !== next.id) {
+        const switched = await store.setCurrent(next.id, { forced: true }).catch(() => "failed");
+        if (switched !== "switched") {
+          if (hiddenShown) deps.showAddress();
+          return;
+        }
+      }
       if (next) await loader.open(next);
       else if (hiddenShown) deps.showAddress();
     },

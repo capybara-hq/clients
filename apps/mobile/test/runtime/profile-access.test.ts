@@ -35,7 +35,14 @@ function fakeLoader(allowed: () => LoaderProfile[]) {
   };
 }
 
-async function setup(opts: { managed?: unknown; createFails?: () => boolean } = {}) {
+async function setup(
+  opts: {
+    managed?: unknown;
+    createFails?: () => boolean;
+    single?: boolean;
+    clearAllFails?: () => boolean;
+  } = {},
+) {
   const values = new Map<string, string>();
   const prefs: PrefsPort = {
     get: (k) => values.get(k) ?? null,
@@ -43,13 +50,16 @@ async function setup(opts: { managed?: unknown; createFails?: () => boolean } = 
   };
   const storeCalls: string[] = [];
   const stores: DataStorePort = {
-    mode: async () => "multi",
+    mode: async () => (opts.single ? "single" : "multi"),
     create: async (id) => {
       if (opts.createFails?.()) throw new Error("native down");
       storeCalls.push(`create:${id}`);
     },
     remove: async (id) => void storeCalls.push(`remove:${id}`),
-    clearAll: async () => void storeCalls.push("clearAll"),
+    clearAll: async () => {
+      if (opts.clearAllFails?.()) throw new Error("clear failed");
+      storeCalls.push("clearAll");
+    },
   };
   let n = 0;
   const store = createProfileStore({
@@ -149,6 +159,33 @@ describe("profile access", () => {
     // The loader refuses to bring it back (retry / a stale open).
     await loader.open(b);
     expect(loader.shown()).toBeNull();
+  });
+
+  test("a failed enforcement: the preset reconcile shows is made current too", async () => {
+    let failures = 1;
+    const { store, loader, log, b, emit } = await setup({
+      single: true,
+      clearAllFails: () => failures-- > 0,
+    });
+    const a = await store.add({ base: A, name: "A", iconUrl: null });
+    await loader.open(b);
+    // Enforcement's forced switch fails (clearAll); reconcile switches, then opens A.
+    await emit({ presetUrl: A, lockToPreset: true });
+    expect(store.current()?.id).toBe(a.id);
+    expect(log).toEqual([`open ${B}`, `close ${b.id}`, `open ${A}`]);
+  });
+
+  test("a preset that cannot be made current is not shown: the address page is", async () => {
+    const { store, loader, log, b, emit, address } = await setup({
+      single: true,
+      clearAllFails: () => true,
+    });
+    await store.add({ base: A, name: "A", iconUrl: null });
+    await loader.open(b);
+    await emit({ presetUrl: A, lockToPreset: true });
+    expect(store.current()?.id).toBe(b.id);
+    expect(log).toEqual([`open ${B}`, `close ${b.id}`]);
+    expect(address()).toBe(1);
   });
 
   test("a lock with nothing on screen opens the preset", async () => {
