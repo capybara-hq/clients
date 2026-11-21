@@ -22,6 +22,7 @@ enum StripDetector {
     /// A reserved region that is a strip: on the trailing edge, most of the height, a narrow width.
     /// The Duo's sensor housing (a short occlusion region at the top of the strip) is not one.
     @MainActor static func reservedStrip(in view: UIView) -> CGRect? {
+#if compiler(>=6.4)
         guard #available(iOS 27.1, *) else { return nil }
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return nil }
@@ -29,6 +30,9 @@ enum StripDetector {
             $0.frame.maxX >= bounds.maxX - 1 && $0.frame.height > bounds.height / 2
                 && $0.frame.width < bounds.width / 3
         }?.frame
+#else
+        return nil
+#endif
     }
 }
 

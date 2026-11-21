@@ -150,11 +150,13 @@ final class StripHost: UITabBarController, UITabBarControllerDelegate {
         let side: CGFloat = 48
         var top = view.window?.windowScene?.statusBarManager?.statusBarFrame.maxY ?? 0
         let stripMinX = bounds.maxX - stripWidth
+#if compiler(>=6.4)
         if #available(iOS 27.1, *) {
             for region in view.reservedRegions(kind: .occlusion) where region.frame.minX >= stripMinX - 1 {
                 top = max(top, region.frame.maxY)
             }
         }
+#endif
         menuButton.frame = CGRect(x: stripMinX + (stripWidth - side) / 2, y: top + 8, width: side, height: side)
         let text = menuBadge.text ?? ""
         let width = max(18, CGFloat(text.count) * 7 + 8)
