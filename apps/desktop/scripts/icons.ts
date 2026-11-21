@@ -1,6 +1,6 @@
 // Generates apps/desktop/build/icons from the Capybara logo bitmap (no dependencies: a tiny PNG
 // encoder on node:zlib). Run: node scripts/icons.ts
-//   icon.png               1024x1024, the app and Dock fallback icon (logo on a rounded square)
+//   icon.png               1024x1024, the app and Dock fallback icon (orange logo on a white rounded square)
 //   trayTemplate.png       16x16, black on transparent: a macOS template image
 //   trayTemplate@2x.png    32x32, the same at twice the size
 //   icon.icns              the macOS app icon (electron-builder's mac.icon): every size of an
@@ -104,6 +104,10 @@ function tray(size: number): Buffer {
 function appPixels(): Uint8Array {
   const size = 1024;
   const px = new Uint8Array(size * size * 4);
+  // A plain white tile, no hairline or shadow: macOS icons are plain tiles (Tahoe renders its own
+  // edge and depth), and a white tile on a light Dock still reads through the orange logo. The
+  // eye cut-out shows the tile, so it is white. The tray templates are independent (monochrome).
+  const TILE: Rgba = [255, 255, 255, 255];
   // The macOS icon grid: an 824-point rounded square centred on the canvas.
   const inset = 100;
   const radius = 185;
@@ -115,7 +119,8 @@ function appPixels(): Uint8Array {
       const cy = Math.min(Math.max(y + 0.5, lo), hi);
       const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) - radius;
       const coverage = Math.min(Math.max(0.5 - d, 0), 1);
-      if (coverage > 0) px.set([22, 23, 21, Math.round(255 * coverage)], (y * size + x) * 4);
+      if (coverage > 0)
+        px.set([TILE[0], TILE[1], TILE[2], Math.round(255 * coverage)], (y * size + x) * 4);
     }
   }
   const cell = 40;

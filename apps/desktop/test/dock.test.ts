@@ -94,6 +94,21 @@ describe("the Dock rule", () => {
     expect(restoreDefault).not.toHaveBeenCalled();
   });
 
+  test("init shows the Capybara icon, and never over a custom one", async () => {
+    const first = setup({});
+    first.dock.init();
+    expect(first.restoreDefault).toHaveBeenCalledTimes(1);
+    expect(first.setIcon).not.toHaveBeenCalled();
+
+    const second = setup({
+      [META_URL]: json(meta("/api/v1/platform/icon/app?v=abc123")),
+      [ICON_URL]: bytes(PNG),
+    });
+    await second.dock.update([profile(1)]);
+    second.dock.init();
+    expect(second.restoreDefault).not.toHaveBeenCalled();
+  });
+
   test("the Capybara icon comes back once a custom one no longer applies", async () => {
     const { dock, setIcon, restoreDefault } = setup({
       [META_URL]: json(meta("/api/v1/platform/icon/app?v=abc123")),

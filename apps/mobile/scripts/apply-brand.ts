@@ -171,6 +171,12 @@ export async function applyBrand(opts: {
   return { drift };
 }
 
+// The icon is an orange capybara on a white tile (the same art as the desktop icon). iOS and the
+// Android adaptive icon are flattened on this colour, so it is white in both modes: the tile
+// becomes the full-bleed square and the store icon stays white-with-orange also under the dark
+// appearance (the splash keeps its own light and dark backgrounds).
+const ICON_BACKGROUND = "#FFFFFF";
+
 function renderSets(root: string, b: Brand): void {
   // capacitor-assets reformats the manifest as a side effect: keep the hand-written one.
   const manifestPath = `${root}android/app/src/main/AndroidManifest.xml`;
@@ -185,9 +191,9 @@ function renderSets(root: string, b: Brand): void {
       "--assetPath",
       dirname(b.icon),
       "--iconBackgroundColor",
-      b.splash.background.light,
+      ICON_BACKGROUND,
       "--iconBackgroundColorDark",
-      b.splash.background.dark,
+      ICON_BACKGROUND,
       "--splashBackgroundColor",
       b.splash.background.light,
       "--splashBackgroundColorDark",
