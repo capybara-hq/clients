@@ -38,6 +38,7 @@ import {
   stripAtStart,
 } from "../runtime/capabilities/nav.ts";
 import { openExternalPortFrom } from "../runtime/capabilities/open-external.ts";
+import { createProfilesCapability, PROFILES_KEY } from "../runtime/capabilities/profiles.ts";
 import { type HttpGetNative, httpGetPortFrom, startRoute } from "../runtime/discovery.ts";
 import { type ErrorStateMessage, isErrorPageMessage } from "../runtime/error-page.ts";
 import {
@@ -342,6 +343,35 @@ async function main(): Promise<void> {
       loader,
       showAddress: toAddress,
     });
+  }
+
+  if (profiles && managed && access) {
+    const [store, policy, gate] = [profiles, managed, access];
+    registry.register(
+      PROFILES_KEY,
+      createProfilesCapability({
+        profiles: store,
+        visible: () => gate.list(),
+        menu: menuHostPortFrom(registerPlugin<MenuHostPlugin>(MENU_HOST_PLUGIN_NAME), locale),
+        openAddress: async () => showAddress(),
+        policy: () => policy.policy(),
+        confirm: async (text) => window.confirm(text.message),
+        afterSwitch: async (profile) => {
+          await loader?.open(profile);
+        },
+        // The removed profile's WebView closed with it: show the next visible one, else the address.
+        afterRemove: async () => {
+          const next = gate.list().find((p) => p.id === store.current()?.id) ?? gate.list()[0];
+          if (!next) return showAddress();
+          if (store.current()?.id !== next.id && (await store.setCurrent(next.id)) !== "switched") {
+            return showAddress();
+          }
+          await loader?.open(next);
+        },
+        locale,
+      }),
+      { available: () => !policy.policy().locked },
+    );
   }
 
   const route = await start;
