@@ -15,11 +15,12 @@ Enter the address on the first screen, then sign in with the test account.
 
 ## What the app is beyond a website (guideline 4.2)
 
-- Native chrome: a native tab bar and navigation bar drive the deployment's pages, with native
-  haptics, menus and safe-area handling.
-- Native sign-in: sign-in runs in the system browser sheet and returns to the app through its
+- Native chrome: native menus, haptics and safe-area handling, a native profile switcher sheet, and
+  native splash, error and unsupported-browser states. On a Surface Duo style dual-screen device a
+  native strip sits beside the page.
+- Native sign-in: sign-in runs in a system browser session and returns to the app through its
   custom URL scheme; the app never sees the password.
-- Native share: sharing uses the system share sheet.
+- Native share: sharing uses the system share sheet and native menus.
 - Several deployments (profiles), each with its own isolated session, and managed configuration
   for organizations.
 - Links to other sites open in the system browser sheet, never in the app's web view.
