@@ -66,6 +66,18 @@ final class ProfileHostTests: XCTestCase {
         var origin: String { "http://127.0.0.1:\(listener.port!.rawValue)" }
     }
 
+    /// A rule list that blocks nothing the tests load (open compiles one before the first load).
+    private static let rules = #"[{"trigger":{"url-filter":"^https://never\\.invalid/"},"action":{"type":"block"}}]"#
+
+    /// `ProfileHost.open`, awaited: its rule list is in force, then the base loads.
+    private func open(_ host: ProfileHost, _ spec: ProfileHost.Spec) async throws {
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            host.open(spec) { error in
+                if let error { c.resume(throwing: error) } else { c.resume() }
+            }
+        }
+    }
+
     /// Polls `condition` every 50 ms for up to `seconds`.
     private func waitFor(_ seconds: Double, _ condition: () -> Bool) async throws -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
@@ -93,9 +105,10 @@ final class ProfileHostTests: XCTestCase {
 
         let host = ProfileHost(controller: nil)
         let id = UUID()
-        try host.open(ProfileHost.Spec(
+        try await open(host, ProfileHost.Spec(
             profileId: "loop", origin: server.origin, base: server.origin, dataStoreId: id.uuidString,
-            state: ["insets": ["top": 0, "right": 0, "bottom": 0, "left": 0], "capabilities": [:], "events": [:]]
+            state: ["insets": ["top": 0, "right": 0, "bottom": 0, "left": 0], "capabilities": [:], "events": [:]],
+            blockRules: Self.rules
         ))
         // In a window, so WebKit never throttles the page's timers for being offscreen.
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
@@ -129,7 +142,8 @@ final class ProfileHostTests: XCTestCase {
         ProfileHost.Spec(
             profileId: profileId, origin: "https://deployment.test", base: "https://deployment.test",
             dataStoreId: store.uuidString,
-            state: ["insets": ["top": 0, "right": 0, "bottom": 0, "left": 0], "capabilities": [:], "events": [:]]
+            state: ["insets": ["top": 0, "right": 0, "bottom": 0, "left": 0], "capabilities": [:], "events": [:]],
+            blockRules: Self.rules
         )
     }
 
@@ -138,7 +152,7 @@ final class ProfileHostTests: XCTestCase {
         let sink = Sink()
         host.sink = sink
         let id = UUID()
-        try host.open(spec("p1", store: id))
+        try await open(host, spec("p1", store: id))
         weak var view = host.view(for: "p1")
         XCTAssertNotNil(view)
 
@@ -164,14 +178,14 @@ final class ProfileHostTests: XCTestCase {
         XCTAssertTrue(removed, "the store stayed in use after close")
     }
 
-    func testCloseOfAnUnknownProfileDoesNothingAndOpenMakesAFreshView() throws {
+    func testCloseOfAnUnknownProfileDoesNothingAndOpenMakesAFreshView() async throws {
         let host = ProfileHost(controller: nil)
         host.close("nope")
         let id = UUID()
-        try host.open(spec("p1", store: id))
+        try await open(host, spec("p1", store: id))
         let first = host.view(for: "p1")
         host.close("p1")
-        try host.open(spec("p1", store: id))
+        try await open(host, spec("p1", store: id))
         XCTAssertNotNil(host.view(for: "p1"))
         XCTAssertFalse(first === host.view(for: "p1"))
         host.close("p1")

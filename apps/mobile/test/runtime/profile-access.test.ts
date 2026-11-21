@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { brand as officialBrand } from "../../brand.ts";
 import type { LoaderProfile } from "../../src/runtime/loader.ts";
 import { createManagedPolicy, type ManagedSource } from "../../src/runtime/managed.ts";
@@ -8,6 +8,7 @@ import {
   type DataStorePort,
   type PrefsPort,
 } from "../../src/runtime/profiles.ts";
+import { createSignIn } from "../../src/runtime/sign-in.ts";
 
 const A = "https://a.example";
 const B = "https://b.example";
@@ -243,5 +244,76 @@ describe("profile access", () => {
       const { access } = await setup();
       expect(await access.start("address")).toBeNull();
     });
+  });
+});
+
+// Integration (wave T2): sign-in (Task 17) takes its profiles from the access list, as the
+// composition root wires it, so the managed lock (Task 18) and the single store (Task 14b) bind it.
+describe("profile access: sign-in follows the lock and the single store", () => {
+  async function signInOver(
+    s: Awaited<ReturnType<typeof setup>>,
+    during: () => Promise<void> = async () => {},
+  ) {
+    const exchanged: string[] = [];
+    const signIn = createSignIn<LoaderProfile>({
+      auth: {
+        start: vi.fn(async (url: string) => {
+          await during();
+          const u = new URL(url);
+          const state = u.searchParams.get("state") ?? "";
+          const iss = u.href.slice(0, u.href.indexOf("/apps/authorize"));
+          return { callback: `capybara://auth/callback?code=c&state=${state}&iss=${iss}` };
+        }),
+      },
+      exchange: async (id) => {
+        exchanged.push(id);
+        return { ok: true, status: 200, hasAccount: true };
+      },
+      currentOrigin: async (id) => s.store.list().find((p) => p.id === id)?.origin ?? null,
+      reload: async () => {},
+      revoke: async () => {},
+      deviceName: "Phone",
+      appVersion: "0.1.0",
+      now: () => 1,
+      newState: (() => {
+        let n = 0;
+        return () => `state-${++n}`;
+      })(),
+      scheme: "capybara",
+      profiles: { list: () => s.access.list() },
+      pkce: async () => ({ verifier: "v".repeat(43), challenge: "c".repeat(43) }),
+    });
+    return { signIn, exchanged };
+  }
+
+  test("a profile hidden by the lock cannot start sign-in", async () => {
+    const s = await setup();
+    await s.store.add({ base: A, name: "A", iconUrl: null });
+    await s.emit({ presetUrl: A, lockToPreset: true });
+    const { signIn, exchanged } = await signInOver(s);
+    expect(await signIn.begin(s.b.id)).toBe("failed");
+    expect(exchanged).toEqual([]);
+  });
+
+  test("a lock that arrives while the browser is open drops the callback: no exchange", async () => {
+    const s = await setup();
+    await s.store.add({ base: A, name: "A", iconUrl: null });
+    const { signIn, exchanged } = await signInOver(s, () =>
+      s.emit({ presetUrl: A, lockToPreset: true }),
+    );
+    expect(await signIn.begin(s.b.id)).toBe("failed");
+    expect(exchanged).toEqual([]);
+  });
+
+  test("single store: sign-in after a switch exchanges in that one profile and wipes nothing more", async () => {
+    const s = await setup({ single: true });
+    const a = await s.store.add({ base: A, name: "A", iconUrl: null });
+    expect(await s.access.switchTo(a.id)).toMatchObject({ id: a.id });
+    const wipes = s.storeCalls.filter((c) => c === "clearAll").length;
+    expect(wipes).toBeGreaterThan(0);
+    const { signIn, exchanged } = await signInOver(s);
+    expect(await signIn.begin(a.id)).toBe("signedIn");
+    expect(exchanged).toEqual([a.id]);
+    expect(s.storeCalls.filter((c) => c === "clearAll").length).toBe(wipes);
   });
 });

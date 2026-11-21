@@ -106,9 +106,6 @@ final class ProfileHost {
         DataStores.shared.webViewReleased()
     }
 
-    /// The profile's live WebView, if any (tests).
-    func view(for profileId: String) -> ProfileWebView? { views[profileId] }
-
     func setAppearance(_ profileId: String, background: UIColor, lightContent: Bool) {
         self.background = background
         container.backgroundColor = background

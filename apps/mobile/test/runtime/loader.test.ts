@@ -68,6 +68,7 @@ function fakeHost() {
 function setup(
   stored: Record<string, string> = {},
   allowed: () => LoaderProfile[] = () => [p1, p2],
+  opened: (profile: LoaderProfile) => void = () => {},
 ) {
   const native = fakeHost();
   const pushState = vi.fn(async () => {});
@@ -97,6 +98,7 @@ function setup(
     splash,
     errorView,
     profiles: allowed,
+    opened,
   });
   return { native, pushState, registry, endDocument, splash, errorView, loader };
 }
@@ -117,6 +119,22 @@ describe("loader: only allowed profiles", () => {
     allowed = [p1];
     await loader.retry();
     expect(native.host.open).toHaveBeenCalledTimes(1);
+  });
+
+  test("every open that reaches native asks opened (the sign-in meta check), refusals never", async () => {
+    const opened = vi.fn();
+    let allowed = [p1, p2];
+    const { native, loader } = setup({}, () => allowed, opened);
+    await loader.open(p1);
+    expect(opened).toHaveBeenCalledWith(p1);
+    await loader.retry();
+    expect(opened).toHaveBeenCalledTimes(2);
+    allowed = [p1];
+    await loader.open(p2);
+    expect(opened).toHaveBeenCalledTimes(2);
+    native.host.open.mockRejectedValueOnce(new Error("wipe_owed"));
+    await loader.open(p1);
+    expect(opened).toHaveBeenCalledTimes(2);
   });
 
   test("close tears the profile's WebView down and forgets it when shown", async () => {

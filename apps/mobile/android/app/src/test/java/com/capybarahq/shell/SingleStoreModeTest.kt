@@ -221,7 +221,7 @@ class OwedWipeRecoveryTest {
     fun belowTheLimitNothingIsDeleted() {
         val dir = webViewDir()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES - 1)
-        assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(!OwedWipeRecovery.runOnce(dir, pending, single = true))
         assertTrue(exists(dir, "Default/Service Worker"))
         assertEquals(setOf("https://a.example"), pending.origins)
     }
@@ -229,7 +229,7 @@ class OwedWipeRecoveryTest {
     @Test
     fun noDebtDeletesNothing() {
         val dir = webViewDir()
-        assertTrue(!OwedWipeRecovery.runOnce(dir, Memory(null, 99)))
+        assertTrue(!OwedWipeRecovery.runOnce(dir, Memory(null, 99), single = true))
         assertTrue(exists(dir, "Cache Storage"))
     }
 
@@ -237,7 +237,7 @@ class OwedWipeRecoveryTest {
     fun atTheLimitWorkersAndCachesOfEveryLayoutAreDeletedAndTheDebtIsCleared() {
         val dir = webViewDir()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
-        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending, single = true))
         for (gone in listOf("Default/Service Worker", "Default/Cache Storage", "Service Worker", "Cache Storage")) {
             assertTrue(gone, !exists(dir, gone))
         }
@@ -251,7 +251,7 @@ class OwedWipeRecoveryTest {
         val dir = java.nio.file.Files.createTempDirectory("app_webview").toFile()
         java.io.File(dir, "Elsewhere/Deep/Service Worker/x").apply { parentFile.mkdirs() }.writeText("x")
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
-        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending, single = true))
         assertTrue(!exists(dir, "Elsewhere/Deep/Service Worker"))
     }
 
@@ -259,7 +259,7 @@ class OwedWipeRecoveryTest {
     fun nothingToDeleteConfirmedByAWalkClearsTheDebt() {
         val dir = java.nio.file.Files.createTempDirectory("app_webview").toFile()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
-        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending, single = true))
         assertEquals(null, pending.origins)
     }
 
@@ -270,7 +270,7 @@ class OwedWipeRecoveryTest {
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
         try {
             assumeTrue("running as root", parent.setWritable(false) && runCatching { java.io.File(parent, "probe").createNewFile() }.isFailure)
-            assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+            assertTrue(!OwedWipeRecovery.runOnce(dir, pending, single = true))
             assertEquals(setOf("https://a.example"), pending.origins)
             assertEquals(OwedWipeRecovery.MAX_FAILURES, pending.failures)
         } finally {
@@ -279,14 +279,26 @@ class OwedWipeRecoveryTest {
     }
 
     @Test
+    fun outsideTheSingleStoreNothingIsDeletedWhateverIsOwed() {
+        // A WebView update that added MULTI_PROFILE while a debt was owed: named profiles' workers
+        // live under the same folder, so the last resort never runs there.
+        val dir = webViewDir()
+        java.io.File(dir, "Profiles/p1/Service Worker/x").apply { parentFile.mkdirs() }.writeText("x")
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        assertTrue(!OwedWipeRecovery.runOnce(dir, pending, single = false))
+        assertTrue(exists(dir, "Profiles/p1/Service Worker"))
+        assertTrue(exists(dir, "Default/Service Worker"))
+    }
+
+    @Test
     fun itRunsOncePerProcessNotOnAnActivityRecreate() {
         val dir = webViewDir()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
-        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending, single = true))
         // The same process again (the activity was recreated; a WebView exists now): never.
         pending.origins = setOf("https://a.example")
         pending.failures = OwedWipeRecovery.MAX_FAILURES
-        assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(!OwedWipeRecovery.runOnce(dir, pending, single = true))
         assertEquals(setOf("https://a.example"), pending.origins)
     }
 }

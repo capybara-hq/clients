@@ -265,12 +265,46 @@ class SingleStoreModeTest {
             pending.saveWipe(setOf(HostileServer(instrumentation.context.assets, "singlestore").use { it.originA }))
             pending.saveWipeFailures(OwedWipeRecovery.MAX_FAILURES)
             OwedWipeRecovery.resetForTest()
-            assertTrue(OwedWipeRecovery.runOnce(webViewDir, pending))
+            assertTrue(OwedWipeRecovery.runOnce(webViewDir, pending, single = true))
             assertEquals("after: ${dirs()} (before $before)", emptyList<String>(), dirs())
             assertEquals(null, pending.loadWipe())
             assertEquals(0, pending.loadWipeFailures())
         } finally {
             context.deleteSharedPreferences(prefsName)
+        }
+    }
+
+    @Test
+    fun openingAnotherDeploymentEndsTheFirstDocumentLikeClose() {
+        HostileServer(instrumentation.context.assets, "singlestore").use { server ->
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val started = CompletableFuture<ProfileWebView>()
+                val ended = CompletableFuture<String>()
+                fun spec(id: String, origin: String) =
+                    ProfileHost.Spec(id, origin, "$origin/top.html", UUID.randomUUID().toString(), state)
+                scenario.onActivity { activity ->
+                    val host = activity.profileHost
+                    host.sink = object : ProfileWebView.Sink {
+                        override fun onDocument(view: ProfileWebView, docId: String) {
+                            if (view.profileId == "a") started.complete(view)
+                        }
+
+                        override fun onCall(view: ProfileWebView, call: ShellCall) {}
+
+                        override fun onDocumentEnded(view: ProfileWebView, docId: String) {
+                            if (view.profileId == "a") ended.complete(docId)
+                        }
+                    }
+                    assertEquals(null, host.open(spec("a", server.originA)))
+                }
+                val first = started.get(60, TimeUnit.SECONDS)
+                scenario.onActivity { activity ->
+                    assertEquals(null, activity.profileHost.open(spec("b", server.originB)))
+                }
+                // The runtime hears the first document end (its calls settle), as with close.
+                assertTrue(ended.get(10, TimeUnit.SECONDS).isNotEmpty())
+                assertEquals(null, onMainValue { first.parent })
+            }
         }
     }
 

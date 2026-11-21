@@ -74,6 +74,11 @@ export interface LoaderDeps<P extends LoaderProfile> {
    * switcher, and the only profiles `open` and `retry` load.
    */
   profiles(): LoaderProfile[];
+  /**
+   * After native opened the profile, whatever asked (a switch, a managed lock, the start, a
+   * retry): the runtime asks the deployment whether it can do app sign-in (`SignInSupport`).
+   */
+  opened?(profile: LoaderProfile): void;
 }
 
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -153,6 +158,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
       if (err instanceof Error && err.message === "wipe_owed") return showError("wipe_owed");
       throw err;
     }
+    deps.opened?.(profile);
   };
 
   return {

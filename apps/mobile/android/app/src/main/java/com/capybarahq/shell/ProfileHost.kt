@@ -98,9 +98,6 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
         }
     }
 
-    /** The profile's live WebView, if any (tests). */
-    fun view(profileId: String): ProfileWebView? = views[profileId]
-
     fun setAppearance(profileId: String, background: Int, lightContent: Boolean) {
         this.background = background
         container.setBackgroundColor(background)
@@ -116,16 +113,10 @@ class ProfileHost(private val activity: Activity) : ProfileWebView.Sink {
      */
     fun closeAll() = closeAllBut(null)
 
+    /** Every other profile's WebView goes the way [close] takes it: its document ends first. */
     private fun closeAllBut(keep: String?) {
-        for (id in views.keys.filter { it != keep }) {
-            views.remove(id)?.let {
-                container.removeView(it)
-                it.destroy()
-            }
-        }
+        for (id in views.keys.filter { it != keep }) close(id)
         specs.keys.retainAll { it == keep }
-        if (shown != keep) shown = null
-        if (shown == null) container.visibility = View.GONE
     }
 
     private fun make(spec: Spec): ProfileWebView? {

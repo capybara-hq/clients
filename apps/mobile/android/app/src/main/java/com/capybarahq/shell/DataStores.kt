@@ -89,9 +89,12 @@ object OwedWipeRecovery {
     /**
      * [webViewDir] is `<dataDir>/app_webview`. Runs at most once per process (a recreated activity
      * has a WebView by then); false when it did not run or the folders could not all be deleted.
+     * Only in the single store ([single]): with MULTI_PROFILE the same folder holds the named
+     * profiles' workers and caches, so nothing is deleted there whatever is owed.
      */
-    fun runOnce(webViewDir: java.io.File, pending: PendingDeletions): Boolean {
+    fun runOnce(webViewDir: java.io.File, pending: PendingDeletions, single: Boolean): Boolean {
         if (!ran.compareAndSet(false, true)) return false
+        if (!single) return false
         if (pending.loadWipe() == null || pending.loadWipeFailures() < MAX_FAILURES) return false
         for (dir in found(webViewDir)) dir.deleteRecursively()
         if (found(webViewDir).isNotEmpty()) return false
@@ -102,7 +105,8 @@ object OwedWipeRecovery {
 
     fun run(context: Context): Boolean {
         val dir = java.io.File(context.applicationInfo.dataDir, "app_webview")
-        return runOnce(dir, SharedPrefsPendingDeletions(context.applicationContext, DataStores.PREFS))
+        val single = !WebViewSupport.isSupported(WebViewFeature.MULTI_PROFILE)
+        return runOnce(dir, SharedPrefsPendingDeletions(context.applicationContext, DataStores.PREFS), single)
     }
 }
 

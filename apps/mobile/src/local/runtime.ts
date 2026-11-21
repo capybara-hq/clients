@@ -233,16 +233,12 @@ async function main(): Promise<void> {
     const message: ErrorStateMessage = { type: "error-state", state: errorState, locale: locale() };
     frames.post(message);
   };
-  // Opens the profile, then asks its deployment whether it can do app sign-in (too old: the
-  // too-old state). Resolves whether it opened.
-  const openShown = async (profile: LoaderProfile): Promise<void> => {
-    await loader?.open(profile);
-    void support.check(profile);
-  };
+  // Resolves whether it opened. Every open asks the deployment whether it can do app sign-in
+  // (the loader's `opened`; too old: the too-old state), whoever opened it.
   const openProfile = async (id: string): Promise<boolean> => {
     const next = await switchTo(id);
     if (!next) return false;
-    await openShown(next);
+    await loader?.open(next);
     return true;
   };
   const showError = () => frames.show("error", "error/index.html");
@@ -304,6 +300,7 @@ async function main(): Promise<void> {
     splash,
     errorView,
     profiles: () => list(),
+    opened: (profile) => void support.check(profile),
   });
 
   const toAddress = () => {
