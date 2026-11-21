@@ -46,6 +46,8 @@ describe("pushNativeFrom", () => {
     const { plugin } = fakePlugin();
     expect(await pushNativeFrom(plugin).token("push-apns")).toBe("ab01");
     expect(plugin.token).toHaveBeenCalledWith({ provider: "push-apns" });
+    await pushNativeFrom(plugin).token("push-fcm", { exclusive: true });
+    expect(plugin.token).toHaveBeenLastCalledWith({ provider: "push-fcm", exclusive: true });
     for (const bad of [{ token: "" }, { token: 7 }, {}, null]) {
       const native = pushNativeFrom(fakePlugin({ token: bad }).plugin);
       await expect(native.token("push-apns")).rejects.toThrow("no push token");

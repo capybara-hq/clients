@@ -55,16 +55,28 @@ export interface PushOffers {
   available(profile: OfferProfile): boolean;
 }
 
-export function createPushOffers(build: {
-  appId: string;
-  providers: readonly string[];
-}): PushOffers {
+/**
+ * @param env Android: whether Google Play services work on this phone, read once at start. The
+ *   channel the profile would register with (`pickAndroidProvider`) must exist for `push@1` to be
+ *   offered: an FCM-only build on a phone without Play services offers nothing.
+ */
+export function createPushOffers(
+  build: { appId: string; providers: readonly string[] },
+  env: { platform: "ios" | "android"; googlePlayServices: boolean } = {
+    platform: "ios",
+    googlePlayServices: false,
+  },
+): PushOffers {
   const apps = new Map<string, { origin: string; base: string; push: readonly PushApp[] }>();
   const appsOf = (profile: OfferProfile) => {
     const entry = apps.get(profile.id);
     return entry && entry.origin === profile.origin && entry.base === profile.base
       ? entry.push
       : undefined;
+  };
+  const providersOf = (profile: OfferProfile): string[] => {
+    const listed = appsOf(profile) ?? [];
+    return [...new Set(listed.filter((a) => a.appId === build.appId).flatMap((a) => a.providers))];
   };
   return {
     set(profile, meta) {
@@ -76,14 +88,22 @@ export function createPushOffers(build: {
       apps.delete(profileId);
     },
     providers(profile) {
-      const listed = appsOf(profile) ?? [];
-      return [
-        ...new Set(listed.filter((a) => a.appId === build.appId).flatMap((a) => a.providers)),
-      ];
+      return providersOf(profile);
     },
     available(profile) {
       const push = appsOf(profile);
-      return push !== undefined && offersPush({ features: { push } }, build);
+      if (push === undefined || !offersPush({ features: { push } }, build)) return false;
+      if (env.platform !== "android") return true;
+      const usable = (p: string) => build.providers.includes(p) && providersOf(profile).includes(p);
+      return (
+        pickAndroidProvider(
+          { googlePlayServices: env.googlePlayServices },
+          {
+            ...(usable(PUSH_PROVIDERS.fcm) ? { fcm: PUSH_PROVIDERS.fcm } : {}),
+            ...(usable(PUSH_PROVIDERS.aggregator) ? { aggregator: PUSH_PROVIDERS.aggregator } : {}),
+          },
+        ) !== null
+      );
     },
   };
 }
@@ -120,9 +140,9 @@ export function createPushCapability<P extends OfferProfile>(
     );
   }
 
-  async function tokenFor(channel: string): Promise<string | null> {
+  async function tokenFor(channel: string, exclusive = false): Promise<string | null> {
     try {
-      const token = await deps.native.token(channel);
+      const token = await deps.native.token(channel, exclusive ? { exclusive } : undefined);
       return typeof token === "string" && token.length > 0 && token.length <= PUSH_LIMITS.tokenChars
         ? token
         : null;
@@ -154,7 +174,9 @@ export function createPushCapability<P extends OfferProfile>(
         if (permission !== "granted") refuse("cancelled");
         const channel = await provider(ctx.profile);
         if (channel === null) return refuse();
-        const token = await tokenFor(channel);
+        // Another channel stops only when no other profile still holds a registration on it.
+        const exclusive = deps.store.providersExcept(ctx.profile.id).every((p) => p === channel);
+        const token = await tokenFor(channel, exclusive);
         if (token === null) return refuse();
         pending.set(ctx.profile.id, { provider: channel, tokenHash: await hash(token) });
         return { platform: deps.platform, appId: deps.build.appId, provider: channel, token };

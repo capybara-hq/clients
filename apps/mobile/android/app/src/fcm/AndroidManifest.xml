@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- FCM (`push-fcm`): merged only for a brand with pushFcm=true (app/build.gradle). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Push banners on Android 13+ (asked in context by push@1, never at launch). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application>
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

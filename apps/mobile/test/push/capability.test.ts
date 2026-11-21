@@ -165,6 +165,27 @@ describe("push@1 availability", () => {
     expect(offers.available(B)).toBe(true);
   });
 
+  test("android: an FCM-only build on a phone without Play services offers nothing", () => {
+    const fcmOnly = { appId: APP_ID, providers: [PUSH_PROVIDERS.fcm] };
+    const both = { appId: APP_ID, providers: [PUSH_PROVIDERS.fcm, PUSH_PROVIDERS.aggregator] };
+    const meta = metaFor([PUSH_PROVIDERS.fcm, PUSH_PROVIDERS.aggregator]);
+    const offersFor = (
+      build: { appId: string; providers: readonly string[] },
+      googlePlayServices: boolean,
+    ) => {
+      const offers = createPushOffers(build, { platform: "android", googlePlayServices });
+      offers.set(A, meta);
+      return offers.available(A);
+    };
+    expect(offersFor(fcmOnly, false)).toBe(false);
+    expect(offersFor(fcmOnly, true)).toBe(true);
+    expect(offersFor(both, false)).toBe(true);
+    // The deployment covers only FCM: without Play services nothing is usable.
+    const offers = createPushOffers(both, { platform: "android", googlePlayServices: false });
+    offers.set(A, metaFor([PUSH_PROVIDERS.fcm]));
+    expect(offers.available(A)).toBe(false);
+  });
+
   test("register is not confirming: it needs no dialog slot", () => {
     const impl = createPushCapability({
       native: fakeNative().native,
@@ -231,7 +252,7 @@ describe("push@1.register", () => {
       ok({ platform: "ios", appId: APP_ID, provider: "push-apns", token: "tok-1" }),
     );
     expect(fake.native.requestPermission).toHaveBeenCalledTimes(1);
-    expect(fake.native.token).toHaveBeenCalledWith("push-apns");
+    expect(fake.native.token).toHaveBeenCalledWith("push-apns", { exclusive: true });
   });
 
   test("the person refusing the OS prompt rejects cancelled", async () => {
@@ -286,6 +307,18 @@ describe("push@1.register", () => {
       deployment: ["push-fcm"],
     });
     expect(await none.call("register")).toEqual({ ok: false, code: "failed" });
+  });
+
+  test("android: another channel is stopped only when no other profile still uses it", async () => {
+    const build = { appId: APP_ID, providers: ["push-fcm", "push-jpush"] };
+    const s = setup({ native: fakeNative({ play: true }), platform: "android", build });
+    // B registered through JPush earlier (another phone state, kept in the store).
+    await s.store.set(B.id, { id: "rb", provider: "push-jpush", tokenHash: "h" });
+    await s.call("register", [], false, A);
+    expect(s.fake.native.token).toHaveBeenLastCalledWith("push-fcm", undefined);
+    await s.store.clear(B.id);
+    await s.call("register", [], false, A);
+    expect(s.fake.native.token).toHaveBeenLastCalledWith("push-fcm", { exclusive: true });
   });
 
   test("an empty or oversized token fails", async () => {
@@ -411,6 +444,13 @@ describe("foreground, taps and removal", () => {
     await r.foreground({ ...payload, body: "finished" });
     await r.foreground({ ...payload, origin: "https://a.example/x", title: "T", body: "B" });
     expect(fake.native.present).not.toHaveBeenCalled();
+  });
+
+  test("a foreground push for no profile's origin shows no banner (R21)", async () => {
+    const { fake, router: r, screen } = router(null);
+    await r.foreground({ ...payload, origin: "https://gone.example", title: "T", body: "B" });
+    expect(fake.native.present).not.toHaveBeenCalled();
+    expect(screen).not.toHaveBeenCalled();
   });
 
   test("a tap on a second profile's origin opens that profile on the path", async () => {

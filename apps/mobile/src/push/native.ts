@@ -5,6 +5,15 @@
 // A push token is never logged, kept in an error message or written to preferences by either side.
 import type { PushPermission } from "@capybara-hq/plugin-sdk";
 
+/** How `token` treats the install's other channels. */
+export interface PushTokenOptions {
+  /**
+   * No profile still holds a registration on another channel: native may stop the others
+   * (Android: FCM chosen stops JPush). Absent or false leaves them running.
+   */
+  exclusive?: boolean;
+}
+
 export interface PushNative {
   /** The OS notification permission now, without asking. */
   permission(): Promise<PushPermission>;
@@ -14,7 +23,7 @@ export interface PushNative {
    * The OS / vendor token of this install for `provider` (`push-apns`, `push-fcm`, `push-jpush`);
    * rejects when the channel cannot give one (not carried, no Play services, no network).
    */
-  token(provider: string): Promise<string>;
+  token(provider: string, options?: PushTokenOptions): Promise<string>;
   /** The channel rotated its token. Returns how to stop listening. */
   onToken(cb: (provider: string, token: string) => void): () => void;
   /**

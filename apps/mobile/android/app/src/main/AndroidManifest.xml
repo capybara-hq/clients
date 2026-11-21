@@ -54,13 +54,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
-        <!-- Push (push/, core spec §9): FCM's and JPush's components come from src/fcm and
-             src/jpush, merged only for a brand that carries the channel (app/build.gradle). -->
+        <!-- Push (push/, core spec §9): FCM's and JPush's components and POST_NOTIFICATIONS come
+             from src/fcm and src/jpush, merged only for a brand that carries the channel
+             (app/build.gradle). -->
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Push banners on Android 13+ (asked in context by push@1, never at launch). -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

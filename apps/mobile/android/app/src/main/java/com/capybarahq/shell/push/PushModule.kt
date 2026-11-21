@@ -110,7 +110,8 @@ class PushPlugin : Plugin(), PushHub.Listener {
             call.reject("token needs provider push-fcm or push-jpush")
             return
         }
-        PushChannels.token(context, provider) { token ->
+        // exclusive: no other profile still holds a registration on another channel (the runtime).
+        PushChannels.token(context, provider, call.getBoolean("exclusive", false) == true) { token ->
             if (token != null) call.resolve(JSObject().put("token", token)) else call.reject("$provider gave no token")
         }
     }
@@ -182,6 +183,9 @@ object PushNotifications {
     const val CHANNEL_ID = "capybara-default"
 
     fun ensureChannel(context: Context) {
+        // A build without a push channel (the official one) creates no notification channel.
+        val build = PushBuild.current()
+        if (!build.fcm && !build.jpush) return
         if (Build.VERSION.SDK_INT < 26) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return

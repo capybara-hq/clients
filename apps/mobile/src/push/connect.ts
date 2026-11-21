@@ -41,6 +41,8 @@ export function createPushRouter(deps: PushRouterDeps): PushRouter {
       const push = parsePushPayload(data);
       const { title, body } = data;
       if (!push || typeof title !== "string" || typeof body !== "string") return;
+      // Ruling R21: a push for no visible profile leads nowhere, so it shows no banner.
+      if (profileForPush(push.origin, deps.profiles()) === null) return;
       const screen = await deps.screen().catch(() => null);
       if (!shouldPresentForeground(push, screen)) return;
       await deps.native.present({ title, body, data }).catch(() => {});
@@ -75,6 +77,9 @@ export function connectPush(
  * profile's page (its session cookie), then the shell forgets the id. A DELETE that fails (no page,
  * offline, signed out) or does not answer within `REMOVAL_DELETE_DEADLINE_MS` never keeps the
  * registration here, nor holds up the removal; the deployment drops it after 60 days.
+ * Known limitation: a profile removed without a live WebView (not opened in this process) has no
+ * page to send the DELETE from, so its row on the deployment stays until the 60-day rule
+ * removes it.
  * Register this before the listener that closes the profile's WebView.
  */
 export function forgetOnRemoval(deps: {

@@ -5,7 +5,7 @@
 // non-empty string is a rejection); events that are not objects are dropped.
 //
 // Plugin surface (the same on every platform that implements it):
-//   permission() / requestPermission() -> { permission }   token({ provider }) -> { token }
+//   permission() / requestPermission() -> { permission }   token({ provider, exclusive? }) -> { token }
 //   present({ title, body, data })                          googlePlayServices() -> { available }
 //   events: "foreground" (data), "tap" (data, held until the first listener), "token" ({ provider, token })
 import type { PushPermission } from "@capybara-hq/plugin-sdk";
@@ -19,7 +19,7 @@ type Handle = Promise<{ remove(): Promise<void> }>;
 export interface PushPlugin {
   permission(): Promise<unknown>;
   requestPermission(): Promise<unknown>;
-  token(options: { provider: string }): Promise<unknown>;
+  token(options: { provider: string; exclusive?: boolean }): Promise<unknown>;
   present(options: { title: string; body: string; data: Record<string, unknown> }): Promise<void>;
   googlePlayServices(): Promise<unknown>;
   addListener(eventName: "foreground" | "tap" | "token", listener: (e: unknown) => void): Handle;
@@ -58,8 +58,10 @@ export function pushNativeFrom(plugin: PushPlugin): PushNative {
   return {
     permission: async () => permissionOf(await plugin.permission()),
     requestPermission: async () => permissionOf(await plugin.requestPermission()),
-    async token(provider) {
-      const token = record(await plugin.token({ provider }))?.token;
+    async token(provider, options) {
+      const token = record(
+        await plugin.token(options?.exclusive ? { provider, exclusive: true } : { provider }),
+      )?.token;
       // The message never carries the answer: it may be a token of the wrong shape.
       if (typeof token !== "string" || token.length === 0) throw new Error("no push token");
       return token;

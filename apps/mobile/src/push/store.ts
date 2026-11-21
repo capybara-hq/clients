@@ -18,6 +18,8 @@ export interface RegistrationStore {
   clear(profileId: string): Promise<void>;
   /** Whether any profile holds a registration (one OS token serves every profile, decision 6). */
   any(): boolean;
+  /** The channels the other profiles' registrations use. */
+  providersExcept(profileId: string): string[];
 }
 
 /** The preference that holds the map; preload it with the profiles (`preloadPrefs`). */
@@ -76,5 +78,12 @@ export function createRegistrationStore(prefs: PrefsPort): RegistrationStore {
         return rest;
       }),
     any: () => Object.keys(state).length > 0,
+    providersExcept: (profileId) => [
+      ...new Set(
+        Object.entries(state)
+          .filter(([id]) => id !== profileId)
+          .map(([, r]) => r.provider),
+      ),
+    ],
   };
 }

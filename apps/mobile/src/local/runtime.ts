@@ -244,7 +244,14 @@ async function main(): Promise<void> {
   const appearance = createAppearanceStore(backend);
   let loader: ReturnType<typeof createLoader> | undefined;
   const httpGet = httpGetPortFrom(plugin);
-  const pushOffers = pushBuild ? createPushOffers(pushBuild) : null;
+  // Android: Play services decide the channel (pickAndroidProvider); read once for the offers.
+  const googlePlayServices =
+    pushBuild && platform === "android"
+      ? await pushNative.googlePlayServices().catch(() => false)
+      : false;
+  const pushOffers = pushBuild
+    ? createPushOffers(pushBuild, { platform, googlePlayServices })
+    : null;
   // A removed profile's offer goes with it (a re-pointed one is not matched, see PushOffers).
   if (pushOffers) profiles?.onRemoved((p) => pushOffers.forget(p.id));
   const support = createSignInSupport({

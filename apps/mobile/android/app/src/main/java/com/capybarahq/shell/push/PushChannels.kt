@@ -81,14 +81,22 @@ object PushChannels {
         }
     }
 
-    /** The token of [provider], or null when the channel cannot give one. Calls back on any thread. */
-    fun token(context: Context, provider: String, done: (String?) -> Unit) {
+    /** What choosing FCM does to JPush: stop it only when no other profile still uses it. */
+    fun stopJPushForFcm(build: PushBuild, exclusive: Boolean): Boolean = build.jpush && exclusive
+
+    /**
+     * The token of [provider], or null when the channel cannot give one. Calls back on any thread.
+     * [exclusive]: no other profile still holds a registration on another channel, so choosing FCM
+     * may stop JPush (one phone then gets each push once); otherwise JPush keeps running.
+     */
+    fun token(context: Context, provider: String, exclusive: Boolean = false, done: (String?) -> Unit) {
         if (!available(context, provider)) return done(null)
         when (provider) {
             PushProviders.FCM -> {
-                remember(context, jpush = false)
-                // FCM chosen after JPush ran: JPush stops so one phone does not get both.
-                if (PushBuild.current().jpush) JPushChannel.stop(context)
+                if (stopJPushForFcm(PushBuild.current(), exclusive)) {
+                    remember(context, jpush = false)
+                    JPushChannel.stop(context)
+                }
                 FcmChannel.token(done)
             }
             PushProviders.JPUSH -> jpushToken(context, done)

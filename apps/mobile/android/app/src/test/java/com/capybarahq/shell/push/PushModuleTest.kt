@@ -64,6 +64,14 @@ class PushModuleTest {
     }
 
     @Test
+    fun fcmStopsJPushOnlyWhenNoOtherProfileUsesIt() {
+        val both = PushBuild(fcm = true, jpushAppKey = "key")
+        assertTrue(PushChannels.stopJPushForFcm(both, exclusive = true))
+        assertFalse(PushChannels.stopJPushForFcm(both, exclusive = false))
+        assertFalse(PushChannels.stopJPushForFcm(PushBuild(fcm = true, jpushAppKey = ""), exclusive = true))
+    }
+
+    @Test
     fun jpushInitsOnceAndResumesAfterAStop() {
         val life = JPushLifecycle()
         assertFalse(life.stop())
