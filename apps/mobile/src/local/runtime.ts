@@ -15,7 +15,7 @@
 // (src/runtime/sign-in.ts). Each profile opened is asked for its meta: a deployment too old for
 // app sign-in gets the too-old state and no signIn@1.
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import { Haptics } from "@capacitor/haptics";
+import { Haptics, NotificationType } from "@capacitor/haptics";
 import { Preferences } from "@capacitor/preferences";
 import { Share } from "@capacitor/share";
 import { SplashScreen } from "@capacitor/splash-screen";
@@ -355,7 +355,10 @@ async function main(): Promise<void> {
         menu: menuHostPortFrom(registerPlugin<MenuHostPlugin>(MENU_HOST_PLUGIN_NAME), locale),
         openAddress: async () => showAddress(),
         policy: () => policy.policy(),
-        confirm: async (text) => window.confirm(text.message),
+        switchTo: (id) => gate.switchTo(id),
+        haptic: () => {
+          Haptics.notification({ type: NotificationType.Warning }).catch(() => {});
+        },
         afterSwitch: async (profile) => {
           await loader?.open(profile);
         },

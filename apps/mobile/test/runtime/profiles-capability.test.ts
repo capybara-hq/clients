@@ -33,10 +33,15 @@ function setup(
     remove: vi.fn(async () => {}),
   } as unknown as ProfileStore;
   const shown: MenuShowInput[] = [];
+  const confirms: MenuShowInput[] = [];
   let release: (id: string | null) => void = () => {};
   const menu: MenuHostPort = {
     show: (input) => {
       shown.push(input);
+      if (input.items.length === 1 && input.items[0]?.id === "confirm") {
+        confirms.push(input);
+        return Promise.resolve(opts.confirm === false ? null : "confirm");
+      }
       if (opts.picks) return Promise.resolve(opts.picks(input));
       return new Promise((resolve) => {
         release = resolve;
@@ -44,10 +49,14 @@ function setup(
     },
     cancel: vi.fn(),
   };
+  const switchTo = vi.fn(async (id: string) => {
+    if (policy.locked) return null;
+    return (await store.setCurrent(id)) === "switched" ? store.current() : null;
+  });
+  const haptic = vi.fn();
   const openAddress = vi.fn(async () => {});
   const afterSwitch = vi.fn(async () => {});
   const afterRemove = vi.fn(async () => {});
-  const confirm = vi.fn(async () => opts.confirm ?? true);
   const policy = { locked: opts.locked ?? false };
   const impl = createProfilesCapability({
     profiles: store,
@@ -55,7 +64,8 @@ function setup(
     menu,
     openAddress,
     policy: () => policy,
-    confirm,
+    switchTo,
+    haptic,
     afterSwitch,
     afterRemove,
   });
@@ -93,7 +103,10 @@ function setup(
     openAddress,
     afterSwitch,
     afterRemove,
-    confirm,
+    confirms,
+    switchTo,
+    haptic,
+    policy,
     events,
     replies,
     impl,
@@ -168,7 +181,9 @@ describe("profiles@1", () => {
   test("remove confirms first, then removes the current profile through the store", async () => {
     const s = setup({ picks: () => "remove" });
     expect(await s.call()).toEqual({ ok: true, value: null });
-    expect(s.confirm).toHaveBeenCalledTimes(1);
+    expect(s.confirms).toHaveLength(1);
+    expect(s.confirms[0]?.items[0]?.destructive).toBe(true);
+    expect(s.haptic).toHaveBeenCalledTimes(1);
     expect(s.store.remove).toHaveBeenCalledWith("p1");
     expect(s.afterRemove).toHaveBeenCalledTimes(1);
   });
@@ -177,6 +192,37 @@ describe("profiles@1", () => {
     const s = setup({ picks: () => "remove", confirm: false });
     await s.call();
     expect(s.store.remove).not.toHaveBeenCalled();
+  });
+
+  test("a lock arriving while the sheet is open loads nothing, adds nothing, removes nothing", async () => {
+    for (const pick of ["profile-p2", "add", "remove"]) {
+      const s = setup();
+      const first = s.call();
+      await vi.waitFor(() => expect(s.shown).toHaveLength(1));
+      s.policy.locked = true;
+      s.release(pick);
+      await first;
+      expect(s.afterSwitch).not.toHaveBeenCalled();
+      expect(s.openAddress).not.toHaveBeenCalled();
+      expect(s.store.remove).not.toHaveBeenCalled();
+    }
+  });
+
+  test("a lock arriving while the remove confirm is open removes nothing", async () => {
+    const s = setup({ picks: () => "remove" });
+    const orig = s.confirms.push.bind(s.confirms);
+    s.confirms.push = (...m) => {
+      s.policy.locked = true;
+      return orig(...m);
+    };
+    await s.call();
+    expect(s.store.remove).not.toHaveBeenCalled();
+  });
+
+  test("switching goes through switchTo, not the store directly", async () => {
+    const s = setup({ picks: () => "profile-p2" });
+    await s.call();
+    expect(s.switchTo).toHaveBeenCalledWith("p2");
   });
 
   test("dismissing does nothing", async () => {

@@ -15,18 +15,23 @@ const PROFILE_PREFIX = "profile-";
 const ADD_ID = "add";
 const REMOVE_ID = "remove";
 
-export interface ProfilesCapabilityDeps {
-  profiles: Pick<ProfileStore, "current" | "setCurrent" | "remove" | "list">;
+export interface ProfilesCapabilityDeps<S extends { id: string } = Profile> {
+  profiles: Pick<ProfileStore, "current" | "remove" | "list">;
   /** The profiles the managed policy leaves visible (Task 18's `ProfileAccess.list`). */
   visible?: () => Profile[];
   menu: MenuHostPort;
   /** Shows the address page (add a platform). */
   openAddress(): Promise<void>;
   policy(): { locked: boolean };
-  /** The native confirm for removing the current platform. */
-  confirm(text: { message: string; ok: string; cancel: string }): Promise<boolean>;
-  /** After a switch the store accepted: opens the new current profile. */
-  afterSwitch?(profile: Profile): Promise<void>;
+  /**
+   * Switches through the same gates as every other switch (`ProfileAccess.switchTo`: visibility,
+   * single-store ask and wipe); the profile now current, or null (hidden, refused, cancelled).
+   */
+  switchTo(id: string): Promise<S | null>;
+  /** The warning haptic before the destructive confirm. */
+  haptic?(): void;
+  /** After a switch the gates accepted: opens the new current profile. */
+  afterSwitch?(profile: S): Promise<void>;
   /** After the current profile was removed: shows what is left, or the address page. */
   afterRemove?(): Promise<void>;
   locale?: () => Locale;
@@ -47,7 +52,11 @@ function displayName(p: Profile): string {
   }
 }
 
-export function createProfilesCapability(deps: ProfilesCapabilityDeps): CapabilityImpl {
+const CONFIRM_ID = "confirm";
+
+export function createProfilesCapability<S extends { id: string } = Profile>(
+  deps: ProfilesCapabilityDeps<S>,
+): CapabilityImpl {
   const list = () => deps.visible?.() ?? deps.profiles.list();
 
   return {
@@ -100,26 +109,37 @@ export function createProfilesCapability(deps: ProfilesCapabilityDeps): Capabili
           ctx.signal.removeEventListener("abort", cancel);
         }
         if (picked === null || ctx.signal.aborted) return undefined;
+        // The managed policy may have changed while the sheet was open: ask again, per action.
+        const allowed = () => !deps.policy().locked;
+        if (!allowed()) return undefined;
         try {
           if (picked === ADD_ID) {
             await deps.openAddress();
           } else if (picked === REMOVE_ID) {
             if (!current) return undefined;
-            const ok = await deps.confirm({
-              message: t(locale, "profile.remove_confirm.message"),
-              ok: t(locale, "profile.remove_confirm.confirm"),
-              cancel: t(locale, "dialog.cancel"),
+            deps.haptic?.();
+            // A native confirm: one destructive row (the host adds its own cancel).
+            const answer = await deps.menu.show({
+              title: t(locale, "profile.remove_confirm.message"),
+              items: [
+                {
+                  id: CONFIRM_ID,
+                  label: t(locale, "profile.remove_confirm.confirm"),
+                  destructive: true,
+                  disabled: false,
+                },
+              ],
             });
-            if (!ok) return undefined;
+            if (answer !== CONFIRM_ID || ctx.signal.aborted || !allowed()) return undefined;
+            if (!list().some((p) => p.id === current.id)) return undefined;
             await deps.profiles.remove(current.id);
             await deps.afterRemove?.();
           } else if (picked.startsWith(PROFILE_PREFIX)) {
             const id = picked.slice(PROFILE_PREFIX.length);
             // Only a row of this sheet can be the answer, whatever the host reports.
             if (!rows.some((p) => p.id === id) || id === current?.id) return undefined;
-            // Single-store mode asks first inside `setCurrent` (Decision 9).
-            if ((await deps.profiles.setCurrent(id)) !== "switched") return undefined;
-            const next = deps.profiles.current();
+            // Single-store mode asks first inside the store (Decision 9).
+            const next = await deps.switchTo(id);
             if (next) await deps.afterSwitch?.(next);
           }
         } catch {
