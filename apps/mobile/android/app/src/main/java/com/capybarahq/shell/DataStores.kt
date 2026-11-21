@@ -57,28 +57,49 @@ interface PendingDeletions {
 }
 
 /**
- * Last resort for a wipe that keeps failing (no in-app way out otherwise): at a cold start, before
- * any WebView exists (MainActivity, ahead of the bridge), delete the WebView's service worker and
- * cache storage directories, then clear the debt. Cookies, localStorage and IndexedDB are the
- * regular clear's job and are not touched here.
+ * Last resort for a wipe that keeps failing (no in-app way out otherwise): once per process, before
+ * any WebView exists (MainActivity, ahead of the bridge), delete every service worker and cache
+ * storage directory under the app's WebView data directory, then clear the debt. The layout differs
+ * by WebView version (`app_webview/Default/Service Worker` from M110, `app_webview/Service Worker`
+ * before, Cache Storage inside it or beside it), so the tree is searched, not assumed: the debt is
+ * cleared only after a second walk finds none left, never because a path was missing. Only a
+ * single-store device has an owed wipe, so no named profile's data is at stake. Cookies,
+ * localStorage and IndexedDB are the regular clear's job and are not touched here.
  */
 object OwedWipeRecovery {
     const val MAX_FAILURES = 3
-    private val DIRS = listOf("Service Worker", "Cache Storage")
+    private val NAMES = setOf("Service Worker", "Cache Storage", "CacheStorage")
+    private const val MAX_DEPTH = 5
+    private val ran = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** [profileDir] is the WebView's default profile directory (`app_webview/Default`). */
-    fun run(profileDir: java.io.File, pending: PendingDeletions): Boolean {
+    internal fun resetForTest() = ran.set(false)
+
+    private fun found(dir: java.io.File, depth: Int = 0, out: MutableList<java.io.File> = mutableListOf()): List<java.io.File> {
+        if (depth > MAX_DEPTH) return out
+        for (child in dir.listFiles().orEmpty()) {
+            if (!child.isDirectory) continue
+            if (child.name in NAMES) out.add(child) else found(child, depth + 1, out)
+        }
+        return out
+    }
+
+    /**
+     * [webViewDir] is `<dataDir>/app_webview`. Runs at most once per process (a recreated activity
+     * has a WebView by then); false when it did not run or the folders could not all be deleted.
+     */
+    fun runOnce(webViewDir: java.io.File, pending: PendingDeletions): Boolean {
+        if (!ran.compareAndSet(false, true)) return false
         if (pending.loadWipe() == null || pending.loadWipeFailures() < MAX_FAILURES) return false
-        val gone = DIRS.map { java.io.File(profileDir, it) }.all { !it.exists() || it.deleteRecursively() }
-        if (!gone) return false
+        for (dir in found(webViewDir)) dir.deleteRecursively()
+        if (found(webViewDir).isNotEmpty()) return false
         pending.saveWipe(null)
         pending.saveWipeFailures(0)
         return true
     }
 
     fun run(context: Context): Boolean {
-        val dir = java.io.File(context.applicationInfo.dataDir, "app_webview/Default")
-        return run(dir, SharedPrefsPendingDeletions(context.applicationContext, DataStores.PREFS))
+        val dir = java.io.File(context.applicationInfo.dataDir, "app_webview")
+        return runOnce(dir, SharedPrefsPendingDeletions(context.applicationContext, DataStores.PREFS))
     }
 }
 

@@ -3,6 +3,8 @@ package com.capybarahq.shell
 import androidx.webkit.WebViewFeature
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Before
 import org.junit.Test
 
 // Decision 9 on Android: where a WebView lacks MULTI_PROFILE but has the gate's features, profile
@@ -169,13 +171,22 @@ class OwedWipeRecoveryTest {
         }
     }
 
+    /** A fake `app_webview` with the data of both layouts (M110+: Default/..., older: at the root). */
     private fun webViewDir(): java.io.File {
-        val dir = java.nio.file.Files.createTempDirectory("webview").toFile()
-        for (name in listOf("Service Worker/CacheStorage", "Cache Storage", "Local Storage")) {
+        val dir = java.nio.file.Files.createTempDirectory("app_webview").toFile()
+        for (name in listOf(
+            "Default/Service Worker/CacheStorage",
+            "Default/Cache Storage",
+            "Default/Local Storage",
+            "Service Worker/CacheStorage",
+            "Cache Storage",
+        )) {
             java.io.File(dir, "$name/x").apply { parentFile.mkdirs() }.writeText("x")
         }
         return dir
     }
+
+    private fun exists(dir: java.io.File, path: String) = java.io.File(dir, path).exists()
 
     private fun core(pending: PendingDeletions) =
         DataStoreCore({ it == WebViewFeature.DOCUMENT_START_SCRIPT }, object : ProfileBackend {
@@ -203,31 +214,79 @@ class OwedWipeRecoveryTest {
         assertEquals(null, pending.origins)
     }
 
+    @Before
+    fun freshProcess() = OwedWipeRecovery.resetForTest()
+
     @Test
     fun belowTheLimitNothingIsDeleted() {
         val dir = webViewDir()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES - 1)
-        assertTrue(!OwedWipeRecovery.run(dir, pending))
-        assertTrue(java.io.File(dir, "Service Worker").exists())
+        assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(exists(dir, "Default/Service Worker"))
         assertEquals(setOf("https://a.example"), pending.origins)
     }
 
     @Test
     fun noDebtDeletesNothing() {
         val dir = webViewDir()
-        assertTrue(!OwedWipeRecovery.run(dir, Memory(null, 99)))
-        assertTrue(java.io.File(dir, "Cache Storage").exists())
+        assertTrue(!OwedWipeRecovery.runOnce(dir, Memory(null, 99)))
+        assertTrue(exists(dir, "Cache Storage"))
     }
 
     @Test
-    fun atTheLimitWorkersAndCachesAreDeletedAndTheDebtIsCleared() {
+    fun atTheLimitWorkersAndCachesOfEveryLayoutAreDeletedAndTheDebtIsCleared() {
         val dir = webViewDir()
         val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
-        assertTrue(OwedWipeRecovery.run(dir, pending))
-        assertTrue(!java.io.File(dir, "Service Worker").exists())
-        assertTrue(!java.io.File(dir, "Cache Storage").exists())
-        assertTrue("other data is the regular clear's job", java.io.File(dir, "Local Storage/x").exists())
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        for (gone in listOf("Default/Service Worker", "Default/Cache Storage", "Service Worker", "Cache Storage")) {
+            assertTrue(gone, !exists(dir, gone))
+        }
+        assertTrue("other data is the regular clear's job", exists(dir, "Default/Local Storage/x"))
         assertEquals(null, pending.origins)
         assertEquals(0, pending.failures)
+    }
+
+    @Test
+    fun aFolderAtAnUnexpectedPlaceIsFoundToo() {
+        val dir = java.nio.file.Files.createTempDirectory("app_webview").toFile()
+        java.io.File(dir, "Elsewhere/Deep/Service Worker/x").apply { parentFile.mkdirs() }.writeText("x")
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertTrue(!exists(dir, "Elsewhere/Deep/Service Worker"))
+    }
+
+    @Test
+    fun nothingToDeleteConfirmedByAWalkClearsTheDebt() {
+        val dir = java.nio.file.Files.createTempDirectory("app_webview").toFile()
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        assertEquals(null, pending.origins)
+    }
+
+    @Test
+    fun aFolderThatCannotBeDeletedKeepsTheDebt() {
+        val dir = webViewDir()
+        val parent = java.io.File(dir, "Default")
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        try {
+            assumeTrue("running as root", parent.setWritable(false) && runCatching { java.io.File(parent, "probe").createNewFile() }.isFailure)
+            assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+            assertEquals(setOf("https://a.example"), pending.origins)
+            assertEquals(OwedWipeRecovery.MAX_FAILURES, pending.failures)
+        } finally {
+            parent.setWritable(true)
+        }
+    }
+
+    @Test
+    fun itRunsOncePerProcessNotOnAnActivityRecreate() {
+        val dir = webViewDir()
+        val pending = Memory(setOf("https://a.example"), OwedWipeRecovery.MAX_FAILURES)
+        assertTrue(OwedWipeRecovery.runOnce(dir, pending))
+        // The same process again (the activity was recreated; a WebView exists now): never.
+        pending.origins = setOf("https://a.example")
+        pending.failures = OwedWipeRecovery.MAX_FAILURES
+        assertTrue(!OwedWipeRecovery.runOnce(dir, pending))
+        assertEquals(setOf("https://a.example"), pending.origins)
     }
 }

@@ -245,6 +245,36 @@ class SingleStoreModeTest {
     }
 
     @Test
+    fun theLastResortDeletesTheRealWorkerAndCacheFoldersOfThisWebView() {
+        val webViewDir = java.io.File(context.applicationInfo.dataDir, "app_webview")
+        fun dirs(): List<String> = webViewDir.walkTopDown().filter {
+            it.isDirectory && it.name in setOf("Service Worker", "Cache Storage", "CacheStorage")
+        }.map { it.relativeTo(webViewDir).path }.sorted().toList()
+        HostileServer(instrumentation.context.assets, "singlestore").use { server ->
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                load(server, scenario, "seed.html", "seeded")
+                assertTrue(report(server, "seeded").toString(), report(server, "seeded").optBoolean("ok"))
+            }
+        }
+        val before = dirs()
+        android.util.Log.w("CapybaraRecovery", "folders: $before")
+        assertTrue("the WebView wrote no worker or cache folder under $webViewDir", before.isNotEmpty())
+        val prefsName = "capybara.dataStores.test.${UUID.randomUUID()}"
+        try {
+            val pending = SharedPrefsPendingDeletions(context, prefsName)
+            pending.saveWipe(setOf(HostileServer(instrumentation.context.assets, "singlestore").use { it.originA }))
+            pending.saveWipeFailures(OwedWipeRecovery.MAX_FAILURES)
+            OwedWipeRecovery.resetForTest()
+            assertTrue(OwedWipeRecovery.runOnce(webViewDir, pending))
+            assertEquals("after: ${dirs()} (before $before)", emptyList<String>(), dirs())
+            assertEquals(null, pending.loadWipe())
+            assertEquals(0, pending.loadWipeFailures())
+        } finally {
+            context.deleteSharedPreferences(prefsName)
+        }
+    }
+
+    @Test
     fun theHostKeepsOneDeploymentAtATimeAndClosesAllBeforeClearing() {
         HostileServer(instrumentation.context.assets, "singlestore").use { server ->
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
