@@ -114,22 +114,40 @@ export const SHELL_CALL_ERRORS: readonly ShellCallError[] = Object.keys(
 /** Errors are carried as data: Electron drops the properties of a thrown Error across IPC. */
 export type ShellCallResult = { ok: true; value: unknown } | { ok: false; code: ShellCallError };
 
-/** macOS with `titleBarStyle: "hiddenInset"` (desktop spec §7.3). */
-export const DESKTOP_INSETS: Insets = { top: 28, right: 0, bottom: 0, left: 0 };
-/** The traffic lights' rectangle at `TRAFFIC_LIGHT_POSITION`, margins included. */
-export const DESKTOP_CONTROLS: Controls = { x: 0, y: 0, width: 80, height: 28 };
-/** The fixed traffic light position the controls rectangle is measured for. */
-export const TRAFFIC_LIGHT_POSITION = { x: 12, y: 8 } as const;
+/**
+ * The main window's top row (desktop spec §7.3): the web runs to the window's top edge and its
+ * first row (the sidebar's brand row, the conversation title bar) is as high as the controls
+ * rectangle the shell reports; 48 is design's `layout.title-bar`.
+ */
+export const MAIN_TOP_ROW = 48;
+/**
+ * macOS: the traffic lights at the main window's top left, vertically centred in the top row
+ * (the buttons are 14 high: (48 - 14) / 2 = 17).
+ */
+export const MAIN_TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
+/**
+ * The traffic lights' rectangle in the main window: from the window's top-left corner, as high as
+ * the top row and as wide as the lights (60) with their left margin repeated on the right.
+ */
+export const MAIN_CONTROLS: Controls = { x: 0, y: 0, width: 92, height: MAIN_TOP_ROW };
+/** The main window reports no inset: no title bar band (desktop spec §7.3). */
+export const MAIN_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
-/** Insets and controls for a window: fullscreen hides the title bar band and the controls. */
+/** The small window: `titleBarStyle: "hiddenInset"`, the lights at their fixed position. */
+export const SMALL_TRAFFIC_LIGHT_POSITION = { x: 12, y: 8 } as const;
+/** The traffic lights' rectangle in the small window, margins included. */
+export const SMALL_CONTROLS: Controls = { x: 0, y: 0, width: 80, height: 28 };
+
+/**
+ * Insets and controls for a main window: macOS reports the traffic lights in the top row,
+ * fullscreen hides them; Windows and Linux keep the system title bar for now (nothing to report).
+ */
 export function chromeState(
   platform: ShellPlatform,
   fullscreen: boolean,
 ): { insets: Insets; controls: Controls | null } {
-  if (platform !== "macos" || fullscreen) {
-    return { insets: { ...DESKTOP_INSETS, top: 0 }, controls: null };
-  }
-  return { insets: { ...DESKTOP_INSETS }, controls: { ...DESKTOP_CONTROLS } };
+  if (platform !== "macos" || fullscreen) return { insets: { ...MAIN_INSETS }, controls: null };
+  return { insets: { ...MAIN_INSETS }, controls: { ...MAIN_CONTROLS } };
 }
 
 export function platformFrom(nodePlatform: string): ShellPlatform {

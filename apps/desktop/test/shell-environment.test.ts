@@ -5,6 +5,8 @@ import { createWindowManager } from "../src/main/windows.ts";
 import { bootShellPreload } from "../src/preload/shell-environment.ts";
 import {
   chromeState,
+  MAIN_CONTROLS,
+  MAIN_TRAFFIC_LIGHT_POSITION,
   SHELL_CHANNELS,
   type ShellInit,
   type ShellState,
@@ -17,8 +19,8 @@ const init: ShellInit = {
   origin: ORIGIN,
   platform: "macos",
   shellVersion: "0.1.0",
-  insets: { top: 28, right: 0, bottom: 0, left: 0 },
-  controls: { x: 0, y: 0, width: 80, height: 28 },
+  insets: { top: 0, right: 0, bottom: 0, left: 0 },
+  controls: { x: 0, y: 0, width: 92, height: 48 },
   capabilities: { "notify@1": ["notify"], "openExternal@1": ["open"] },
 };
 
@@ -48,14 +50,24 @@ function install(fn: typeof installShellEnvironment = installShellEnvironment) {
 
 describe("desktop values", () => {
   test("windowed and fullscreen", () => {
+    // no title bar band: the lights' rectangle is as high as the web's top row
     expect(chromeState("macos", false)).toEqual({
-      insets: { top: 28, right: 0, bottom: 0, left: 0 },
-      controls: { x: 0, y: 0, width: 80, height: 28 },
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      controls: { x: 0, y: 0, width: 92, height: 48 },
     });
     expect(chromeState("macos", true)).toEqual({
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       controls: null,
     });
+    expect(chromeState("windows", false)).toEqual({
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      controls: null,
+    });
+  });
+
+  test("the lights are centred in the top row", () => {
+    expect(MAIN_TRAFFIC_LIGHT_POSITION.y * 2 + 14).toBe(MAIN_CONTROLS.height);
+    expect(MAIN_CONTROLS.width).toBe(MAIN_TRAFFIC_LIGHT_POSITION.x * 2 + 60);
   });
 });
 
@@ -66,8 +78,8 @@ describe("the Shell environment object", () => {
     expect(shell.kind).toBe("desktop");
     expect(shell.platform).toBe("macos");
     expect(shell.shellVersion).toBe("0.1.0");
-    expect(shell.insets).toEqual({ top: 28, right: 0, bottom: 0, left: 0 });
-    expect(shell.controls).toEqual({ x: 0, y: 0, width: 80, height: 28 });
+    expect(shell.insets).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+    expect(shell.controls).toEqual({ x: 0, y: 0, width: 92, height: 48 });
     expect(Object.keys(shell.capabilities)).toEqual(["notify@1", "openExternal@1"]);
     expect(typeof (shell.capabilities["notify@1"] as Record<string, unknown>).notify).toBe(
       "function",
@@ -109,8 +121,8 @@ describe("the Shell environment object", () => {
     expect(shell.insets.top).toBe(0);
     expect(shell.controls).toBeNull();
     bridge.fire({ ...chromeState("macos", false), capabilities: init.capabilities });
-    expect(shell.insets.top).toBe(28);
-    expect(shell.controls).toEqual({ x: 0, y: 0, width: 80, height: 28 });
+    expect(shell.insets.top).toBe(0);
+    expect(shell.controls).toEqual({ x: 0, y: 0, width: 92, height: 48 });
     expect(listener).toHaveBeenCalledTimes(2);
     off();
     bridge.fire({ ...chromeState("macos", true), capabilities: init.capabilities });
@@ -443,8 +455,8 @@ describe("the main side announces fullscreen", () => {
     });
     win.setFullScreenState(false);
     expect(win.webContents.send).toHaveBeenLastCalledWith(SHELL_CHANNELS.change, {
-      insets: { top: 28, right: 0, bottom: 0, left: 0 },
-      controls: { x: 0, y: 0, width: 80, height: 28 },
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      controls: { x: 0, y: 0, width: 92, height: 48 },
       capabilities: { "notify@1": ["notify"] },
     });
   });

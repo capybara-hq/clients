@@ -162,8 +162,8 @@ test("the deployment page sees capybaraShell with its capabilities", async () =>
     },
   }));
   expect(state).toEqual({
-    insets: { top: 28, right: 0, bottom: 0, left: 0 },
-    controls: { x: 0, y: 0, width: 80, height: 28 },
+    insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    controls: { x: 0, y: 0, width: 92, height: 48 },
   });
 });
 
