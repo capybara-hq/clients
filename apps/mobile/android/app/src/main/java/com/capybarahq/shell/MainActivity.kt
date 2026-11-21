@@ -7,8 +7,8 @@ import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
-import cn.jpush.android.api.JPushInterface
-import com.capybarahq.shell.push.PushBuild
+import com.capybarahq.shell.push.JPushChannel
+import com.capybarahq.shell.push.PushChannels
 import com.capybarahq.shell.push.PushHub
 import com.capybarahq.shell.push.PushIntents
 import com.capybarahq.shell.push.pushExtras
@@ -21,6 +21,8 @@ class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // A single-store wipe that kept failing: end it before any WebView exists.
         OwedWipeRecovery.run(this)
+        // A JPush build: JPush's collection held off until the person turned push on through it.
+        PushChannels.onLaunch(this)
         // Plugins register before the bridge starts.
         registerPlugins(ShellPlugins.all)
         super.onCreate(savedInstanceState)
@@ -63,9 +65,7 @@ class MainActivity : BridgeActivity() {
     private fun handlePushIntent(intent: Intent?) {
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val tap = PushIntents.tap(pushExtras(intent), intent.dataString) ?: return
-        if (tap is PushIntents.Tap.JPushVendor && PushBuild.current().jpush) {
-            tap.report?.let { (id, rom) -> runCatching { JPushInterface.reportNotificationOpened(this, id, rom.toByte()) } }
-        }
+        if (tap is PushIntents.Tap.JPushVendor) tap.report?.let { (id, rom) -> JPushChannel.reportOpened(this, id, rom) }
         // Consumed: a later configuration change or restore does not tap again.
         intent.removeExtra(PushIntents.EXTRA_PUSH)
         intent.removeExtra(PushIntents.EXTRA_JPUSH)

@@ -18,6 +18,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.ActivityCompat
@@ -47,7 +48,6 @@ class PushPlugin : Plugin(), PushHub.Listener {
 
     override fun load() {
         PushNotifications.ensureChannel(context)
-        PushChannels.onLaunch(context)
         PushHub.attach(this)
     }
 
@@ -100,7 +100,7 @@ class PushPlugin : Plugin(), PushHub.Listener {
 
     @PluginMethod
     fun googlePlayServices(call: PluginCall) {
-        call.resolve(JSObject().put("available", PlayServices.usable(PlayServices.check(context))))
+        call.resolve(JSObject().put("available", PushChannels.googlePlayServices(context)))
     }
 
     @PluginMethod
@@ -193,12 +193,23 @@ object PushNotifications {
         manager.createNotificationChannel(channel)
     }
 
-    /** The intent a tap on a banner sends to MainActivity: the data as [PushIntents.EXTRA_PUSH]. */
-    fun tapIntent(context: Context, data: Map<String, String>): Intent {
+    /** The tag of a push without a thread id: such banners replace each other. */
+    const val DEFAULT_TAG = "capybara"
+
+    /** A banner's tag: its thread (one banner per conversation), else [DEFAULT_TAG]. */
+    fun tagOf(data: Map<String, String>): String = data[PushPayload.THREAD_ID]?.takeIf { it.isNotEmpty() } ?: DEFAULT_TAG
+
+    /**
+     * The intent a tap on a banner sends to MainActivity: the data as [PushIntents.EXTRA_PUSH]. The
+     * tag is in the intent's data URI, so the pending intents of two threads never match each other
+     * (PendingIntent identity ignores extras), whatever their request codes.
+     */
+    fun tapIntent(context: Context, data: Map<String, String>, tag: String = tagOf(data)): Intent {
         val bundle = Bundle()
         for ((k, v) in data) bundle.putString(k, v)
         return Intent(context, MainActivity::class.java)
             .setAction(PushIntents.EXTRA_PUSH)
+            .setData(Uri.Builder().scheme("capybara-push").authority("tap").appendPath(tag).build())
             .putExtra(PushIntents.EXTRA_PUSH, bundle)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
@@ -206,11 +217,11 @@ object PushNotifications {
     /** One banner per thread: a newer push of the same conversation replaces the older one. */
     fun show(context: Context, title: String, body: String, data: Map<String, String>): Boolean {
         ensureChannel(context)
-        val tag = data[PushPayload.THREAD_ID] ?: return false
+        val tag = tagOf(data)
         val pending = PendingIntent.getActivity(
             context,
-            tag.hashCode(),
-            tapIntent(context, data),
+            0,
+            tapIntent(context, data, tag),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

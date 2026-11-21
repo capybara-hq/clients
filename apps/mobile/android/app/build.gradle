@@ -6,12 +6,11 @@ def brandProperties = new Properties()
 file("../brand.properties").withInputStream { brandProperties.load(it) }
 
 // Push channels (core spec §9.2), switched on per brand by apply-brand through brand.properties:
-//   pushFcm=true          applies the google-services plugin (needs app/google-services.json)
-//                         and enables the FCM service;
-//   jpushAppKey=<appKey>  the JPush app key; non-empty enables the JPush components.
-// Absent (the official build): no google-services plugin, every push component disabled, and
-// JPush never initialised (PushChannels reads BuildConfig.JPUSH_APPKEY). The SDKs are always on
-// the classpath so the module compiles the same way for every brand.
+//   pushFcm=true          FCM: Firebase Messaging and Play services, src/fcm (code + manifest),
+//                         and the google-services plugin (needs app/google-services.json);
+//   jpushAppKey=<appKey>  JPush: the JPush SDK and src/jpush (code + manifest).
+// A channel that is off compiles src/fcmOff or src/jpushOff instead (empty stand-ins), so the
+// official build (neither key) contains no push SDK class, component or permission (ruling R20).
 def pushFcm = brandProperties.getProperty("pushFcm", "false") == "true"
 def jpushAppKey = brandProperties.getProperty("jpushAppKey", "").trim()
 if (pushFcm) {
@@ -28,13 +27,15 @@ android {
         resValue "string", "title_activity_main", brandProperties.getProperty("appName")
         manifestPlaceholders = [
             brandScheme: brandProperties.getProperty("scheme"),
-            pushFcmEnabled: pushFcm.toString(),
-            pushJpushEnabled: (!jpushAppKey.isEmpty()).toString(),
-            // The JPush SDK's own manifest reads these three.
-            JPUSH_PKGNAME: brandProperties.getProperty("applicationId"),
-            JPUSH_APPKEY: jpushAppKey,
-            JPUSH_CHANNEL: "developer-default",
         ]
+        if (!jpushAppKey.isEmpty()) {
+            // The JPush SDK's own manifest reads these three.
+            manifestPlaceholders += [
+                JPUSH_PKGNAME: brandProperties.getProperty("applicationId"),
+                JPUSH_APPKEY: jpushAppKey,
+                JPUSH_CHANNEL: "developer-default",
+            ]
+        }
         // The only scheme a sign-in callback may use (AuthSession.kt).
         buildConfigField "String", "BRAND_SCHEME", "\"${brandProperties.getProperty("scheme")}\""
         // Which push channels this build carries (PushChannels.kt).
@@ -63,6 +64,12 @@ android {
     // fixture (apps/mobile/test/fixtures/sign-in-block.json) ship in the test APK's assets.
     sourceSets {
         androidTest.assets.srcDirs += ['../../testpages', '../../test/fixtures']
+        // The push channels (see the top): the real one or its empty stand-in, and the real one's
+        // JVM tests.
+        main.java.srcDirs += [pushFcm ? 'src/fcm/java' : 'src/fcmOff/java']
+        main.java.srcDirs += [jpushAppKey.isEmpty() ? 'src/jpushOff/java' : 'src/jpush/java']
+        if (pushFcm) test.java.srcDirs += ['src/testFcm/java']
+        if (!jpushAppKey.isEmpty()) test.java.srcDirs += ['src/testJpush/java']
     }
     buildFeatures {
         buildConfig = true
@@ -106,12 +113,16 @@ dependencies {
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     // The browser sheet (Custom Tabs) for other origins and new windows.
     implementation "androidx.browser:browser:$androidxBrowserVersion"
-    // Push: FCM, Google Play services availability, and the JPush aggregator SDK (push/).
-    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
-    implementation "com.google.android.gms:play-services-base:$playServicesBaseVersion"
-    implementation "cn.jiguang.sdk:jpush:$jpushVersion"
-    // Pinned: the JPush POM asks for jcore [1.0.0,).
-    implementation "cn.jiguang.sdk:jcore:$jcoreVersion"
+    // Push SDKs, only for the channels the brand carries (see the top).
+    if (pushFcm) {
+        implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
+        implementation "com.google.android.gms:play-services-base:$playServicesBaseVersion"
+    }
+    if (!jpushAppKey.isEmpty()) {
+        implementation "cn.jiguang.sdk:jpush:$jpushVersion"
+        // Pinned: the JPush POM asks for jcore [1.0.0,).
+        implementation "cn.jiguang.sdk:jcore:$jcoreVersion"
+    }
     testImplementation "junit:junit:$junitVersion"
     // The real org.json for JVM tests that read the shared vector files (android.jar's is a stub).
     testImplementation "org.json:json:20250517"
@@ -119,6 +130,14 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+}
+
+// Each carried channel's manifest (its service or receiver, SDK settings) merges over main's.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        if (pushFcm) variant.sources.manifests.addStaticManifestFile("src/fcm/AndroidManifest.xml")
+        if (!jpushAppKey.isEmpty()) variant.sources.manifests.addStaticManifestFile("src/jpush/AndroidManifest.xml")
+    }
 }
 
 apply from: 'capacitor.build.gradle'

@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
         android:allowBackup="true"
@@ -55,74 +54,8 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
-        <!-- Push (push/, core spec §9). Each channel's components are on only in a build that
-             carries it (app/build.gradle: pushFcmEnabled, pushJpushEnabled from brand.properties);
-             the official build carries none. -->
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="capybara-default" />
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_stat_push" />
-        <!-- No FCM token before the person turns notifications on (PushChannels.fcmToken). -->
-        <meta-data
-            android:name="firebase_messaging_auto_init_enabled"
-            android:value="false" />
-        <service
-            android:name=".push.FcmService"
-            android:enabled="${pushFcmEnabled}"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-        <!-- JPush's callbacks (registration id, foreground, taps). -->
-        <receiver
-            android:name=".push.AggregatorReceiver"
-            android:enabled="${pushJpushEnabled}"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="cn.jpush.android.intent.RECEIVER_MESSAGE" />
-                <category android:name="${applicationId}" />
-            </intent-filter>
-        </receiver>
-
-        <!-- The SDKs' own components, off where the channel is not carried. -->
-        <provider android:name="com.google.firebase.provider.FirebaseInitProvider"
-            android:authorities="${applicationId}.firebaseinitprovider"
-            android:enabled="${pushFcmEnabled}" tools:replace="android:enabled" />
-        <service android:name="com.google.firebase.messaging.FirebaseMessagingService"
-            android:enabled="${pushFcmEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="com.google.firebase.iid.FirebaseInstanceIdReceiver"
-            android:enabled="${pushFcmEnabled}" tools:replace="android:enabled" />
-        <activity android:name="cn.jpush.android.ui.PopWinActivity"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <activity android:name="cn.jpush.android.ui.PushActivity"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <service android:name="cn.jpush.android.service.PushService"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="cn.jpush.android.service.PushReceiver"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="cn.jpush.android.service.AlarmReceiver"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="cn.jpush.android.service.SchedulerReceiver"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <provider android:name="cn.jpush.android.service.DataProvider"
-            android:authorities="${applicationId}.DataProvider"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <activity android:name="cn.jpush.android.service.JNotifyActivity"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <activity android:name="cn.jpush.android.service.JLocalNotifyActivity"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="cn.jpush.android.service.JLocalNotifyReceiver"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <activity android:name="cn.android.service.JTransitActivity"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <receiver android:name="cn.jpush.android.asus.AsusPushMessageReceiver"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
-        <provider android:name="cn.jpush.android.service.InitProvider"
-            android:authorities="${applicationId}.jiguang.InitProvider"
-            android:enabled="${pushJpushEnabled}" tools:replace="android:enabled" />
+        <!-- Push (push/, core spec §9): FCM's and JPush's components come from src/fcm and
+             src/jpush, merged only for a brand that carries the channel (app/build.gradle). -->
     </application>
 
     <!-- Permissions -->
@@ -130,16 +63,4 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Push banners on Android 13+ (asked in context by push@1, never at launch). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- The JPush SDK asks for these for features the app does not use (location, device ids,
-         storage, the package list, badges): never in any build. -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:node="remove" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" tools:node="remove" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
-    <uses-permission android:name="com.oplus.notification.permission.BADGE_DIGITAL" tools:node="remove" />
 </manifest>

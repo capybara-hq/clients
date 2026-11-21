@@ -3,9 +3,6 @@ package com.capybarahq.shell.push
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import cn.jpush.android.api.NotificationMessage
-import com.google.android.gms.common.ConnectionResult
-import com.google.firebase.messaging.RemoteMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -15,12 +12,17 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-// Robolectric for intents and bundles. Without the app's merged manifest (no
-// includeAndroidResources): it would register the JPush SDK's receivers, whose obfuscated
-// bytecode the JVM refuses to verify.
+// Robolectric for intents and bundles. The SDK-bound mappings (RemoteMessage, JPush's
+// NotificationMessage) are tested in src/testFcm and src/testJpush, compiled with their channel.
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PushModuleTest {
+    // ConnectionResult codes (Play services is not on the classpath without FCM).
+    private val SUCCESS = 0
+    private val SERVICE_MISSING = 1
+    private val SERVICE_VERSION_UPDATE_REQUIRED = 2
+    private val SERVICE_DISABLED = 3
+    private val SERVICE_INVALID = 9
     private val origin = "https://cap.example"
     private val data = mapOf("origin" to origin, "path" to "/chat/c1?org=o1", "threadId" to "c1")
 
@@ -29,28 +31,28 @@ class PushModuleTest {
     @Test
     fun fcmNeedsTheBuildFirebaseAndUsablePlayServices() {
         val both = PushBuild(fcm = true, jpushAppKey = "key")
-        assertTrue(PushChannels.available(PushProviders.FCM, both, ConnectionResult.SUCCESS, firebaseReady = true))
-        assertFalse(PushChannels.available(PushProviders.FCM, both, ConnectionResult.SERVICE_MISSING, true))
-        assertFalse(PushChannels.available(PushProviders.FCM, both, ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED, true))
-        assertFalse(PushChannels.available(PushProviders.FCM, both, ConnectionResult.SERVICE_DISABLED, true))
-        assertFalse(PushChannels.available(PushProviders.FCM, both, ConnectionResult.SUCCESS, firebaseReady = false))
+        assertTrue(PushChannels.available(PushProviders.FCM, both, SUCCESS, firebaseReady = true))
+        assertFalse(PushChannels.available(PushProviders.FCM, both, SERVICE_MISSING, true))
+        assertFalse(PushChannels.available(PushProviders.FCM, both, SERVICE_VERSION_UPDATE_REQUIRED, true))
+        assertFalse(PushChannels.available(PushProviders.FCM, both, SERVICE_DISABLED, true))
+        assertFalse(PushChannels.available(PushProviders.FCM, both, SUCCESS, firebaseReady = false))
         val noFcm = PushBuild(fcm = false, jpushAppKey = "key")
-        assertFalse(PushChannels.available(PushProviders.FCM, noFcm, ConnectionResult.SUCCESS, true))
+        assertFalse(PushChannels.available(PushProviders.FCM, noFcm, SUCCESS, true))
     }
 
     @Test
     fun jpushNeedsOnlyTheBuildAppKey() {
-        assertTrue(PushChannels.available(PushProviders.JPUSH, PushBuild(false, "key"), ConnectionResult.SERVICE_MISSING, false))
-        assertTrue(PushChannels.available(PushProviders.JPUSH, PushBuild(true, "key"), ConnectionResult.SUCCESS, true))
-        assertFalse(PushChannels.available(PushProviders.JPUSH, PushBuild(true, ""), ConnectionResult.SERVICE_MISSING, true))
-        assertFalse(PushChannels.available("push-apns", PushBuild(true, "key"), ConnectionResult.SUCCESS, true))
+        assertTrue(PushChannels.available(PushProviders.JPUSH, PushBuild(false, "key"), SERVICE_MISSING, false))
+        assertTrue(PushChannels.available(PushProviders.JPUSH, PushBuild(true, "key"), SUCCESS, true))
+        assertFalse(PushChannels.available(PushProviders.JPUSH, PushBuild(true, ""), SERVICE_MISSING, true))
+        assertFalse(PushChannels.available("push-apns", PushBuild(true, "key"), SUCCESS, true))
     }
 
     @Test
     fun theOfficialBuildCarriesNoChannelAndNeverStartsJPush() {
         val official = PushBuild(fcm = false, jpushAppKey = "")
-        assertFalse(PushChannels.available(PushProviders.FCM, official, ConnectionResult.SUCCESS, true))
-        assertFalse(PushChannels.available(PushProviders.JPUSH, official, ConnectionResult.SERVICE_MISSING, false))
+        assertFalse(PushChannels.available(PushProviders.FCM, official, SUCCESS, true))
+        assertFalse(PushChannels.available(PushProviders.JPUSH, official, SERVICE_MISSING, false))
         assertFalse(PushChannels.startJPushAtLaunch(official, chosen = true))
     }
 
@@ -63,43 +65,18 @@ class PushModuleTest {
 
     @Test
     fun onlySuccessIsUsablePlayServices() {
-        assertTrue(PlayServices.usable(ConnectionResult.SUCCESS))
-        assertFalse(PlayServices.usable(ConnectionResult.SERVICE_MISSING))
-        assertFalse(PlayServices.usable(ConnectionResult.SERVICE_INVALID))
+        assertTrue(PlayServices.usable(SUCCESS))
+        assertFalse(PlayServices.usable(SERVICE_MISSING))
+        assertFalse(PlayServices.usable(SERVICE_INVALID))
     }
 
     // ---- The data map ----
 
     @Test
-    fun anFcmMessageGivesItsDataKeysAndItsNotificationText() {
-        val bundle = Bundle().apply {
-            for ((k, v) in data) putString(k, v)
-            putString("google.c.a.e", "1")
-            putString("vendor", "x")
-            putString("gcm.n.e", "1")
-            putString("gcm.n.title", "Helper")
-            putString("gcm.n.body", "needs your approval")
-        }
-        val out = RemoteMessage(bundle).pushData()
-        assertEquals(data + mapOf("title" to "Helper", "body" to "needs your approval"), out)
-    }
-
-    @Test
-    fun anFcmDataMessageFallsBackToTheDataTitleAndBody() {
-        val message = RemoteMessage.Builder("sender@fcm.googleapis.com")
-            .setData(data + mapOf("title" to "T", "body" to "B", "extra" to "x"))
-            .build()
-        assertEquals(data + mapOf("title" to "T", "body" to "B"), message.pushData())
-    }
-
-    @Test
-    fun aJPushNotificationGivesItsExtrasTitleAndContent() {
-        val message = NotificationMessage().apply {
-            notificationTitle = "Helper"
-            notificationContent = "finished"
-            notificationExtras = """{"origin":"$origin","path":"/chat/c1?org=o1","threadId":"c1","collapseId":"x","n":1}"""
-        }
-        assertEquals(data + mapOf("title" to "Helper", "body" to "finished"), message.pushData())
+    fun fcmFieldsKeepOnlyTheDataKeysAndPreferTheNotificationText() {
+        val raw = data + mapOf("title" to "dataTitle", "body" to "dataBody", "google.c.a.e" to "1", "x" to "y")
+        assertEquals(data + mapOf("title" to "Helper", "body" to "finished"), PushPayload.fromFcm(raw, "Helper", "finished"))
+        assertEquals(data + mapOf("title" to "dataTitle", "body" to "dataBody"), PushPayload.fromFcm(raw, null, null))
     }
 
     @Test
@@ -132,6 +109,19 @@ class PushModuleTest {
         val tap = tapOf(intent)
         assertTrue(tap is PushIntents.Tap.Own)
         assertEquals(data + mapOf("title" to "T"), tap?.data)
+    }
+
+    @Test
+    fun bannersOfDifferentThreadsNeverShareAPendingIntent() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val a = PushNotifications.tapIntent(context, data)
+        val b = PushNotifications.tapIntent(context, data + mapOf("threadId" to "c2"))
+        assertFalse(a.filterEquals(b))
+        assertTrue(a.filterEquals(PushNotifications.tapIntent(context, data + mapOf("title" to "newer"))))
+        assertEquals("c1", PushNotifications.tagOf(data))
+        assertEquals(PushNotifications.DEFAULT_TAG, PushNotifications.tagOf(data - "threadId"))
+        // The tap data URI is not mistaken for Huawei's JSON.
+        assertTrue(tapOf(a) is PushIntents.Tap.Own)
     }
 
     @Test

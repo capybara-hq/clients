@@ -1,8 +1,8 @@
 // FCM's callbacks (`push-fcm`): a rotated token, and a message the OS did not show. The kernel's
 // FCM messages carry a notification, so with the app in the background the OS shows them itself
 // and a tap opens MainActivity with the data as extras (PushIntents); only a message that comes
-// while the app is on screen reaches here, and goes to the runtime as a foreground push. Enabled
-// only in builds that carry FCM (AndroidManifest.xml, `pushFcmEnabled`).
+// while the app is on screen reaches here, and goes to the runtime as a foreground push. Compiled
+// only into builds that carry FCM (src/fcm, app/build.gradle).
 
 package com.capybarahq.shell.push
 

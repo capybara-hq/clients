@@ -3,21 +3,20 @@
 // registration uses is the runtime's choice (`pickAndroidProvider`); native only answers whether a
 // channel can give a token and fetches it.
 //
-// Consent (PIPL, JPush's compliance guide): JPush is initialised only when the person turns
-// notifications on and the runtime picked it (the first `token("push-jpush")`), never at launch
-// before that; after that it starts with the app so its own connection carries pushes, until the
-// runtime picks FCM. FCM's automatic token is off (manifest) until the first `token("push-fcm")`.
-// A build without a channel (brand.properties, app/build.gradle) never touches its SDK.
+// Consent (PIPL, JPush's compliance guide): JPush's collection is held off at launch and JPush is
+// initialised only when the person turns notifications on and the runtime picked it (the first
+// `token("push-jpush")`); after that it starts with the app so its own connection carries pushes,
+// until the runtime picks FCM, which stops it. FCM's automatic token is off (src/fcm manifest)
+// until the first `token("push-fcm")`. The SDK calls live in FcmChannel / JPushChannel, compiled
+// from src/fcm and src/jpush only for a brand that carries the channel (app/build.gradle); other
+// builds compile the empty stand-ins and contain no push SDK.
 
 package com.capybarahq.shell.push
 
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import cn.jpush.android.api.JPushInterface
 import com.capybarahq.shell.BuildConfig
-import com.google.firebase.FirebaseApp
-import com.google.firebase.messaging.FirebaseMessaging
 
 /** The channels this build carries (brand.properties through BuildConfig). */
 data class PushBuild(val fcm: Boolean, val jpushAppKey: String) {
@@ -26,6 +25,14 @@ data class PushBuild(val fcm: Boolean, val jpushAppKey: String) {
     companion object {
         fun current(): PushBuild = PushBuild(BuildConfig.PUSH_FCM, BuildConfig.JPUSH_APPKEY.trim())
     }
+}
+
+/** Google Play services: FCM works only where they do (core spec §9.2). */
+object PlayServices {
+    /** ConnectionResult.SUCCESS; an update or repair the person would have to make is "absent". */
+    const val SUCCESS = 0
+
+    fun usable(code: Int): Boolean = code == SUCCESS
 }
 
 object PushChannels {
@@ -49,26 +56,36 @@ object PushChannels {
     /** JPush starts with the app only in a build that carries it and after the runtime picked it. */
     fun startJPushAtLaunch(build: PushBuild, chosen: Boolean): Boolean = build.jpush && chosen
 
-    fun firebaseReady(context: Context): Boolean = try {
-        FirebaseApp.getApps(context).isNotEmpty()
-    } catch (_: Exception) {
-        false
-    }
+    fun available(context: Context, provider: String): Boolean = available(
+        provider,
+        PushBuild.current(),
+        FcmChannel.playServicesCode(context),
+        FcmChannel.firebaseReady(context),
+    )
 
-    fun available(context: Context, provider: String): Boolean =
-        available(provider, PushBuild.current(), PlayServices.check(context), firebaseReady(context))
+    fun googlePlayServices(context: Context): Boolean = PlayServices.usable(FcmChannel.playServicesCode(context))
 
-    /** At plugin load: JPush again when the person turned push on through it before. */
+    /**
+     * At launch (MainActivity.onCreate): in a JPush build, JPush again when the person turned push
+     * on through it before, else its collection held off.
+     */
     fun onLaunch(context: Context) {
+        val build = PushBuild.current()
+        if (!build.jpush) return
         val chosen = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(JPUSH_CHOSEN, false)
-        if (startJPushAtLaunch(PushBuild.current(), chosen)) startJPush(context)
+        if (startJPushAtLaunch(build, chosen)) JPushChannel.start(context) else JPushChannel.holdCollection(context)
     }
 
     /** The token of [provider], or null when the channel cannot give one. Calls back on any thread. */
     fun token(context: Context, provider: String, done: (String?) -> Unit) {
         if (!available(context, provider)) return done(null)
         when (provider) {
-            PushProviders.FCM -> fcmToken(context, done)
+            PushProviders.FCM -> {
+                remember(context, jpush = false)
+                // FCM chosen after JPush ran: JPush stops so one phone does not get both.
+                if (PushBuild.current().jpush) JPushChannel.stop(context)
+                FcmChannel.token(done)
+            }
             PushProviders.JPUSH -> jpushToken(context, done)
             else -> done(null)
         }
@@ -78,30 +95,12 @@ object PushChannels {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(JPUSH_CHOSEN, jpush).apply()
     }
 
-    private fun fcmToken(context: Context, done: (String?) -> Unit) {
-        try {
-            remember(context, jpush = false)
-            val messaging = FirebaseMessaging.getInstance()
-            // From now on FCM keeps the token fresh on its own (onNewToken).
-            messaging.isAutoInitEnabled = true
-            messaging.token.addOnCompleteListener { task ->
-                done(if (task.isSuccessful) task.result?.takeIf { it.isNotEmpty() } else null)
-            }
-        } catch (_: Exception) {
-            done(null)
-        }
-    }
-
-    private fun startJPush(context: Context) {
-        JPushInterface.init(context.applicationContext)
-    }
-
     private fun jpushToken(context: Context, done: (String?) -> Unit) {
         try {
             remember(context, jpush = true)
-            startJPush(context)
-            val id = JPushInterface.getRegistrationID(context.applicationContext)
-            if (!id.isNullOrEmpty()) return done(id)
+            JPushChannel.start(context)
+            val id = JPushChannel.registrationId(context)
+            if (id != null) return done(id)
         } catch (_: Exception) {
             return done(null)
         }
