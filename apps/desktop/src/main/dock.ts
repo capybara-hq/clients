@@ -23,7 +23,7 @@ export interface DockIconDeps {
   fetch: typeof fetch;
   /** `app.dock.setIcon(nativeImage.createFromBuffer(png))`. */
   setIcon(png: Uint8Array): void;
-  /** Puts the Capybara icon back (only called after a custom icon was set). */
+  /** Puts the Capybara icon back (after a custom icon was set, and from `init`). */
   restoreDefault(): void;
   readCache(hash: string): Uint8Array | null;
   writeCache(hash: string, png: Uint8Array): void;
@@ -123,6 +123,18 @@ export function createDockIcon(deps: DockIconDeps) {
   let seq = 0;
 
   return {
+    /**
+     * Shows the Capybara icon explicitly, for an unpackaged app whose Dock otherwise shows the
+     * generic Electron icon. Never overrides a custom platform icon already set.
+     */
+    init(): void {
+      if (custom) return;
+      try {
+        deps.restoreDefault();
+      } catch (err) {
+        deps.log?.("could not set the Dock icon", err);
+      }
+    },
     /** Re-evaluates the rule for the current profiles; a later call supersedes an earlier one. */
     async update(profiles: readonly Profile[]): Promise<void> {
       const mine = ++seq;
