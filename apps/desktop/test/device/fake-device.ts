@@ -91,7 +91,10 @@ export const threeConnections = (
   unreadable: [],
 });
 
-/** `status --json` of a machine logged in to `url` (the old single-connection shape, which no reader accepts now). */
+/**
+ * `status --json` of a machine logged in to `url` (the old single-connection shape, which no
+ * reader accepts now).
+ */
 export const loggedIn = (over: Record<string, unknown> = {}) => ({
   loggedIn: true,
   url: "https://a.example.com/team",
