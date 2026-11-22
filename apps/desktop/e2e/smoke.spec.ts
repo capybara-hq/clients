@@ -428,9 +428,20 @@ test("the same when the logout completes after the /login navigation", async () 
   // and the expired page covers the window until the completion ends the sign-out.
   fake.holdLogoutBody = true;
   const before = fake.requests.length;
-  await page.locator("#logout").click();
+  // `noWaitAfter`: the click starts the /login navigation, which the shell stops in `will-navigate`;
+  // a stopped navigation neither commits nor fails for Playwright, so when it is requested before
+  // the click returns, the click's wait for it ends only when the window closes, i.e. after the
+  // release below: a deadlock. The waits that follow are on the outcome instead.
+  await page.locator("#logout").click({ noWaitAfter: true });
   try {
     await expect.poll(overlayUrls).toEqual(["app://local/main-error.html"]);
+    // The order this test is about: the /login came first, so the expired page covers a window
+    // whose profile is still signed in until the held completion arrives.
+    const profiles = JSON.parse(readFileSync(join(userData, "app", "profiles.json"), "utf8")) as {
+      profiles: { base: string; signedIn: boolean }[];
+    };
+    expect(profiles.profiles.find((p) => p.base === fake.base)?.signedIn).toBe(true);
+    expect(fake.logouts).toBe(2);
   } finally {
     fake.releaseLogout();
   }
