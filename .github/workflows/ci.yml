@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # the default three, plus ready_for_review: a draft runs nothing until it is marked ready
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # A new push to a PR cancels its older run; runs on main are never cancelled.
 concurrency:
@@ -18,6 +20,8 @@ permissions: {}
 # every PR and every push to main, with no diff-based planning.
 jobs:
   lint:
+    # Drafts run nothing (CONTRIBUTING.md of capybara-hq/.github); a draft cannot merge.
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,6 +39,7 @@ jobs:
       - run: pnpm --filter @capybara-hq/mobile check:brand
 
   typecheck:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,6 +55,7 @@ jobs:
       - run: pnpm typecheck
 
   test:
+    if: ${{ !github.event.pull_request.draft }}
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
@@ -72,6 +78,7 @@ jobs:
   # The desktop app against a fake deployment (apps/desktop/e2e). Electron's postinstall stays off
   # for the install above (the unit-test jobs stay fast); `pnpm e2e` fetches the binary itself.
   e2e:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-latest
     permissions:
       contents: read
@@ -98,6 +105,7 @@ jobs:
   # The mobile app's native suites (apps/mobile): XCTest and XCUITest on an iPhone simulator.
   # scripts/ios-test.sh keeps the runner's Xcode unless it has no usable iPhone simulator.
   mobile-ios:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-latest
     permissions:
       contents: read
@@ -120,6 +128,7 @@ jobs:
 
   # JVM unit tests, then the instrumented tests on an emulator (KVM on the Linux runner).
   mobile-android:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -167,7 +176,7 @@ jobs:
           script: pnpm --filter @capybara-hq/mobile test:android:device
 
   commitlint:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -192,7 +201,7 @@ jobs:
   # passes) outside pull requests. always(): report failure when an upstream job failed or was
   # cancelled instead of being skipped (skipped = passed).
   ci-ok:
-    if: always()
+    if: ${{ always() && !github.event.pull_request.draft }}
     needs: [lint, typecheck, test, e2e, mobile-ios, mobile-android, commitlint]
     runs-on: ubuntu-latest
     permissions: {}

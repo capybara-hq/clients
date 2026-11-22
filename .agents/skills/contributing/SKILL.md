@@ -1,14 +1,11 @@
 ---
-
 name: contributing
 description: "Carries day-to-day work in a capybara-hq repository from an issue to a PR ready for a maintainer: start (check and claim the issue, create a worktree branch from upstream main), verify (run pnpm verify and explain failures), open the PR (pre-check the issue gate, commit, push, create the PR with the right body, optional self-review) and address review (read review threads, fix, verify, push, reply, re-request review). Each action reaches its target state, doing missing earlier steps first. Use when the user says things like 'start on issue #N', 'work on #N', 'pick up #N', 'verify', 'run the checks', 'am I ready to push', 'open a PR', 'create the PR', 'submit this', 'address review', 'fix the review comments' or 'respond to feedback'."
-
 # Synced from capybara-hq/.github. Edit the source there, then run sync.
-
 metadata:
-source: capybara-hq/.github
-version: v2.0.0
-sha256: 2b62f2c6a576ad355993c1c1f4842bbc633f7aec97f92a27799bd4850accda92
+  source: capybara-hq/.github
+  version: v2.1.0
+  sha256: 85bdc76a4de88392e2d8d342215ab86a0dfcf1d5da46657e4e88445218773daa
 ---
 
 # Contributing
@@ -123,6 +120,13 @@ update it instead of creating another.
    - core developer: `gh pr create --repo capybara-hq/<repo> --base main --head <branch> --title "<title>" --body-file <file>`
 
    The title is the Conventional Commits subject of the change. Give the user the PR URL.
+
+   **Draft while it is still changing.** If more commits are coming before it is ready for
+   review (work in progress, waiting on another PR, a fix still being tried), add `--draft`.
+   CI runs nothing on a draft, so each push does not take the organization's shared runners;
+   when it is ready, `pnpm verify` passes and the user agrees, run
+   `gh pr ready <number> --repo capybara-hq/<repo>`, which starts CI. A draft cannot be merged.
+   A PR that is finished when it is opened is created ready, without `--draft`.
 
 ### PR body
 
