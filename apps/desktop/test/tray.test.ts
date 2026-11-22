@@ -20,9 +20,10 @@ const actions = (): TrayActions => ({
 const state = {
   locale: "zh" as const,
   profiles: [
-    { id: "p1", name: "Example" },
-    { id: "p2", name: "Other" },
+    { id: "p1", name: "Example", open: false },
+    { id: "p2", name: "Other", open: false },
   ],
+  // The app menu's current profile (退出登录 / 移除); the tray shows no current one.
   activeId: "p2",
   lockDeployments: false,
 };
@@ -53,21 +54,29 @@ describe("the tray menu model", () => {
     ]);
   });
 
-  test("the active profile is checked and a click shows that profile", () => {
+  test("no platform is checked; an open one is marked in its label; a click shows it", () => {
     const a = actions();
-    const items = trayMenuModel(state, a);
-    expect(items.map((i) => i.checked)).toEqual([
-      false,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
+    const open = {
+      ...state,
+      profiles: [
+        { id: "p1", name: "Example", open: true },
+        { id: "p2", name: "Other", open: false },
+      ],
+    };
+    const items = trayMenuModel(open, a);
+    // Several platforms can be open at once: no radio, no check (the last used one included).
+    expect(items.some((i) => i.type === "radio" || i.checked !== undefined)).toBe(false);
+    expect(labels(items).slice(0, 2)).toEqual(["Example • 已打开", "Other"]);
+    expect(labels(trayMenuModel({ ...open, locale: "en" }, a)).slice(0, 2)).toEqual([
+      "Example • Open",
+      "Other",
     ]);
     items[0]?.click?.({ checked: false });
-    expect(a.showProfile).toHaveBeenCalledWith("p1");
+    items[1]?.click?.({ checked: false });
+    expect(vi.mocked(a.showProfile).mock.calls).toEqual([["p1"], ["p2"]]);
+    // 移除平台 lists the plain names.
+    const remove = platformItems(open, { ...a, removeProfile: vi.fn() }).at(-1);
+    expect(labels(remove?.submenu ?? [])).toEqual(["Example…", "Other…"]);
   });
 
   test("the actions are wired to their entries", () => {
@@ -181,6 +190,14 @@ describe("the tray controller", () => {
     });
     return { controller, tray, createTray, buildMenu, a };
   }
+
+  test("an update after a window opened marks that platform in the rebuilt menu", () => {
+    const { controller, buildMenu } = setup();
+    controller.update(state);
+    controller.update({ ...state, profiles: [{ id: "p1", name: "Example", open: true }] });
+    const last = buildMenu.mock.calls.at(-1)?.[0] ?? [];
+    expect(labels(last)[0]).toBe("Example • 已打开");
+  });
 
   test("creates the tray once and rebuilds the menu on every update", () => {
     const { controller, tray, createTray, buildMenu } = setup();

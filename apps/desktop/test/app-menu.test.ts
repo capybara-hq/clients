@@ -12,8 +12,8 @@ const actions = () => ({
 const state: PlatformMenuState = {
   locale: "zh",
   profiles: [
-    { id: "p1", name: "Example", signedIn: true },
-    { id: "p2", name: "Other", signedIn: false },
+    { id: "p1", name: "Example", signedIn: true, open: false },
+    { id: "p2", name: "Other", signedIn: false, open: false },
   ],
   activeId: "p1",
   lockDeployments: false,
@@ -43,16 +43,21 @@ describe("the 「平台」 menu (spec 6.9)", () => {
     ]);
   });
 
-  test("radio items, the current one checked, ⌘1…⌘9 for the first nine", () => {
+  test("plain items, none checked, open ones marked, ⌘1…⌘9 for the first nine", () => {
     const many = Array.from({ length: 11 }, (_, i) => ({
       id: `p${i}`,
       name: `P${i}`,
       signedIn: true,
+      open: i === 3 || i === 5,
     }));
     const items = platformMenuTemplate({ ...state, profiles: many, activeId: "p3" }, actions());
-    const radios = items.filter((i) => i.type === "radio");
-    expect(radios).toHaveLength(11);
-    expect(radios.map((i) => i.accelerator)).toEqual([
+    const entries = items.slice(0, 11);
+    // Several platforms can be open at once: the current (last used) one is not checked either.
+    expect(items.some((i) => i.type === "radio" || i.checked !== undefined)).toBe(false);
+    expect(entries.map((i) => i.label)).toEqual(
+      many.map((p) => (p.open ? `${p.name} • 已打开` : p.name)),
+    );
+    expect(entries.map((i) => i.accelerator)).toEqual([
       "CmdOrCtrl+1",
       "CmdOrCtrl+2",
       "CmdOrCtrl+3",
@@ -65,7 +70,8 @@ describe("the 「平台」 menu (spec 6.9)", () => {
       undefined,
       undefined,
     ]);
-    expect(radios.map((i) => i.checked)).toEqual(radios.map((_, i) => i === 3));
+    // The current profile is still what 退出登录 names.
+    expect(byLabel(items, "退出登录 P3…")).toBeDefined();
   });
 
   test("a profile item shows that profile; the others act on the current one", () => {

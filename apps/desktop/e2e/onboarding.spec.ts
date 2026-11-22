@@ -230,8 +230,17 @@ test("a shell dialog opens as its own window; cancel keeps the profile", async (
   // It is a window of its own, not an overlay of the small window.
   expect(await h.windowUrls()).toEqual(expect.arrayContaining([SMALL, DIALOG]));
   expect(await h.overlayUrls()).toEqual([]);
-  // The first button is cancel.
-  await dialog.locator(".dlg-actions button").first().click();
+  // The first button is cancel. Its answer closes the dialog window, and the close can land before
+  // Playwright gets the click's input acknowledgement ("Target page ... has been closed"): a click
+  // that ends with the dialog closed is the expected outcome, any other error still fails.
+  await dialog
+    .locator(".dlg-actions button")
+    .first()
+    .click()
+    .catch((err: unknown) => {
+      if (!dialog.isClosed()) throw err;
+    });
+  await expect.poll(() => dialog.isClosed()).toBe(true);
   await expect.poll(() => h.windowUrls()).toEqual([SMALL]);
   expect(h.profiles().map((p) => p.base)).toEqual([good.base]);
   await expect(small.locator("h1")).toHaveText(/^(已退出|Signed out of) Fake Deployment$/);
