@@ -16,8 +16,8 @@ function header(name: string) {
 describe("the generated icons", () => {
   test.each([
     ["icon.png", 1024],
-    ["trayTemplate.png", 16],
-    ["trayTemplate@2x.png", 32],
+    ["trayTemplate.png", 22],
+    ["trayTemplate@2x.png", 44],
   ])("%s is a %i px RGBA PNG", (name, size) => {
     expect(header(name)).toEqual({
       signature: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],

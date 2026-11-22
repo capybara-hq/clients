@@ -748,7 +748,8 @@ function start(): void {
       },
     };
     const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
-    // trayTemplate.png and trayTemplate@2x.png: macOS picks the @2x by itself.
+    // trayTemplate.png (22 px) and trayTemplate@2x.png (44 px): macOS picks the @2x by itself and
+    // shows either at 22 pt (the @1x size), the menu bar height; no resize.
     const trayIcon = (() => {
       const file = iconFile("trayTemplate.png");
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
