@@ -70,7 +70,8 @@ pnpm --filter @capybara-hq/mobile test:android:device   # instrumented tests on 
 
 ## Work and commits
 
-- Changes reach `main` only through pull requests; the required status is `ci-ok`.
+- Changes reach `main` only through pull requests; the required status is `ci-ok`. Open a PR as a
+  draft while it is still changing: drafts run no CI, and marking the PR ready starts it.
 - Work in a worktree under `.worktrees/<branch>`; the main checkout stays on `main`.
 - Conventional Commits (checked by commitlint), body lines at most 100 characters. Apps are versioned
   by changesets (private packages are versioned, never published to npm).

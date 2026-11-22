@@ -1,14 +1,11 @@
 ---
-
 name: onboarding
 description: "Gets a person ready to contribute to a capybara-hq repository: runs pnpm doctor:env, explains and fixes what fails (only with the user's agreement), sets up the upstream remote or a fork, then gives a short tour of the repository, its rules and skills, the daily flow and open good first issues. Use on first contact with the repository, or when the user says things like 'set up', 'get me set up', 'getting started', 'onboard me', 'I'm new here', 'how do I contribute', 'check my environment' or 'why doesn't my setup work'."
-
 # Synced from capybara-hq/.github. Edit the source there, then run sync.
-
 metadata:
-source: capybara-hq/.github
-version: v2.0.0
-sha256: ca692e1be9123a7080ea1ccf797612b364e6ae66ace4823edc67ad9344a384d2
+  source: capybara-hq/.github
+  version: v2.1.0
+  sha256: bf24960f8535e1fdd674a7af6f21a9f9728a2344eeaad71e70cd196d7a50d5ee
 ---
 
 # Onboarding

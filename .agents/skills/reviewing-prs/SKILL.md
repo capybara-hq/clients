@@ -1,14 +1,11 @@
 ---
-
 name: reviewing-prs
 description: "Helps a maintainer review a pull request in a capybara-hq repository before merging: gathers the PR, diff, linked issue, author, CI and issue-linked status through gh without checking out or running the PR's code, checks the change against AGENTS.md and the skills of the areas it touches, gives a verdict (Ready to merge or Changes needed) with findings at file:line, and drafts a GitHub review with inline comments that is posted only after the maintainer confirms. Never merges. Use when the maintainer says things like 'review #N', 'review PR N', 'look at this PR', 'is #N ready to merge' or 'check this pull request'."
-
 # Synced from capybara-hq/.github. Edit the source there, then run sync.
-
 metadata:
-source: capybara-hq/.github
-version: v2.0.0
-sha256: 80631f57c205536a5e57e15d90ae23dd73a2df8da6e7d437cdefc8300bb636fa
+  source: capybara-hq/.github
+  version: v2.1.0
+  sha256: 7bc33464cd6bdacd30d4857939a600ea798d5e3412174dbeb45c9aecb899caed
 ---
 
 # Reviewing PRs
