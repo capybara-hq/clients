@@ -21,6 +21,8 @@ final class ProfileHostTests: XCTestCase {
         private let lock = NSLock()
         private var counts: [String: Int] = [:]
         let page: String
+        /// Called after each counted request, off the main thread.
+        var onRequest: (@Sendable (CountingServer) -> Void)?
 
         init(page: String) throws {
             self.page = page
@@ -43,6 +45,7 @@ final class ProfileHostTests: XCTestCase {
                     self.lock.lock()
                     self.counts[path, default: 0] += 1
                     self.lock.unlock()
+                    self.onRequest?(self)
                     let body = path == "/" ? self.page : "ok"
                     let reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nCache-Control: no-store\r\n"
                         + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
@@ -100,6 +103,13 @@ final class ProfileHostTests: XCTestCase {
         })();
         </script>
         """)
+        // The page's own requests are the event that it runs: the wait ends on the third tick of
+        // both loops, however long WebKit takes to start the page on a cold simulator.
+        let running = expectation(description: "the page's timer and fetch loop both ran three times")
+        running.assertForOverFulfill = false
+        server.onRequest = { server in
+            if server.count("/timer") >= 3, server.count("/loop") >= 3 { running.fulfill() }
+        }
         await server.start()
         defer { server.listener.cancel() }
 
@@ -110,8 +120,11 @@ final class ProfileHostTests: XCTestCase {
             state: ["insets": ["top": 0, "right": 0, "bottom": 0, "left": 0], "capabilities": [:], "events": [:]],
             blockRules: Self.rules
         ))
-        // In a window, so WebKit never throttles the page's timers for being offscreen.
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+        // In a window of the app's scene, so the page is visible and WebKit never throttles or
+        // suspends it for being hidden (a window without a scene is never on screen).
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first { $0 is UIWindowScene } as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 640)
         let container = try XCTUnwrap(host.view(for: "loop")?.superview)
         container.frame = window.bounds
         window.addSubview(container)
@@ -121,8 +134,14 @@ final class ProfileHostTests: XCTestCase {
             window.isHidden = true
         }
 
-        let running = try await waitFor(15) { server.count("/timer") >= 3 && server.count("/loop") >= 3 }
-        XCTAssertTrue(running, "page never ran: timer \(server.count("/timer")) loop \(server.count("/loop"))")
+        // The timeout only guards against a hang; a run that passes never waits for it.
+        if await XCTWaiter().fulfillment(of: [running], timeout: 120) != .completed {
+            let view = try XCTUnwrap(host.view(for: "loop"))
+            let state = try? await view.evaluateJavaScript("document.readyState + ' ' + document.visibilityState")
+            return XCTFail("page never ran: document \(server.count("/")) timer \(server.count("/timer")) "
+                + "loop \(server.count("/loop")); url \(view.url?.absoluteString ?? "nil") loading \(view.isLoading) "
+                + "state \(String(describing: state))")
+        }
 
         weak var view = host.view(for: "loop")
         host.close("loop")
