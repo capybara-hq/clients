@@ -66,6 +66,7 @@ pnpm --filter @capybara-hq/mobile test:ios:ui       # XCUITest (AppUITests)
 pnpm --filter @capybara-hq/mobile test:ios:all      # both, from one build-for-testing
 pnpm --filter @capybara-hq/mobile test:android      # JVM unit tests (after build + cap sync)
 pnpm --filter @capybara-hq/mobile test:android:device   # instrumented tests on a running emulator
+apps/mobile/scripts/android-device-test.sh           # the same as CI runs it (diagnostics on failure)
 ```
 
 ## Work and commits

@@ -7,7 +7,6 @@
 package com.capybarahq.shell
 
 import android.os.SystemClock
-import android.view.MotionEvent
 import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -183,13 +182,6 @@ class NavigationPageTest {
             assertTrue("${h.url()}", h.url()!!.startsWith(h.server.originA))
         }
 
-    private fun tap(view: ProfileWebView, fraction: Float) {
-        val location = IntArray(2)
-        instrumentation.runOnMainSync { view.getLocationOnScreen(location) }
-        val x = location[0] + view.width / 2f
-        val y = location[1] + view.height * fraction
-        val down = SystemClock.uptimeMillis()
-        instrumentation.sendPointerSync(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
-        instrumentation.sendPointerSync(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
-    }
+    private fun tap(view: ProfileWebView, fraction: Float) =
+        InputInjection.tap(instrumentation, view, yFraction = fraction)
 }
