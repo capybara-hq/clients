@@ -125,6 +125,14 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('apps/mobile/ios/**/Package.resolved') }}
       # One build-for-testing, then test-without-building for AppTests and AppUITests.
       - run: pnpm --filter @capybara-hq/mobile test:ios:all
+      # Each bundle's full xcodebuild output and result bundle (activities, screenshots, timings).
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() || cancelled()
+        with:
+          name: ios-test-results
+          retention-days: 7
+          path: apps/mobile/ios/test-results
+          if-no-files-found: ignore
 
   # JVM unit tests, then the instrumented tests on an emulator (KVM on the Linux runner).
   mobile-android:

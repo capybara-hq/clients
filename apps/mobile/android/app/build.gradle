@@ -102,6 +102,31 @@ android {
     }
 }
 
+// Robolectric's android-all runtime is a Gradle dependency, not a download made inside the test
+// JVM: Robolectric's own Maven fetch at test time failed intermittently on CI runners. Gradle
+// resolves it (cached, retried) before any test runs, a Sync task copies it into one directory, and
+// the JVM tests run Robolectric in offline mode against that directory. A missing or mismatched
+// jar fails the test with "Unable to locate dependency" instead of reaching the network.
+configurations {
+    robolectricRuntime {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+def syncRobolectricRuntime = tasks.register("syncRobolectricRuntime", Sync) {
+    from configurations.robolectricRuntime
+    into layout.buildDirectory.dir("robolectric-runtime")
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn syncRobolectricRuntime
+    inputs.files(configurations.robolectricRuntime).withPropertyName("robolectricRuntime")
+    def runtimeDir = layout.buildDirectory.dir("robolectric-runtime").get().asFile
+    systemProperty "robolectric.offline", "true"
+    systemProperty "robolectric.dependency.dir", runtimeDir.absolutePath
+}
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
@@ -132,6 +157,7 @@ dependencies {
     // The real org.json for JVM tests that read the shared vector files (android.jar's is a stub).
     testImplementation "org.json:json:20250517"
     testImplementation "org.robolectric:robolectric:$robolectricVersion"
+    robolectricRuntime "org.robolectric:android-all-instrumented:$robolectricAndroidAllVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

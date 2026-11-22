@@ -20,4 +20,9 @@ ext {
     jpushVersion = '6.3.0'
     jcoreVersion = '5.6.0'
     robolectricVersion = '4.17'
+    // The android-all runtime that Robolectric $robolectricVersion runs @Config(sdk = [34]) on (its
+    // DefaultSdkProvider: SDK 34 = 14-robolectric-10818077, preinstrumented i7). Gradle fetches it
+    // with the other dependencies and the JVM tests read it offline (app/build.gradle); bumping
+    // Robolectric or the tests' SDK level means updating this to the matching artifact.
+    robolectricAndroidAllVersion = '14-robolectric-10818077-i7'
 }
