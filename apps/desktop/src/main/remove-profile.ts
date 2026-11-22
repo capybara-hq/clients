@@ -1,7 +1,7 @@
 // Removing a platform (spec §6.3), from the app menu or the tray: a shell dialog (§7.4; cancel is
-// the default, the remove button is the danger one), the device question when this machine is connected to that deployment, then the
-// profile's windows close before its partition is cleared, so no window of a profile being removed
-// passes the IPC checks while its data goes. Not offered for managed profiles under
+// the default, the remove button is the danger one), the device question when this machine has
+// connections into that deployment, then the profile's windows close before its partition is
+// cleared, so no window of a profile being removed passes the IPC checks while its data goes. Not offered for managed profiles under
 // `lockDeployments`. Electron objects come in as parameters.
 import { type Locale, t } from "@capybara-hq/shell";
 import { dialogPlatformOf, platformLabel } from "./device/dialogs.ts";
@@ -22,7 +22,10 @@ export interface ProfileRemovalDeps {
   locale: Locale | ((profileId: string) => Locale);
   /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
   iconFor?: (profile: Profile) => string | undefined;
-  /** device@1's `beforeRemoveProfile`: asks whether to disconnect and log the device out. */
+  /**
+   * device@2's `beforeRemoveProfile`: when this machine has connections into the deployment, asks
+   * once whether to disconnect them and log them out.
+   */
   beforeRemoveDevice(profile: Profile, parent: unknown): Promise<void>;
   closeProfileWindows(profileId: string): void;
   /** `profiles.remove`: clears the partition, then forgets the profile. */

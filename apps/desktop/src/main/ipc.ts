@@ -1,7 +1,7 @@
 // The page boundary on the main side (mobile spec §9.4): every Shell environment message is checked
 // against the calling frame, capabilities are a registry of named functions (nothing generic), and
 // confirming calls need a user activation and run one at a time per profile; activation-only calls
-// need the activation alone. Event subscriptions (`device@1.onStatus`) are checked like calls and
+// need the activation alone. Event subscriptions (`device@2.onStatus`) are checked like calls and
 // delivered only to the subscribing document while it is the profile's top frame.
 import type { ShellCallError } from "@capybara-hq/plugin-sdk";
 import {
@@ -102,7 +102,7 @@ export interface CapabilityOptions<C = CallContext> {
    * (`signIn@1.start`, spec §8: it grants the page nothing).
    */
   activation?: string[];
-  /** Whether the profile is offered this capability now (`device@1` appears later). */
+  /** Whether the profile is offered this capability now (`device@2` appears later). */
   available?: (profile: Profile) => boolean;
   /** Event names and their sources; the page gets a subscribe function for each. */
   events?: Record<string, EventSource<C>>;

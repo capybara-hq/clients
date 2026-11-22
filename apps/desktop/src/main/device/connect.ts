@@ -1,13 +1,14 @@
 // 「连接本机」 (spec §9.1 – §9.3): a native confirmation, then the device program's own login on
 // the bundled Node, whose verification page opens in a child window of the profile's partition
-// (the signed-in person confirms there with `org=` preselected), then the login service. The
-// program writes its credential to its own file; this module only relays the login's JSON events,
-// which never carry it, and answers plain strings.
+// (the signed-in person confirms there with `org=` preselected), then the new connection's login
+// service. A login always adds a connection: every other connection of this machine, into this
+// deployment or another, is left as it is. The program writes its credential to its own file;
+// this module only relays the login's JSON events, which never carry it, and answers plain data.
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
 import type { DeviceDialogs } from "./dialogs.ts";
-import { failed, ID_PATTERN, isThisDeployment, originOf, readMachine } from "./machine.ts";
-import type { DeviceService } from "./service.ts";
+import { failed, ID_PATTERN, originOf } from "./machine.ts";
+import { type DeviceService, DeviceServiceError } from "./service.ts";
 
 /** The calling profile and its window (the parent of every dialog and of the child window). */
 export interface DeviceTarget {
@@ -27,10 +28,14 @@ export interface ConnectDeps {
   dialogs: DeviceDialogs;
   /** Opens `url` in a child window of the profile's partition above `target.window`. */
   openVerification(target: DeviceTarget, url: string): VerificationWindow;
-  /** After the machine changed (connected, disconnected): status listeners read it again. */
+  /** After the machine changed (a connection added): status listeners read it again. */
   onChanged?: () => void;
   log?: (message: string, err?: unknown) => void;
 }
+
+/** What `device@2.connect` answers when the connection could not be made. */
+export type ConnectError = "login_failed" | "service_failed" | "app_location";
+export type ConnectResult = "connected" | "cancelled" | { error: ConnectError };
 
 /**
  * The verification URL the login printed, with `org=<orgId>` set, only when it is on the profile's
@@ -49,14 +54,11 @@ export function verificationUrl(raw: string, profile: Profile, orgId: string): s
   return url.href;
 }
 
-function parseInput(input: unknown): { orgId: string; deviceId?: string } {
+function parseOrgId(input: unknown): string {
   if (typeof input !== "object" || input === null) throw failed();
-  const { orgId, deviceId } = input as Record<string, unknown>;
+  const { orgId } = input as Record<string, unknown>;
   if (typeof orgId !== "string" || !ID_PATTERN.test(orgId)) throw failed();
-  if (deviceId !== undefined && (typeof deviceId !== "string" || !ID_PATTERN.test(deviceId))) {
-    throw failed();
-  }
-  return { orgId, ...(deviceId !== undefined && { deviceId }) };
+  return orgId;
 }
 
 /** Throws failed unless the device command exited 0. */
@@ -65,25 +67,7 @@ export async function run(cli: DeviceCli, args: string[]): Promise<void> {
   if (code !== 0) throw failed();
 }
 
-/**
- * Ends whatever runs for the current login and forgets it on this machine: `service stop` while
- * the login service is loaded (a signalled service would be started again), then `logout`, which
- * also ends a runner started in a terminal. The device stays registered at its deployment.
- */
-export async function stopAndLogout(cli: DeviceCli): Promise<void> {
-  let loaded = false;
-  await cli(["service", "status", "--json"], {
-    onLine: (line) => {
-      if (typeof line === "object" && line !== null && (line as { loaded?: unknown }).loaded) {
-        loaded = true;
-      }
-    },
-  });
-  if (loaded) await run(cli, ["service", "stop"]);
-  await run(cli, ["logout"]);
-}
-
-type LoginOutcome = "done" | "closed" | "denied" | "failed";
+type LoginOutcome = { kind: "done"; deviceId: string } | { kind: "closed" | "denied" | "failed" };
 
 export function createConnect(deps: ConnectDeps) {
   const log = deps.log ?? (() => {});
@@ -115,7 +99,7 @@ export function createConnect(deps: ConnectDeps) {
           if (url === null) {
             // Never the URL itself: it carries the one-time code.
             log("the device login named a verification page on another origin; stopped");
-            finish("failed");
+            finish({ kind: "failed" });
             abort.abort();
             return;
           }
@@ -124,30 +108,32 @@ export function createConnect(deps: ConnectDeps) {
           opened.onClosed(() => {
             if (win !== opened) return; // closed by this module
             win = undefined;
-            finish("closed");
+            finish({ kind: "closed" });
             abort.abort();
           });
         } else if (ev.event === "done") {
-          finish("done");
+          // The new connection is named by its device id in every command that follows.
+          if (typeof ev.deviceId === "string" && ID_PATTERN.test(ev.deviceId)) {
+            finish({ kind: "done", deviceId: ev.deviceId });
+          } else {
+            log("the device login finished without a usable device id");
+            finish({ kind: "failed" });
+          }
           closeWindow();
         } else if (ev.event === "error") {
           const code = typeof ev.code === "string" ? ev.code : "";
-          finish(code === "device_sign_in.denied" ? "denied" : "failed");
+          finish({ kind: code === "device_sign_in.denied" ? "denied" : "failed" });
           log(`the device login failed (${/^[a-z0-9_.]{1,64}$/.test(code) ? code : "error"})`);
         }
       },
     });
     closeWindow();
-    if (outcome === "done" && result.code !== 0) return "failed";
-    return outcome ?? "failed";
+    if (outcome?.kind === "done" && result.code !== 0) return { kind: "failed" };
+    return outcome ?? { kind: "failed" };
   }
 
-  return async function connect(
-    target: DeviceTarget,
-    input: unknown,
-  ): Promise<"connected" | "cancelled"> {
-    // deviceId is accepted for the contract; the link page takes only org= today (core Task 8).
-    const { orgId } = parseInput(input);
+  return async function connect(target: DeviceTarget, input: unknown): Promise<ConnectResult> {
+    const orgId = parseOrgId(input);
     if (connecting) throw { code: "busy" };
     connecting = true;
     try {
@@ -157,32 +143,25 @@ export function createConnect(deps: ConnectDeps) {
     }
   };
 
-  async function connectOnce(
-    target: DeviceTarget,
-    orgId: string,
-  ): Promise<"connected" | "cancelled"> {
-    const machine = await readMachine(deps.cli);
-    // One runner, one deployment (spec §9.3): already here, nothing to do.
-    if (isThisDeployment(machine, target.profile)) return "connected";
-
+  async function connectOnce(target: DeviceTarget, orgId: string): Promise<ConnectResult> {
     if (!(await deps.dialogs.confirmConnect(target.window, target.profile))) return "cancelled";
-    if (machine.loggedIn) {
-      const other = originOf(machine.url) ?? machine.url;
-      if (!(await deps.dialogs.confirmDisconnectOther(target.window, other))) return "cancelled";
-      await stopAndLogout(deps.cli);
-      deps.onChanged?.();
-    }
 
     const outcome = await login(target, orgId);
-    if (outcome === "closed" || outcome === "denied") return "cancelled";
-    if (outcome !== "done") throw failed();
+    if (outcome.kind === "closed" || outcome.kind === "denied") return "cancelled";
+    if (outcome.kind !== "done") return { error: "login_failed" };
 
+    const { deviceId } = outcome;
     try {
-      await deps.service.ensureService();
-      await run(deps.cli, ["service", "start"]);
+      await deps.service.ensureService(deviceId);
+      await run(deps.cli, ["service", "start", "-c", deviceId]);
     } catch (err) {
       log("the device login service did not start", err);
-      throw failed();
+      return {
+        error:
+          err instanceof DeviceServiceError && err.code === "app_location"
+            ? "app_location"
+            : "service_failed",
+      };
     } finally {
       deps.onChanged?.();
     }

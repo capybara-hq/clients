@@ -1,14 +1,20 @@
-// A scripted device CLI and the other device@1 collaborators, for the capability, connect and
+// A scripted device CLI and the other device@2 collaborators, for the capability, connect and
 // removal tests. Nothing here runs a process, launchctl or the Keychain.
 import { vi } from "vitest";
 import type { DeviceCli, DeviceCliOptions, DeviceCliResult } from "../../src/main/device/cli.ts";
-import type { LiveStatus } from "../../src/main/device/control.ts";
+import type {
+  ConnectionControls,
+  ControlClient,
+  LiveStatus,
+  RunningOperation,
+} from "../../src/main/device/control.ts";
 import type { DeviceDialogs } from "../../src/main/device/dialogs.ts";
+import { type MachineConnection, readConnections } from "../../src/main/device/machine.ts";
 import type { ServiceStatus } from "../../src/main/device/service.ts";
 import type { ConfirmScope } from "../../src/main/ipc.ts";
 import type { Profile } from "../../src/main/profiles.ts";
 
-/** A credential value that must never come out of any device@1 function. */
+/** A credential value that must never come out of any device@2 function. */
 export const SECRET = "cap_dev_SECRET_credential_value";
 
 export const profileA: Profile = {
@@ -19,9 +25,17 @@ export const profileA: Profile = {
   name: "Acme 平台",
 };
 
+export const profileB: Profile = {
+  id: "pb",
+  signedIn: true,
+  base: "https://b.example.com",
+  origin: "https://b.example.com",
+  name: "Beta",
+};
+
 export const live = (over: Partial<LiveStatus> = {}): LiveStatus => ({
   pid: 41,
-  version: "0.1.0-rc.19",
+  version: "0.1.0-rc.29",
   url: "https://a.example.com/team",
   orgId: "org_1",
   deviceId: "dev_1",
@@ -32,7 +46,52 @@ export const live = (over: Partial<LiveStatus> = {}): LiveStatus => ({
   ...over,
 });
 
-/** `status --json` of a machine logged in to `url`, with a credential field slipped in. */
+/** The device program's state directory in these tests. */
+export const MACHINE_DIR = "/m/capybara-device";
+
+/**
+ * One connection as `status --json` prints it (device rc.29 `ConnectionStatusJson`), with fields
+ * the readers must not pass on, a credential among them.
+ */
+export const connectionJson = (deviceId: string, over: Record<string, unknown> = {}) => ({
+  deviceId,
+  orgId: "org_1",
+  orgName: "Acme",
+  deviceName: `${deviceId}-laptop`,
+  url: "https://a.example.com/team",
+  host: "a.example.com",
+  mode: "os",
+  dir: `/Users/me/capybara-device/${deviceId}`,
+  serviceInstalled: true,
+  // 16 hex derived from the id, only so that each connection has its own socket in the tests
+  controlSocket: `${MACHINE_DIR}/run/${Buffer.from(deviceId).toString("hex").padEnd(16, "0").slice(0, 16)}.sock`,
+  control: "ok",
+  live: live({ deviceId, url: (over.url as string | undefined) ?? "https://a.example.com/team" }),
+  credential: SECRET,
+  ...over,
+});
+
+/**
+ * `status --json` of a machine with two connections into A (`https://a.example.com/team`) and one
+ * into B (`https://b.example.com`).
+ */
+export const threeConnections = (
+  over: Partial<Record<"dev_a1" | "dev_a2" | "dev_b1", Record<string, unknown>>> = {},
+) => ({
+  connections: [
+    connectionJson("dev_a1", over.dev_a1),
+    connectionJson("dev_a2", { orgId: "org_2", ...over.dev_a2 }),
+    connectionJson("dev_b1", {
+      orgId: "org_b",
+      url: "https://b.example.com",
+      host: "b.example.com",
+      ...over.dev_b1,
+    }),
+  ],
+  unreadable: [],
+});
+
+/** `status --json` of a machine logged in to `url` (the device@1 shape; the tray still reads it). */
 export const loggedIn = (over: Record<string, unknown> = {}) => ({
   loggedIn: true,
   url: "https://a.example.com/team",
@@ -62,20 +121,30 @@ export type Handler = (
   o: DeviceCliOptions | undefined,
 ) => Scripted | Promise<Scripted | DeviceCliResult>;
 
+/** The reads every connection answers by default (any device id). */
+const READS = [
+  /^status --json$/,
+  /^service status -c \S+ --json$/,
+  /^ceiling show -c \S+ --json$/,
+  /^keep-awake show -c \S+ --json$/,
+];
+
+type Ceiling = {
+  outsideSandbox: boolean;
+  network: "open" | "allowlist";
+  projectReach: "machine" | "paths" | "workspace";
+};
+
 /**
- * Answers by the command (the arguments joined with spaces). `status --json`, `service status
- * --json`, `ceiling show -c dev_1 --json` and `keep-awake show -c dev_1 --json` have defaults
- * from `state`.
+ * Answers by the command (the arguments joined with spaces). `status --json`, `service status -c
+ * <id> --json`, `ceiling show -c <id> --json` and `keep-awake show -c <id> --json` have defaults
+ * from `state` (the same for every connection).
  */
 export function fakeCli(
   state: {
     status?: Record<string, unknown>;
     service?: Partial<ServiceStatus>;
-    ceiling?: {
-      outsideSandbox: boolean;
-      network: "open" | "allowlist";
-      projectReach: "workspace" | "os-user";
-    };
+    ceiling?: Ceiling;
     keepAwake?: "off" | "while-busy" | "connected";
   } = {},
   handlers: Record<string, Handler> = {},
@@ -88,16 +157,16 @@ export function fakeCli(
     let r: Scripted | DeviceCliResult;
     if (h) r = await h(args, o);
     else if (cmd === "status --json") {
-      const s = state.status ?? { loggedIn: false };
-      r = { code: s.loggedIn ? 0 : 1, lines: [s] };
-    } else if (cmd === "service status --json") {
+      const s = state.status ?? { connections: [], unreadable: [] };
+      r = { code: s.loggedIn === false ? 1 : 0, lines: [s] };
+    } else if (READS[1]?.test(cmd)) {
       r = {
         code: 1,
         lines: [
           { installed: false, loaded: false, running: false, binExists: false, ...state.service },
         ],
       };
-    } else if (cmd === "ceiling show -c dev_1 --json") {
+    } else if (READS[2]?.test(cmd)) {
       r = {
         lines: [
           {
@@ -107,11 +176,12 @@ export function fakeCli(
               projectReach: "workspace",
             }),
             allowedDomains: [],
+            projectPaths: [],
             revision: null,
           },
         ],
       };
-    } else if (cmd === "keep-awake show -c dev_1 --json") {
+    } else if (READS[3]?.test(cmd)) {
       r = { lines: [{ keepAwake: state.keepAwake ?? "while-busy" }] };
     } else r = { code: 0 };
     for (const line of (r as Scripted).lines ?? []) o?.onLine?.(line);
@@ -119,17 +189,59 @@ export function fakeCli(
   };
   const commands = () => calls.map((c) => c.args.join(" "));
   /** The commands that change something (not the reads). */
-  const writes = () =>
-    commands().filter(
-      (c) =>
-        ![
-          "status --json",
-          "service status --json",
-          "ceiling show -c dev_1 --json",
-          "keep-awake show -c dev_1 --json",
-        ].includes(c),
-    );
+  const writes = () => commands().filter((c) => !READS.some((re) => re.test(c)));
   return { cli, calls, commands, writes };
+}
+
+/** A control client of one connection whose answers the test sets. */
+export function fakeControlClient(running: unknown[] = []) {
+  const subscribers: ((s: LiveStatus | undefined) => void)[] = [];
+  return {
+    status: vi.fn(async (): Promise<LiveStatus | undefined> => undefined),
+    running: vi.fn(async () => running as RunningOperation[]),
+    drain: vi.fn(async () => undefined),
+    subscribe: vi.fn((cb: (s: LiveStatus | undefined) => void) => {
+      subscribers.push(cb);
+      return () => {};
+    }),
+    subscribers,
+  } satisfies ControlClient & { subscribers: unknown[] };
+}
+
+/**
+ * Connection controls over the fake CLI: `read` parses its `status --json` with the real reader;
+ * `forDevice` hands each device id its own fake client (created on first use); `subscribeAll`
+ * records its callbacks (`changed()` calls them, like a runner event or a rescan would).
+ */
+export function fakeControls(cli: DeviceCli, o: { running?: unknown[] } = {}) {
+  const clients = new Map<string, ReturnType<typeof fakeControlClient>>();
+  const callbacks: (() => void)[] = [];
+  const unsubscribe = vi.fn();
+  const client = (id: string) => {
+    let c = clients.get(id);
+    if (c === undefined) {
+      c = fakeControlClient(o.running ?? []);
+      clients.set(id, c);
+    }
+    return c;
+  };
+  const controls = {
+    read: vi.fn(() => readConnections(cli, MACHINE_DIR)),
+    forDevice: vi.fn((id: string) => client(id)),
+    subscribeAll: vi.fn((cb: () => void) => {
+      callbacks.push(cb);
+      return unsubscribe;
+    }),
+  } satisfies ConnectionControls<MachineConnection>;
+  return {
+    controls,
+    client,
+    clients,
+    unsubscribe,
+    changed: () => {
+      for (const cb of callbacks) cb();
+    },
+  };
 }
 
 /** Dialogs that answer as told and record what they were asked. */
@@ -141,7 +253,6 @@ export function fakeDialogs(answer: boolean | ((name: keyof DeviceDialogs) => bo
   };
   const dialogs: DeviceDialogs = {
     confirmConnect: (...a) => reply("confirmConnect", a),
-    confirmDisconnectOther: (...a) => reply("confirmDisconnectOther", a),
     confirmResume: (...a) => reply("confirmResume", a),
     confirmWidenCeiling: (...a) => reply("confirmWidenCeiling", a),
     confirmRaiseKeepAwake: (...a) => reply("confirmRaiseKeepAwake", a),
@@ -150,10 +261,19 @@ export function fakeDialogs(answer: boolean | ((name: keyof DeviceDialogs) => bo
   return { dialogs, asked, names: () => asked.map((a) => a.name) };
 }
 
-/** A fake service over the same fake CLI (ensureService is what connect calls). */
-export function fakeService() {
+/** A fake login service: `ensureService` (connect, resume) and `status` (disconnect). */
+export function fakeService(status: Partial<ServiceStatus> = {}) {
   return {
-    ensureService: vi.fn(async () => "installed" as const),
+    ensureService: vi.fn(async (_deviceId: string) => "installed" as const),
+    status: vi.fn(
+      async (_deviceId: string): Promise<ServiceStatus> => ({
+        installed: false,
+        loaded: false,
+        running: false,
+        binExists: false,
+        ...status,
+      }),
+    ),
   };
 }
 

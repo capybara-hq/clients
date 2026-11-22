@@ -63,7 +63,7 @@ export type OnboardingFields = {
   machine: string;
   /** The signed-out page's account (display name and login). */
   account: { name: string; login: string } | null;
-  /** The signed-out page: device@1 says this machine is that deployment's device. */
+  /** The signed-out page: this machine has a connection into that deployment. */
   deviceConnected: boolean;
   /** Whether 「移除这个平台」 is offered (never under a managed lock). */
   canRemove: boolean;

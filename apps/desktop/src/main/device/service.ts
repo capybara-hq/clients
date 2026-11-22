@@ -1,8 +1,9 @@
 // The device as the login service (spec §5.2, §9.3, §9.4): the app never hosts the runner; it
-// installs the published program's own launchd agent (`capybara-device service install`, which
-// records the Node running it and the package's bin, so the plist points at the app's copies),
-// repairs it when the app moved, and restarts it after an update changed the bundled device.
-// Everything goes through the injected device CLI: tests use a fake one, never launchctl.
+// installs the published program's own launchd agent of a connection (`capybara-device service
+// install -c <deviceId>`, which records the Node running it and the package's bin, so the plist
+// points at the app's copies), repairs each connection's when the app moved, and restarts each
+// after an update changed the bundled device. Everything goes through the injected device CLI:
+// tests use a fake one, never launchctl.
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { type DeviceCli, devicePaths } from "./cli.ts";
@@ -41,6 +42,9 @@ export interface DeviceServiceDeps {
   realpath?: (path: string) => string;
   /** The app's environment: its PATH is the base of the PATH the service file records. */
   env?: Record<string, string | undefined>;
+  /** Every connection of this machine (`status --json`), for the start-up checks. */
+  connections(): Promise<{ deviceId: string }[]>;
+  log?: (message: string, err?: unknown) => void;
 }
 
 /** Where docker usually lives on a Mac: Homebrew (Intel and Apple silicon) and Docker Desktop. */
@@ -67,21 +71,26 @@ export function withDockerPath(path: string | undefined): string {
 }
 
 export interface DeviceService {
-  status(): Promise<ServiceStatus>;
+  /** `service status -c <deviceId> --json`: the connection's login service. */
+  status(deviceId: string): Promise<ServiceStatus>;
   /**
-   * Makes the login service run this app's copy, unless the person installed one with the CLI:
-   * `installed` (there was none), `kept` (this app's, another app copy's or a CLI-installed one
-   * whose bin still exists), `reinstalled` (its bin is gone, or this app's bin runs another Node).
+   * Makes the connection's login service run this app's copy, unless the person installed one
+   * with the CLI: `installed` (there was none), `kept` (this app's, another app copy's or a
+   * CLI-installed one whose bin still exists), `reinstalled` (its bin is gone, or this app's bin
+   * runs another Node).
    */
-  ensureService(): Promise<"installed" | "kept" | "reinstalled">;
+  ensureService(deviceId: string): Promise<"installed" | "kept" | "reinstalled">;
   /**
-   * At start: repairs an installed, loaded service whose app moved, like {@link ensureService},
-   * but never installs one (connecting does) and never starts one that is not loaded (paused).
+   * At start, for every connection: repairs an installed, loaded service whose app moved, like
+   * {@link ensureService}, but never installs one (connecting does) and never starts one that is
+   * not loaded (paused). A connection that fails is logged and the others still go; the first
+   * failure is thrown at the end.
    */
-  repairService(): Promise<"absent" | "kept" | "reinstalled">;
+  repairService(): Promise<Map<string, "absent" | "kept" | "reinstalled">>;
   /**
-   * `service restart` when the service runs this app's copy and the program running is not the
-   * version now on disk (an update replaced the bundled device). Never starts a stopped service.
+   * For every connection: `service restart` when its service runs this app's copy and the program
+   * running is not the version now on disk (an update replaced the bundled device). Never starts a
+   * stopped service. Failures as in {@link repairService}.
    */
   afterUpdate(): Promise<void>;
 }
@@ -133,9 +142,9 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
   };
   const same = (a: string | undefined, b: string) => a !== undefined && real(a) === real(b);
 
-  async function status(): Promise<ServiceStatus> {
+  async function status(deviceId: string): Promise<ServiceStatus> {
     let parsed: ServiceStatus | undefined;
-    const { stderr } = await deps.cli(["service", "status", "--json"], {
+    const { stderr } = await deps.cli(["service", "status", "-c", deviceId, "--json"], {
       onLine: (obj) => {
         parsed ??= parseStatus(obj);
       },
@@ -160,7 +169,7 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
     }
   }
 
-  function install(): Promise<void> {
+  function install(deviceId: string): Promise<void> {
     if (isTemporaryLocation(deps.resourcesPath)) {
       return Promise.reject(
         new DeviceServiceError(
@@ -169,7 +178,7 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
         ),
       );
     }
-    return run(["service", "install"], { PATH: withDockerPath(deps.env?.PATH) });
+    return run(["service", "install", "-c", deviceId], { PATH: withDockerPath(deps.env?.PATH) });
   }
 
   /**
@@ -188,42 +197,65 @@ export function createDeviceService(deps: DeviceServiceDeps): DeviceService {
   const isAppCopy = (s: ServiceStatus): boolean =>
     s.binPath !== undefined && (same(s.binPath, own.bin) || APP_COPY.test(s.binPath));
 
-  async function ensureService(): Promise<"installed" | "kept" | "reinstalled"> {
-    const s = await status();
+  async function ensureService(deviceId: string): Promise<"installed" | "kept" | "reinstalled"> {
+    const s = await status(deviceId);
     if (!s.installed) {
-      await install();
+      await install(deviceId);
       return "installed";
     }
     if (!needsReinstall(s)) return "kept";
-    await install();
+    await install(deviceId);
     return "reinstalled";
+  }
+
+  async function repairOne(deviceId: string): Promise<"absent" | "kept" | "reinstalled"> {
+    const s = await status(deviceId);
+    if (!s.installed) return "absent";
+    // Only an app copy is repaired at start; a broken CLI-installed service waits for the
+    // person to switch it to the app's copy (through ensureService; the UI for that is
+    // capybara-hq/clients#13).
+    if (!s.loaded || !isAppCopy(s) || !needsReinstall(s)) return "kept";
+    // Not from a temporary location: the next start from the real place repairs it.
+    if (isTemporaryLocation(deps.resourcesPath)) return "kept";
+    await install(deviceId);
+    return "reinstalled";
+  }
+
+  async function restartIfUpdated(deviceId: string): Promise<void> {
+    const s = await status(deviceId);
+    if (!s.installed || !s.running || !same(s.binPath, own.bin)) return;
+    if (s.runningVersion === undefined || s.installedVersion === undefined) return;
+    // Only a new device version restarts: an update that changes only the bundled Node keeps
+    // the running program on the old Node until its next start (accepted).
+    if (s.runningVersion === s.installedVersion) return;
+    await run(["service", "restart", "-c", deviceId]);
+  }
+
+  /** Runs `one` for every connection in order, past a failure; throws the first one at the end. */
+  async function eachConnection<T>(
+    what: string,
+    one: (deviceId: string) => Promise<T>,
+  ): Promise<Map<string, T>> {
+    const out = new Map<string, T>();
+    let first: { err: unknown } | undefined;
+    for (const { deviceId } of await deps.connections()) {
+      try {
+        out.set(deviceId, await one(deviceId));
+      } catch (err) {
+        deps.log?.(`the device service ${what} failed for one connection`, err);
+        first ??= { err };
+      }
+    }
+    if (first) throw first.err;
+    return out;
   }
 
   return {
     status,
     ensureService,
-
-    async repairService() {
-      const s = await status();
-      if (!s.installed) return "absent";
-      // Only an app copy is repaired at start; a broken CLI-installed service waits for the
-      // person to switch it to the app's copy (through ensureService; the UI for that is
-      // capybara-hq/clients#13).
-      if (!s.loaded || !isAppCopy(s) || !needsReinstall(s)) return "kept";
-      // Not from a temporary location: the next start from the real place repairs it.
-      if (isTemporaryLocation(deps.resourcesPath)) return "kept";
-      await install();
-      return "reinstalled";
-    },
-
+    repairService: () => eachConnection("repair", repairOne),
     async afterUpdate() {
-      const s = await status();
-      if (!s.installed || !s.running || !same(s.binPath, own.bin)) return;
-      if (s.runningVersion === undefined || s.installedVersion === undefined) return;
-      // Only a new device version restarts: an update that changes only the bundled Node keeps
-      // the running program on the old Node until its next start (accepted).
-      if (s.runningVersion === s.installedVersion) return;
-      await run(["service", "restart"]);
+      await eachConnection("update check", restartIfUpdated);
     },
   };
 }

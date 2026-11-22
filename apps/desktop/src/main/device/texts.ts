@@ -1,7 +1,7 @@
 // The device program's own risk texts (spec §9.5): the widening dialog shows exactly what the
 // bundled program says, never a copy kept here that could drift from it. The bundled Node prints
-// the bundled package's `CEILING_WIDENING_TEXT` and `outsideSandboxRiskText(deviceId)` as one JSON
-// line; the answer is kept per connection for the app run (the bundled package does not change
+// the bundled package's `CEILING_WIDENING_TEXT`, `CEILING_OTHER_CONNECTIONS_TEXT` and
+// `outsideSandboxRiskText(deviceId)` as one JSON line; the answer is kept per connection for the app run (the bundled package does not change
 // while the app runs; an update installs at quit).
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +11,11 @@ import { ID_PATTERN } from "./machine.ts";
 export interface DeviceTexts {
   /** `CEILING_WIDENING_TEXT` (device `commands/ceiling.js`). */
   ceilingWidening: string;
+  /**
+   * `CEILING_OTHER_CONNECTIONS_TEXT` (device `commands/ceiling.js`): shown after the widening text
+   * when outside the sandbox turns on while the machine holds other connections.
+   */
+  otherConnections: string;
   /** `outsideSandboxRiskText(deviceId)` (device `commands/login.js`). */
   outsideSandboxRisk: string;
 }
@@ -31,7 +36,7 @@ const SCRIPT = [
   "const [ceilingUrl, loginUrl, deviceId] = process.argv.slice(1);",
   "const ceiling = await import(ceilingUrl);",
   "const login = await import(loginUrl);",
-  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, outsideSandboxRisk: login.outsideSandboxRiskText(deviceId) }));",
+  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, otherConnections: ceiling.CEILING_OTHER_CONNECTIONS_TEXT, outsideSandboxRisk: login.outsideSandboxRiskText(deviceId) }));",
 ].join("\n");
 
 const TEXT_MAX = 4000;
@@ -41,11 +46,11 @@ function parse(stdout: string): DeviceTexts | undefined {
   for (const line of stdout.split("\n").reverse()) {
     try {
       const v = JSON.parse(line) as Record<string, unknown>;
-      const { ceilingWidening, outsideSandboxRisk } = v ?? {};
+      const { ceilingWidening, otherConnections, outsideSandboxRisk } = v ?? {};
       const ok = (s: unknown): s is string =>
         typeof s === "string" && s.trim() !== "" && s.length <= TEXT_MAX;
-      if (ok(ceilingWidening) && ok(outsideSandboxRisk))
-        return { ceilingWidening, outsideSandboxRisk };
+      if (ok(ceilingWidening) && ok(otherConnections) && ok(outsideSandboxRisk))
+        return { ceilingWidening, otherConnections, outsideSandboxRisk };
     } catch {
       // not the answer line
     }

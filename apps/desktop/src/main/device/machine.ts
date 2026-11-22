@@ -3,7 +3,7 @@
 // working directory, the connect URL, and never, but even if, a credential) does not travel on.
 import { join } from "node:path";
 import type {
-  DeviceConnection,
+  DeviceCeilingRequest,
   KeepAwakeMode,
   ThisMachineConnection,
 } from "@capybara-hq/plugin-sdk";
@@ -11,30 +11,6 @@ import { isRecord, normalizeAddress } from "@capybara-hq/shell";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
 import { isLiveStatus, type LiveStatus } from "./control.ts";
-
-// The device@1 shapes of plugin-sdk 0.1.0-rc.53, which rc.57 replaced with device@2. Kept here
-// only so the device@1 wiring compiles until it is replaced (plan Task 13).
-/** What this machine is to the deployment the shell shows (device@1). */
-export type ThisMachineStatus =
-  | { state: "not_connected" }
-  | { state: "connected_elsewhere"; origin: string }
-  | {
-      state: "connected";
-      deviceId: string;
-      orgId: string;
-      mode: "os" | "docker";
-      connection: DeviceConnection;
-      offlineReason?: string;
-      serviceInstalled: boolean;
-      keepAwake: { mode: KeepAwakeMode; held: boolean; unavailable?: string };
-      lastWakeAt?: string;
-    };
-/** A device@1 `requestCeiling` input (device policy version 3's project reach). */
-export interface DeviceCeilingRequest {
-  outsideSandbox?: boolean;
-  network?: "open" | "allowlist";
-  projectReach?: "workspace" | "os-user";
-}
 
 /** Opaque kernel ids: a conservative charset and length, checked before any use. */
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -246,25 +222,30 @@ export const readKeepAwake = (cli: DeviceCli, deviceId: string): Promise<KeepAwa
     isRecord(v) && isKeepAwakeMode(v.keepAwake) ? v.keepAwake : undefined,
   );
 
-/** This machine's owner ceiling, as `ceiling show --json` prints it (device policy version 3). */
+/** A connection's owner ceiling, as `ceiling show -c <deviceId> --json` prints it. */
 export interface OwnerCeiling {
   outsideSandbox: boolean;
   network: "open" | "allowlist";
-  projectReach: "workspace" | "os-user";
+  projectReach: ProjectReach;
 }
 
-/** The ceiling fields `device@1.requestCeiling` may name. */
+export type ProjectReach = NonNullable<DeviceCeilingRequest["projectReach"]>;
+
+/** The ceiling fields `device@2.requestCeiling` may name (besides the device id). */
 export const CEILING_FIELDS = ["outsideSandbox", "network", "projectReach"] as const;
 export type CeilingField = (typeof CEILING_FIELDS)[number];
 
+/** Project reaches from the narrowest (the program's `PROJECT_REACH_RANK`). */
+const PROJECT_REACHES: readonly ProjectReach[] = ["workspace", "paths", "machine"];
+
 const isNetwork = (v: unknown): v is OwnerCeiling["network"] => v === "open" || v === "allowlist";
-const isProjectReach = (v: unknown): v is OwnerCeiling["projectReach"] =>
-  v === "workspace" || v === "os-user";
+const isProjectReach = (v: unknown): v is ProjectReach =>
+  PROJECT_REACHES.includes(v as ProjectReach);
 
 /**
- * A `device@1.requestCeiling` input (`DeviceCeilingRequest`): at least one known field,
- * each with a valid value, and nothing else (an older page's `{ fullAccess, projectReach }` is
- * refused, never half applied); undefined otherwise.
+ * The ceiling part of a `device@2.requestCeiling` input (`DeviceCeilingRequest`, the device id
+ * already taken out): at least one known field, each with a valid value, and nothing else (an
+ * older page's `{ fullAccess, projectReach }` is refused, never half applied); undefined otherwise.
  */
 export function parseCeilingRequest(v: unknown): DeviceCeilingRequest | undefined {
   if (!isRecord(v)) return undefined;
@@ -290,7 +271,10 @@ export function widensField(
     case "network":
       return cur.network === "allowlist" && next.network === "open";
     case "projectReach":
-      return cur.projectReach === "workspace" && next.projectReach === "os-user";
+      return (
+        next.projectReach !== undefined &&
+        PROJECT_REACHES.indexOf(next.projectReach) > PROJECT_REACHES.indexOf(cur.projectReach)
+      );
   }
 }
 
@@ -328,68 +312,5 @@ export function originOf(url: string): string | null {
 
 export type LoggedInMachine = Extract<Machine, { loggedIn: true }>;
 
-/** The machine when it is logged in to this profile's deployment (origins compared), else null. */
-export function hereOrNull(machine: Machine, profile: Profile): LoggedInMachine | null {
-  return machine.loggedIn && originOf(machine.url) === originOf(profile.origin) ? machine : null;
-}
-
-/** Whether the machine is logged in to this profile's deployment. */
-export const isThisDeployment = (machine: Machine, profile: Profile): boolean =>
-  hereOrNull(machine, profile) !== null;
-
 /** The longest offline reason passed to the page. */
 const REASON_MAX = 300;
-
-/**
- * Maps the machine to what the profile's page may know of it: another deployment is only its
- * origin. `extra` is read only when connected here: whether the login service is installed and
- * the policy's keep-awake mode (used when no runner answers).
- */
-export function machineStatus(
-  profile: Profile,
-  machine: Machine,
-  extra: { serviceInstalled: boolean; keepAwakeMode: KeepAwakeMode },
-): ThisMachineStatus {
-  if (!machine.loggedIn) return { state: "not_connected" };
-  if (hereOrNull(machine, profile) === null) {
-    const origin = originOf(machine.url);
-    // An address the device accepted but the shell cannot read is still another deployment.
-    return origin === null ? { state: "not_connected" } : { state: "connected_elsewhere", origin };
-  }
-  const { serviceInstalled, keepAwakeMode } = extra;
-  const live = machine.live;
-  const base = {
-    state: "connected" as const,
-    deviceId: machine.deviceId,
-    orgId: machine.orgId,
-    mode: machine.mode,
-    serviceInstalled,
-  };
-  if (live) {
-    return {
-      ...base,
-      connection: live.connection,
-      ...(live.offlineReason !== undefined && {
-        offlineReason: String(live.offlineReason).slice(0, REASON_MAX),
-      }),
-      keepAwake: {
-        mode: live.keepAwake.mode,
-        held: live.keepAwake.held === true,
-        ...(typeof live.keepAwake.unavailable === "string" && {
-          unavailable: live.keepAwake.unavailable.slice(0, REASON_MAX),
-        }),
-      },
-      ...(typeof live.lastWakeAt === "string" && { lastWakeAt: live.lastWakeAt }),
-    };
-  }
-  // A program runs but gives no live status: offline with the program's reason, never "stopped".
-  if (machine.control === "unavailable") {
-    return {
-      ...base,
-      connection: "offline",
-      offlineReason: (machine.controlReason ?? "no live status").slice(0, REASON_MAX),
-      keepAwake: { mode: keepAwakeMode, held: false },
-    };
-  }
-  return { ...base, connection: "stopped", keepAwake: { mode: keepAwakeMode, held: false } };
-}

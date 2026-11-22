@@ -84,14 +84,34 @@ function harness(
     drain: vi.fn(async () => {}),
     status: vi.fn(async (): Promise<LiveStatus | undefined> => undefined),
   } satisfies ControlClient;
+  // device@2 over the same CLI: the tray's one connection is dev_1 into A (until plan Task 14).
   const cap = createDeviceCapability({
     cli: f.cli,
+    controls: {
+      read: async () => [
+        {
+          deviceId: "dev_1",
+          orgId: "org_1",
+          orgName: null,
+          deviceName: null,
+          url: profileA.base,
+          host: "a.example.com",
+          mode: "os",
+          serviceInstalled: true,
+          controlSocket: "/m/capybara-device/run/0123456789abcdef.sock",
+          control: "ok",
+          live: null,
+        },
+      ],
+      forDevice: () => control,
+      subscribeAll: () => () => {},
+    },
     service: fakeService(),
-    control,
     dialogs: d.dialogs,
-    texts: async () => ({ ceilingWidening: "w", outsideSandboxRisk: "r" }),
+    texts: async () => ({ ceilingWidening: "w", otherConnections: "o", outsideSandboxRisk: "r" }),
     openVerification: () => ({ close() {}, onClosed() {} }),
   });
+  const dev1 = { deviceId: "dev_1" };
   const gate = createConfirmGate();
   const polls: { fn: () => void; ms: number; cancel: ReturnType<typeof vi.fn> }[] = [];
   const states: TrayDevice[] = [];
@@ -102,7 +122,12 @@ function harness(
     readMachine: () => readMachine(f.cli),
     readKeepAwake: () => readKeepAwake(f.cli, "dev_1"),
     profiles: () => [profileA],
-    impl: cap.impl,
+    impl: {
+      pause: (ctx) => cap.impl.pause(ctx, dev1),
+      resume: (ctx) => cap.impl.resume(ctx, dev1),
+      disconnect: (ctx) => cap.impl.disconnect(ctx, dev1),
+      setKeepAwake: (ctx, mode) => cap.impl.setKeepAwake(ctx, { ...dev1, mode }),
+    },
     gate,
     openDevicePage: (p, path) => opened.push([p.id, path]),
     onChange: (s) => states.push(s),
@@ -211,7 +236,7 @@ describe("the tray's device source", () => {
   });
 });
 
-describe("the tray's actions reuse device@1", () => {
+describe("the tray's actions reuse device@2", () => {
   test("pause drains; no dialog", async () => {
     const h = harness();
     h.tray.start();
@@ -225,30 +250,30 @@ describe("the tray's actions reuse device@1", () => {
     await h.tray.actions.resume("pa");
     expect(h.d.names()).toEqual(["confirmResume"]);
     expect(h.d.asked[0]?.args[1]).toBe(profileA);
-    expect(h.f.commands()).toContain("service start");
+    expect(h.f.commands()).toContain("service start -c dev_1");
   });
 
   test("resume answered no starts nothing", async () => {
     const h = harness({ answer: false });
     await h.tray.actions.resume("pa");
-    expect(h.f.commands()).not.toContain("service start");
+    expect(h.f.commands()).not.toContain("service start -c dev_1");
   });
 
   test("keep-awake raise asks the dialog, lowering applies without one", async () => {
     const h = harness();
     await h.tray.actions.setKeepAwake("pa", "connected");
     expect(h.d.names()).toEqual(["confirmRaiseKeepAwake"]);
-    expect(h.f.commands()).toContain("keep-awake connected --yes");
+    expect(h.f.commands()).toContain("keep-awake connected -c dev_1 --yes");
     const g = harness();
     await g.tray.actions.setKeepAwake("pa", "off");
     expect(g.d.asked).toEqual([]);
-    expect(g.f.commands()).toContain("keep-awake off");
+    expect(g.f.commands()).toContain("keep-awake off -c dev_1");
   });
 
   test("disconnect ends the runner, with no dialog", async () => {
     const h = harness();
     await h.tray.actions.disconnect("pa");
-    expect(h.f.commands()).toContain("stop");
+    expect(h.f.commands()).toContain("stop -c dev_1");
     expect(h.d.asked).toEqual([]);
   });
 

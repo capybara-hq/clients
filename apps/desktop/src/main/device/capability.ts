@@ -1,38 +1,45 @@
-// `device@1` (spec §8, §9): every function runs here in main through the device CLI and the
-// control socket, acts only for the calling profile's deployment, and answers plain data of the
-// SDK's shapes, never a credential. The confirming calls are `connect` and `resume` (the bridge
-// takes the confirmation slot for them) and, decided here from the machine's own state, a
-// widening `requestCeiling` and a raising `setKeepAwake` (they take the slot through
-// `ctx.confirm` only then); narrowing and lowering apply at once (spec §9.5, §9.7).
-import type { DeviceRunningOp, KeepAwakeMode } from "@capybara-hq/plugin-sdk";
+// `device@2` (spec §8, §9): every function runs here in main through the device CLI and the
+// connections' control sockets, and answers plain data of the SDK's shapes, never a credential.
+// A window sees and acts on only the connections into its own profile's deployment (origins
+// compared): `status` lists only those, and every call naming a device id refuses, before
+// anything runs, unless the id is one of them. Every CLI call names its connection with
+// `-c <deviceId>`. The confirming calls are `connect` and `resume` (the bridge takes the
+// confirmation slot for them) and, decided here from the connection's own state, a widening
+// `requestCeiling` and a raising `setKeepAwake` (they take the slot through `ctx.confirm` only
+// then); narrowing and lowering apply at once (spec §9.5, §9.7).
+import type {
+  DeviceCapabilityV2,
+  DeviceRunningOp,
+  KeepAwakeMode,
+  ThisMachineConnection,
+} from "@capybara-hq/plugin-sdk";
+import { isRecord } from "@capybara-hq/shell";
 import type { ConfirmScope } from "../ipc.ts";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
 import {
+  type ConnectResult,
   createConnect,
   type DeviceTarget,
   run,
-  stopAndLogout,
   type VerificationWindow,
 } from "./connect.ts";
-import type { ControlClient } from "./control.ts";
-import type { DeviceDialogs } from "./dialogs.ts";
+import type { ConnectionControls } from "./control.ts";
+import type { CeilingWidening, DeviceDialogs } from "./dialogs.ts";
 import {
   CEILING_FIELDS,
   type CeilingField,
   ceilingSetArgs,
+  connectionsHere,
+  connectionView,
   failed,
-  hereOrNull,
+  ID_PATTERN,
   isKeepAwakeMode,
-  isThisDeployment,
   KEEP_AWAKE_MODES,
-  type Machine,
-  machineStatus,
+  type MachineConnection,
   parseCeilingRequest,
   readCeiling,
   readKeepAwake,
-  readMachine,
-  type ThisMachineStatus,
   widensField,
 } from "./machine.ts";
 import type { DeviceService } from "./service.ts";
@@ -40,8 +47,9 @@ import type { DeviceTexts } from "./texts.ts";
 
 export interface DeviceCapabilityDeps {
   cli: DeviceCli;
-  service: Pick<DeviceService, "ensureService">;
-  control: Pick<ControlClient, "running" | "drain" | "subscribe">;
+  /** Every connection of this machine and each one's control socket (control.ts). */
+  controls: ConnectionControls<MachineConnection>;
+  service: Pick<DeviceService, "ensureService" | "status">;
   dialogs: DeviceDialogs;
   /** The device program's own risk texts for a connection (texts.ts). */
   texts(deviceId: string): Promise<DeviceTexts>;
@@ -51,20 +59,16 @@ export interface DeviceCapabilityDeps {
 
 type Ctx = DeviceTarget & ConfirmScope;
 
-/** `service status --json`: only the two facts device@1 uses; an unreadable one is "none". */
-async function serviceState(cli: DeviceCli): Promise<{ installed: boolean; loaded: boolean }> {
-  let state = { installed: false, loaded: false };
-  await cli(["service", "status", "--json"], {
-    onLine: (line) => {
-      if (typeof line !== "object" || line === null) return;
-      const s = line as Record<string, unknown>;
-      if (typeof s.installed === "boolean") {
-        state = { installed: s.installed, loaded: s.loaded === true };
-      }
-    },
-  });
-  return state;
-}
+/**
+ * `DeviceCapabilityV2` as main implements it: the bridge's context first, then the page's
+ * arguments, unchecked input here, and the SDK's results.
+ */
+type WithContext<T> = {
+  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+    ? (ctx: Ctx, ...args: { [I in keyof A]: unknown }) => R
+    : never;
+};
+export type DeviceImpl = WithContext<Omit<DeviceCapabilityV2, "onStatus">>;
 
 function toView(op: unknown): DeviceRunningOp | null {
   if (typeof op !== "object" || op === null) return null;
@@ -88,38 +92,46 @@ function toView(op: unknown): DeviceRunningOp | null {
   };
 }
 
+/** The `deviceId` of a page's argument object, when it is a safe id; else undefined. */
+function deviceIdOf(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  const { deviceId } = input;
+  return typeof deviceId === "string" && ID_PATTERN.test(deviceId) ? deviceId : undefined;
+}
+
 export function createDeviceCapability(deps: DeviceCapabilityDeps) {
-  const { cli, dialogs } = deps;
+  const { cli, controls, dialogs } = deps;
   const log = deps.log ?? (() => {});
 
-  /** The machine as the profile may see it, with the extra reads only when connected here. */
-  async function statusFor(profile: Profile, machine: Machine): Promise<ThisMachineStatus> {
-    const here = hereOrNull(machine, profile);
-    if (here === null) {
-      return machineStatus(profile, machine, { serviceInstalled: false, keepAwakeMode: "off" });
-    }
-    const [service, keepAwakeMode] = await Promise.all([
-      serviceState(cli),
-      here.live ? Promise.resolve(here.live.keepAwake.mode) : readKeepAwake(cli, here.deviceId),
-    ]);
-    return machineStatus(profile, machine, { serviceInstalled: service.installed, keepAwakeMode });
+  /** The views of `here` (the connections into one deployment), in the program's order. */
+  function viewsOf(here: MachineConnection[]): Promise<ThisMachineConnection[]> {
+    return Promise.all(
+      here.map(async (c) =>
+        // The policy's keep-awake mode is read only when no runner reports it.
+        connectionView(c, c.live ? c.live.keepAwake.mode : await readKeepAwake(cli, c.deviceId)),
+      ),
+    );
   }
 
-  /** The machine, refused unless it is logged in to this profile's deployment. */
-  async function connectedHere(profile: Profile) {
-    const machine = hereOrNull(await readMachine(cli), profile);
-    if (machine === null) throw failed();
-    return machine;
+  /**
+   * The connection `input.deviceId` names, read now, only when it is one into this profile's
+   * deployment; refuses (`failed`) otherwise, before anything runs for it. The read also points
+   * `controls.forDevice` at the socket it shows.
+   */
+  async function connectionHere(profile: Profile, input: unknown): Promise<MachineConnection> {
+    const deviceId = deviceIdOf(input);
+    if (deviceId === undefined) throw failed();
+    const c = connectionsHere(await controls.read(), profile).find((x) => x.deviceId === deviceId);
+    if (c === undefined) throw failed();
+    return c;
   }
 
-  // onStatus: one control subscription for every listener of every profile; each change reads the
-  // machine once and gives each listener its own deployment's view, only when it changed.
-  const listeners = new Map<
-    number,
-    { profile: Profile; emit: (s: unknown) => void; last?: string }
-  >();
+  // onStatus: one subscription to every connection for every listener of every profile; each
+  // change reads the connections once and tells a listener only when its own deployment's views
+  // changed. A listener's first evaluation only records what it has (the page reads `status`).
+  const listeners = new Map<number, { profile: Profile; emit: () => void; last?: string }>();
   let nextListener = 1;
-  let stopControl: (() => void) | undefined;
+  let stopControls: (() => void) | undefined;
   let refreshing = false;
   let again = false;
 
@@ -132,25 +144,25 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     try {
       do {
         again = false;
-        let machine: Machine;
+        let all: MachineConnection[];
         try {
-          machine = await readMachine(cli);
+          all = await controls.read();
         } catch (err) {
           log("device status could not be read", err);
           continue;
         }
         for (const entry of [...listeners.values()]) {
-          let status: ThisMachineStatus;
+          let text: string;
           try {
-            status = await statusFor(entry.profile, machine);
+            text = JSON.stringify(await viewsOf(connectionsHere(all, entry.profile)));
           } catch (err) {
             log("device status could not be read", err);
             continue;
           }
-          const text = JSON.stringify(status);
           if (text === entry.last) continue;
+          const first = entry.last === undefined;
           entry.last = text;
-          entry.emit(status);
+          if (!first) entry.emit();
         }
       } while (again && listeners.size > 0);
     } finally {
@@ -158,21 +170,9 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     }
   }
 
-  function subscribeControl(): void {
-    stopControl = deps.control.subscribe(() => {
-      void refresh();
-    });
-  }
-
-  /**
-   * After an action changed the machine: read it now, and start the control subscription afresh
-   * so a runner that is just starting is found at once rather than after a long retry delay.
-   */
+  /** After an action changed a connection: listeners read the connections now. */
   function changed(): void {
-    if (listeners.size === 0) return;
-    stopControl?.();
-    subscribeControl();
-    void refresh();
+    if (listeners.size > 0) void refresh();
   }
 
   const connect = createConnect({
@@ -185,24 +185,22 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
   });
 
   const impl = {
-    async status(ctx: Ctx): Promise<ThisMachineStatus> {
-      return statusFor(ctx.profile, await readMachine(cli));
+    async status(ctx: Ctx): Promise<{ connections: ThisMachineConnection[] }> {
+      return { connections: await viewsOf(connectionsHere(await controls.read(), ctx.profile)) };
     },
 
-    async running(ctx: Ctx): Promise<DeviceRunningOp[]> {
-      const machine = await readMachine(cli);
-      // Another deployment's operations are never shown.
-      if (!isThisDeployment(machine, ctx.profile)) return [];
-      const ops = await deps.control.running();
+    async running(ctx: Ctx, input: unknown): Promise<DeviceRunningOp[]> {
+      const c = await connectionHere(ctx.profile, input);
+      const ops = await controls.forDevice(c.deviceId).running();
       return ops.map(toView).filter((v): v is DeviceRunningOp => v !== null);
     },
 
-    connect: (ctx: Ctx, input: unknown) => connect(ctx, input),
+    connect: (ctx: Ctx, input: unknown): Promise<ConnectResult> => connect(ctx, input),
 
-    async pause(ctx: Ctx): Promise<void> {
-      await connectedHere(ctx.profile);
+    async pause(ctx: Ctx, input: unknown): Promise<void> {
+      const c = await connectionHere(ctx.profile, input);
       try {
-        await deps.control.drain();
+        await controls.forDevice(c.deviceId).drain();
       } catch (err) {
         log("drain failed", err);
         throw failed();
@@ -211,12 +209,12 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       }
     },
 
-    async resume(ctx: Ctx): Promise<"resumed" | "cancelled"> {
-      await connectedHere(ctx.profile);
+    async resume(ctx: Ctx, input: unknown): Promise<"resumed" | "cancelled"> {
+      const c = await connectionHere(ctx.profile, input);
       if (!(await dialogs.confirmResume(ctx.window, ctx.profile))) return "cancelled";
       try {
-        await deps.service.ensureService();
-        await run(cli, ["service", "start"]);
+        await deps.service.ensureService(c.deviceId);
+        await run(cli, ["service", "start", "-c", c.deviceId]);
       } catch (err) {
         log("the device login service did not start", err);
         throw failed();
@@ -226,14 +224,20 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       return "resumed";
     },
 
-    async disconnect(ctx: Ctx): Promise<void> {
-      const machine = await connectedHere(ctx.profile);
+    async disconnect(ctx: Ctx, input: unknown): Promise<void> {
+      const c = await connectionHere(ctx.profile, input);
       try {
-        const service = await serviceState(cli);
+        let loaded = false;
+        try {
+          loaded = (await deps.service.status(c.deviceId)).loaded;
+        } catch (err) {
+          // Unreadable counts as no service: a runner started in a terminal still gets `stop`.
+          log("the device login service status could not be read", err);
+        }
         // A loaded service is unloaded (a signalled one would come straight back); a runner
         // started in a terminal gets `stop`.
-        if (service.loaded) await run(cli, ["service", "stop"]);
-        else if (machine.control !== "absent") await run(cli, ["stop"]);
+        if (loaded) await run(cli, ["service", "stop", "-c", c.deviceId]);
+        else if (c.control !== "absent") await run(cli, ["stop", "-c", c.deviceId]);
       } finally {
         changed();
       }
@@ -242,14 +246,24 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     async requestCeiling(ctx: Ctx, input: unknown): Promise<"applied" | "cancelled"> {
       // Only the fields the page names: the program keeps every other field as it is then, so a
       // stale value on the page can never narrow (or widen) one it did not ask about.
-      const req = parseCeilingRequest(input);
+      if (!isRecord(input)) throw failed();
+      const { deviceId: _named, ...fields } = input;
+      const req = parseCeilingRequest(fields);
       if (req === undefined) throw failed();
-      const machine = await connectedHere(ctx.profile);
-      const cur = await readCeiling(cli, machine.deviceId);
-      const args = ceilingSetArgs(machine.deviceId, req);
-      const widened = Object.fromEntries(
-        CEILING_FIELDS.map((f) => [f, widensField(cur, req, f)]),
-      ) as Record<CeilingField, boolean>;
+      const c = await connectionHere(ctx.profile, input);
+      const cur = await readCeiling(cli, c.deviceId);
+      const args = ceilingSetArgs(c.deviceId, req);
+      const wider = (f: CeilingField) => widensField(cur, req, f);
+      const widened: CeilingWidening = {
+        outsideSandbox: wider("outsideSandbox"),
+        network: wider("network"),
+        projectReach:
+          wider("projectReach") &&
+          req.projectReach !== undefined &&
+          req.projectReach !== "workspace"
+            ? req.projectReach
+            : false,
+      };
       if (!widened.outsideSandbox && !widened.network && !widened.projectReach) {
         if (CEILING_FIELDS.every((f) => req[f] === undefined || req[f] === cur[f])) {
           return "applied";
@@ -262,18 +276,26 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       return ctx.confirm(async () => {
         let texts: DeviceTexts;
         try {
-          texts = await deps.texts(machine.deviceId);
+          texts = await deps.texts(c.deviceId);
         } catch (err) {
           log("the device program's risk texts are unavailable; no widening", err);
           throw failed();
         }
-        // Outside the sandbox a call runs as the owner on an os machine: the program shows its
-        // risk text then (login), so the dialog does too.
+        // What the program itself prints for this widening (`ceiling set`): the other connections'
+        // sentence when outside the sandbox turns on beside them. Outside the sandbox a call runs
+        // as the owner on an os machine: the program shows its risk text then (login), so here too.
+        let others = false;
+        if (widened.outsideSandbox) {
+          try {
+            others = (await controls.read()).length > 1;
+          } catch {
+            others = true; // unknown: shown, as the program does when it cannot list them
+          }
+        }
         const shown = [
           texts.ceilingWidening,
-          ...(widened.outsideSandbox && machine.mode !== "docker"
-            ? [texts.outsideSandboxRisk]
-            : []),
+          ...(others ? [texts.otherConnections] : []),
+          ...(widened.outsideSandbox && c.mode !== "docker" ? [texts.outsideSandboxRisk] : []),
         ];
         if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown, ctx.profile)))
           return "cancelled";
@@ -281,22 +303,23 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         // the person did not see named. Known limit: with --yes the program does not decide again,
         // so a narrowing landing between this read and the write is not caught; closing that needs
         // a precondition the program checks under its lock (an expected revision).
-        const now = await readCeiling(cli, machine.deviceId);
-        if (CEILING_FIELDS.some((f) => widensField(now, req, f) && !widened[f])) throw failed();
+        const now = await readCeiling(cli, c.deviceId);
+        if (CEILING_FIELDS.some((f) => widensField(now, req, f) && !wider(f))) throw failed();
         await run(cli, [...args, "--yes"]);
         return "applied";
       });
     },
 
-    async setKeepAwake(ctx: Ctx, mode: unknown): Promise<"applied" | "cancelled"> {
+    async setKeepAwake(ctx: Ctx, input: unknown): Promise<"applied" | "cancelled"> {
+      const mode = isRecord(input) ? input.mode : undefined;
       if (!isKeepAwakeMode(mode)) throw failed();
-      const machine = await connectedHere(ctx.profile);
-      const cur = await readKeepAwake(cli, machine.deviceId);
+      const c = await connectionHere(ctx.profile, input);
+      const cur = await readKeepAwake(cli, c.deviceId);
       const rank = (m: KeepAwakeMode) => KEEP_AWAKE_MODES.indexOf(m);
       if (rank(mode) <= rank(cur)) {
         if (mode === cur) return "applied";
         // Lowering: no --yes, so a raise that landed meanwhile is refused by the program.
-        await run(cli, ["keep-awake", mode]);
+        await run(cli, ["keep-awake", mode, "-c", c.deviceId]);
         changed();
         return "applied";
       }
@@ -305,27 +328,31 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised, ctx.profile)))
           return "cancelled";
         // Lowered while the dialog was open: the raise would be larger than the one confirmed.
-        if (rank(await readKeepAwake(cli, machine.deviceId)) < rank(cur)) throw failed();
-        await run(cli, ["keep-awake", raised, "--yes"]);
+        if (rank(await readKeepAwake(cli, c.deviceId)) < rank(cur)) throw failed();
+        await run(cli, ["keep-awake", raised, "-c", c.deviceId, "--yes"]);
         changed();
         return "applied";
       });
     },
-  };
+  } satisfies DeviceImpl;
 
   const events = {
-    onStatus(target: DeviceTarget, emit: (status: unknown) => void): () => void {
+    /** Fires, with no payload, when this profile's own connections changed: read `status`. */
+    onStatus(target: DeviceTarget, emit: (payload?: unknown) => void): () => void {
       const id = nextListener++;
-      listeners.set(id, { profile: target.profile, emit });
-      // The first listener opens the control subscription, whose first answer reads the
-      // machine; a later one reads it now (the others get nothing new: unchanged is not sent).
-      if (listeners.size === 1) subscribeControl();
-      else void refresh();
+      listeners.set(id, { profile: target.profile, emit: () => emit() });
+      if (listeners.size === 1) {
+        stopControls = controls.subscribeAll(() => {
+          void refresh();
+        });
+      }
+      // Records what this listener has now; a change after that is sent.
+      void refresh();
       return () => {
         if (!listeners.delete(id)) return;
         if (listeners.size === 0) {
-          stopControl?.();
-          stopControl = undefined;
+          stopControls?.();
+          stopControls = undefined;
         }
       };
     },
@@ -337,15 +364,23 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     confirming: ["connect", "resume"],
 
     /**
-     * Before a profile is removed (spec §6.3): when this machine is connected to that deployment,
-     * asks whether to disconnect and log the device out too; 「否」 keeps it.
+     * Before a profile is removed (spec §6.3): when this machine has connections into that
+     * deployment, asks once whether to disconnect them and log them out too; 「否」 keeps them.
+     * `logout -c` removes each one's login service (which stops it); one that fails is logged
+     * and the others still go. Connections into other deployments are never touched.
      */
     async beforeRemoveProfile(profile: Profile, parent: unknown): Promise<void> {
-      const machine = await readMachine(cli);
-      if (!isThisDeployment(machine, profile)) return;
-      if (!(await dialogs.confirmRemoveDevice(parent, profile))) return;
+      const here = connectionsHere(await controls.read(), profile);
+      if (here.length === 0) return;
+      if (!(await dialogs.confirmRemoveDevice(parent, profile, here.length))) return;
       try {
-        await stopAndLogout(cli);
+        for (const c of here) {
+          try {
+            await run(cli, ["logout", "-c", c.deviceId]);
+          } catch (err) {
+            log("a device connection could not be logged out", err);
+          }
+        }
       } finally {
         changed();
       }
