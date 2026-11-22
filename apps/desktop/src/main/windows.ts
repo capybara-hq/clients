@@ -202,6 +202,11 @@ export interface WindowManagerDeps {
   onProfileWindow?: (profile: Profile, window: WindowLike) => void;
   /** A profile window closed: its event subscriptions can go. */
   onProfileClosed?: (webContentsId: number) => void;
+  /**
+   * A profile window opened or closed (called once `hasProfileWindows` says so): the tray and the
+   * app menu mark which platforms are open.
+   */
+  onProfileWindowsChanged?: () => void;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
   /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
@@ -264,8 +269,11 @@ export function createWindowManager(deps: WindowManagerDeps) {
     const entry = byContents.get(id);
     if (!entry) return;
     byContents.delete(id);
-    if (entry.kind === "profile") deps.onProfileClosed?.(id);
     if (lastFocused === entry) lastFocused = undefined;
+    if (entry.kind === "profile") {
+      deps.onProfileClosed?.(id);
+      deps.onProfileWindowsChanged?.();
+    }
   }
 
   function track(entry: Entry): void {
@@ -368,6 +376,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     });
     win.webContents.on("did-navigate", () => deps.onProfileLoad?.(profile));
     deps.onProfileWindow?.(profile, win);
+    deps.onProfileWindowsChanged?.();
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
     const save = deps.saveBounds;

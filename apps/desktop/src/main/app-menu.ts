@@ -2,7 +2,7 @@
 // edit, view and window menus, every item labelled from the shell catalog (zh, en). 「登录时启动」 is off by default (spec §9.4): it is checked only when
 // the OS says the app is a login item, and toggling it calls `setLoginItemSettings`.
 import { type Locale, t } from "@capybara-hq/shell";
-import type { MenuItemModel, TrayState } from "./tray.ts";
+import { type MenuItemModel, platformLabel, type TrayState } from "./tray.ts";
 
 const SEPARATOR: MenuItemModel = { type: "separator" };
 
@@ -30,9 +30,15 @@ export function createStartAtLogin(app: LoginItemApp) {
 /** What the 「平台」 menu shows (spec §6.9). */
 export interface PlatformMenuState {
   locale: Locale;
-  /** The offered profiles, in order (the first nine get ⌘1…⌘9). */
-  profiles: { id: string; name: string; signedIn: boolean }[];
-  /** The current profile (the last used one), shown checked. */
+  /**
+   * The offered profiles, in order (the first nine get ⌘1…⌘9); `open`: a main window of it is
+   * open now.
+   */
+  profiles: { id: string; name: string; signedIn: boolean; open: boolean }[];
+  /**
+   * The current profile (the last used one): what 退出登录 and 移除 act on. Not shown as a check:
+   * several platforms can be open at once.
+   */
   activeId?: string | undefined;
   /** Managed `lockDeployments`: neither adding nor removing is offered. */
   lockDeployments: boolean;
@@ -49,7 +55,8 @@ export interface PlatformMenuActions {
 }
 
 /**
- * The 「平台」 menu (spec §6.9): the profiles as radio items (⌘1…⌘9), 「添加平台…」,
+ * The 「平台」 menu (spec §6.9): the profiles (⌘1…⌘9; an open one marked, `platformLabel`),
+ * 「添加平台…」,
  * 「退出登录 <平台>…」 (the current profile, enabled only while it is signed in) and 「移除这个平台…」.
  * The app menu shows it; the error overlay's 「切换平台」 pops the same template up
  * (`Menu.buildFromTemplate(platformMenuTemplate(...)).popup()`).
@@ -60,9 +67,7 @@ export function platformMenuTemplate(
 ): MenuItemModel[] {
   const tr = (key: string, vars?: Record<string, string>) => t(state.locale, key, vars);
   const items: MenuItemModel[] = state.profiles.map((p, i) => ({
-    label: p.name,
-    type: "radio",
-    checked: p.id === state.activeId,
+    label: platformLabel(state.locale, p),
     ...(i < 9 ? { accelerator: `CmdOrCtrl+${i + 1}` } : {}),
     click: () => actions.showProfile(p.id),
   }));
@@ -97,7 +102,7 @@ export interface AppMenuState extends TrayState, PlatformMenuState {
   productName: string;
   locale: Locale;
   startAtLogin: boolean;
-  profiles: { id: string; name: string; signedIn: boolean }[];
+  profiles: { id: string; name: string; signedIn: boolean; open: boolean }[];
 }
 
 export interface AppMenuActions extends PlatformMenuActions {
