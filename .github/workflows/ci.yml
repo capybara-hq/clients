@@ -181,7 +181,17 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: pnpm --filter @capybara-hq/mobile test:android:device
+          script: apps/mobile/scripts/android-device-test.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() || cancelled()
+        with:
+          name: android-device-failure
+          retention-days: 7
+          path: |
+            apps/mobile/android/app/build/device-diagnostics
+            apps/mobile/android/app/build/reports/androidTests
+            apps/mobile/android/app/build/outputs/androidTest-results
+          if-no-files-found: ignore
 
   commitlint:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft

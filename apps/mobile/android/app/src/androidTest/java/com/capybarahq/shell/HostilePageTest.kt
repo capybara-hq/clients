@@ -7,9 +7,7 @@
 
 package com.capybarahq.shell
 
-import android.os.SystemClock
 import android.util.Log
-import android.view.MotionEvent
 import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -101,15 +99,7 @@ class HostilePageTest {
         }
     }
 
-    private fun tapCenter(view: ProfileWebView) {
-        val location = IntArray(2)
-        instrumentation.runOnMainSync { view.getLocationOnScreen(location) }
-        val x = location[0] + view.width / 2f
-        val y = location[1] + view.height / 2f
-        val down = SystemClock.uptimeMillis()
-        instrumentation.sendPointerSync(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
-        instrumentation.sendPointerSync(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
-    }
+    private fun tapCenter(view: ProfileWebView) = InputInjection.tap(instrumentation, view)
 }
 
 /** The pass criteria, shared in substance with the iOS suite. */
