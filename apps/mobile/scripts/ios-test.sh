@@ -8,7 +8,8 @@
 # Xcode's iOS simulator SDK. The choice goes through DEVELOPER_DIR: nothing global changes, no sudo.
 # Simulator: an iPhone on the newest usable runtime (27.1 or later where present; an older runtime
 # never fails the run), a regular model before a special one (Duo). A simulator this script found
-# shut down is shut down again at the end.
+# shut down is shut down again at the end. It boots during the build; every bundle runs (a failed
+# one fails the script at the end), and its full output and result bundle go to ios/test-results.
 #
 # Usage: scripts/ios-test.sh AppTests|AppUITests [AppTests|AppUITests]
 set -euo pipefail
@@ -79,8 +80,30 @@ common=(
   -destination "platform=iOS Simulator,id=$udid"
   -derivedDataPath "$here/ios/DerivedData"
 )
+results="$here/ios/test-results"
+rm -rf "$results" && mkdir -p "$results"
+
+# Boot the simulator while the build runs, and wait until it is fully up before any test: left to
+# xcodebuild, a fresh CI simulator boots when the first bundle starts and is still settling while
+# the tests launch the app (clients#41: a UI test's launch timed out).
+xcrun simctl boot "$udid" 2>/dev/null || true
 xcodebuild build-for-testing "${common[@]}" -quiet
+xcrun simctl bootstatus "$udid" >/dev/null
+status=0
 for bundle in "$@"; do
+  # The full output and the result bundle stay in ios/test-results (CI uploads them on failure);
+  # the console gets the test lines.
+  set +e
   xcodebuild test-without-building "${common[@]}" -only-testing:"$bundle" \
-    | grep -E "Test Suite|Test Case|Executed|error:|TEST (SUCCEEDED|FAILED)|\*\* "
+    -resultBundlePath "$results/$bundle.xcresult" 2>&1 \
+    | tee "$results/$bundle.log" \
+    | grep --line-buffered -E "Test Suite|Test Case|Executed|error:|TEST (SUCCEEDED|FAILED)|\*\* "
+  code="${PIPESTATUS[0]}"
+  set -e
+  if [ "$code" != 0 ]; then
+    echo "xcodebuild exited $code for $bundle; the result bundle's summary:" >&2
+    xcrun xcresulttool get test-results summary --path "$results/$bundle.xcresult" >&2 || true
+    status="$code"
+  fi
 done
+exit "$status"
