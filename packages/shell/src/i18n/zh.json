@@ -70,6 +70,7 @@
   "menu.front": "前置全部窗口",
   "update.ready.title": "{name} 有新版本",
   "update.ready.body": "{version} 已下载，退出时安装。点按此处立即重新启动并更新。",
+  "platform.open_label": "{platform} • 已打开",
   "platform.remove": "移除平台",
   "platform.remove.message": "要移除 {name}（{host}）吗？",
   "platform.remove.message_host": "要移除 {host} 吗？",
