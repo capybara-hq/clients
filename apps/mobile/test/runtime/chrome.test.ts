@@ -171,4 +171,22 @@ describe("appearance", () => {
       statusBar: "dark",
     });
   });
+
+  test("nativeLook carries the accent and the ink on it as opaque hex when the tokens came", () => {
+    const tokens = {
+      bg: "#000",
+      panel: "#111",
+      ink: "#eee",
+      muted: "#888",
+      line: "#222",
+      accent: "rgba(255, 106, 19, 0.5)",
+      onAccent: "#FFF",
+    };
+    expect(nativeLook({ scheme: "dark", background: "#000", tokens })).toEqual({
+      background: "#000000",
+      statusBar: "light",
+      accent: "#ff6a13",
+      onAccent: "#ffffff",
+    });
+  });
 });

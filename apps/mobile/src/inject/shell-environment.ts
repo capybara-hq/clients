@@ -82,6 +82,23 @@ function isDescriptors(v: unknown): v is CapabilityDescriptors {
   );
 }
 
+function isFields(v: unknown): boolean {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  return Object.values(v).every(
+    (data) =>
+      typeof data === "object" &&
+      data !== null &&
+      !Array.isArray(data) &&
+      Object.values(data).every(
+        (value) =>
+          value === null ||
+          typeof value === "string" ||
+          typeof value === "number" ||
+          typeof value === "boolean",
+      ),
+  );
+}
+
 function isInsets(v: unknown): boolean {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
@@ -94,7 +111,8 @@ function isState(v: unknown): v is ShellState {
   return (
     isInsets(r.insets) &&
     isDescriptors(r.capabilities) &&
-    (r.events === undefined || isDescriptors(r.events))
+    (r.events === undefined || isDescriptors(r.events)) &&
+    (r.fields === undefined || isFields(r.fields))
   );
 }
 
