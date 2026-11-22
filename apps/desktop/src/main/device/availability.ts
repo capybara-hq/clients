@@ -1,4 +1,4 @@
-// When `device@1` is offered to a profile (spec §8, §9; plan Task 18): on macOS or Linux, unless
+// When `device@2` is offered to a profile (spec §8, §9; plan Task 18): on macOS or Linux, unless
 // the managed configuration turns 「连接本机」 off, and only to a deployment whose discovery says it
 // takes local devices on a protocol range that holds the bundled program's protocol. Decided in
 // main from the deployment's own `GET /api/v1/meta`, again at every load of a profile window; a
@@ -12,7 +12,7 @@ import type { Profile } from "../profiles.ts";
  * `DEVICE_PROTOCOL_VERSION`). The package does not export it at runtime without loading the whole
  * program, so it is restated here and pinned to the package by a test.
  */
-export const BUNDLED_DEVICE_PROTOCOL = 4;
+export const BUNDLED_DEVICE_PROTOCOL = 6;
 
 export function deviceOffered(o: {
   platform: string;
@@ -62,7 +62,7 @@ export function createDeviceAvailability(deps: DeviceAvailabilityDeps) {
   }
 
   return {
-    /** Whether the profile is offered `device@1` now (false until discovery answered). */
+    /** Whether the profile is offered `device@2` now (false until discovery answered). */
     isAvailable(profile: Profile): boolean {
       return possible && offered.get(profile.id) === true;
     },

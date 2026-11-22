@@ -1,16 +1,22 @@
 // The device program's own risk texts (spec §9.5): the widening dialog shows exactly what the
 // bundled program says, never a copy kept here that could drift from it. The bundled Node prints
-// the two constants of the bundled package (`CEILING_WIDENING_TEXT`, `OUTSIDE_SANDBOX_RISK_TEXT`) as
-// one JSON line; the answer is kept for the app run (the bundled package does not change while
-// the app runs; an update installs at quit).
+// the bundled package's `CEILING_WIDENING_TEXT`, `CEILING_OTHER_CONNECTIONS_TEXT` and
+// `outsideSandboxRiskText(deviceId)` as one JSON line; the answer is kept per connection for the
+// app run (the bundled package does not change while the app runs; an update installs at quit).
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { deviceEnv, devicePaths, type SpawnLike } from "./cli.ts";
+import { ID_PATTERN } from "./machine.ts";
 
 export interface DeviceTexts {
   /** `CEILING_WIDENING_TEXT` (device `commands/ceiling.js`). */
   ceilingWidening: string;
-  /** `OUTSIDE_SANDBOX_RISK_TEXT` (device `commands/login.js`). */
+  /**
+   * `CEILING_OTHER_CONNECTIONS_TEXT` (device `commands/ceiling.js`): shown after the widening text
+   * when outside the sandbox turns on while the machine holds other connections.
+   */
+  otherConnections: string;
+  /** `outsideSandboxRiskText(deviceId)` (device `commands/login.js`). */
   outsideSandboxRisk: string;
 }
 
@@ -22,12 +28,15 @@ export interface DeviceTextsDeps {
   timeoutMs?: number;
 }
 
-/** Self-contained: the two module URLs arrive as arguments, never spliced into the source. */
+/**
+ * Self-contained: the two module URLs and the device id arrive as arguments, never spliced into
+ * the source.
+ */
 const SCRIPT = [
-  "const [ceilingUrl, loginUrl] = process.argv.slice(1);",
+  "const [ceilingUrl, loginUrl, deviceId] = process.argv.slice(1);",
   "const ceiling = await import(ceilingUrl);",
   "const login = await import(loginUrl);",
-  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, outsideSandboxRisk: login.OUTSIDE_SANDBOX_RISK_TEXT }));",
+  "console.log(JSON.stringify({ ceilingWidening: ceiling.CEILING_WIDENING_TEXT, otherConnections: ceiling.CEILING_OTHER_CONNECTIONS_TEXT, outsideSandboxRisk: login.outsideSandboxRiskText(deviceId) }));",
 ].join("\n");
 
 const TEXT_MAX = 4000;
@@ -37,11 +46,11 @@ function parse(stdout: string): DeviceTexts | undefined {
   for (const line of stdout.split("\n").reverse()) {
     try {
       const v = JSON.parse(line) as Record<string, unknown>;
-      const { ceilingWidening, outsideSandboxRisk } = v ?? {};
+      const { ceilingWidening, otherConnections, outsideSandboxRisk } = v ?? {};
       const ok = (s: unknown): s is string =>
         typeof s === "string" && s.trim() !== "" && s.length <= TEXT_MAX;
-      if (ok(ceilingWidening) && ok(outsideSandboxRisk))
-        return { ceilingWidening, outsideSandboxRisk };
+      if (ok(ceilingWidening) && ok(otherConnections) && ok(outsideSandboxRisk))
+        return { ceilingWidening, otherConnections, outsideSandboxRisk };
     } catch {
       // not the answer line
     }
@@ -49,9 +58,14 @@ function parse(stdout: string): DeviceTexts | undefined {
   return undefined;
 }
 
-/** Answers the texts; rejects (and asks again next time) when the program gives none. */
-export function createDeviceTexts(deps: DeviceTextsDeps): () => Promise<DeviceTexts> {
-  let cached: Promise<DeviceTexts> | undefined;
+/**
+ * Answers the texts for a connection; rejects (and asks again next time) when the program gives
+ * none or the device id is not a safe one.
+ */
+export function createDeviceTexts(
+  deps: DeviceTextsDeps,
+): (deviceId: string) => Promise<DeviceTexts> {
+  const cached = new Map<string, Promise<DeviceTexts>>();
   const { node } = devicePaths(deps.resourcesPath);
   const dist = join(deps.resourcesPath, "device", "dist", "commands");
   const args = [
@@ -63,9 +77,9 @@ export function createDeviceTexts(deps: DeviceTextsDeps): () => Promise<DeviceTe
     pathToFileURL(join(dist, "login.js")).href,
   ];
 
-  function run(): Promise<DeviceTexts> {
+  function run(deviceId: string): Promise<DeviceTexts> {
     return new Promise((resolve, reject) => {
-      const child = deps.spawn(node, args, {
+      const child = deps.spawn(node, [...args, deviceId], {
         env: deviceEnv(deps.env),
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -93,11 +107,16 @@ export function createDeviceTexts(deps: DeviceTextsDeps): () => Promise<DeviceTe
     });
   }
 
-  return () => {
-    cached ??= run().catch((err: unknown) => {
-      cached = undefined;
-      throw err;
-    });
-    return cached;
+  return (deviceId) => {
+    if (!ID_PATTERN.test(deviceId)) return Promise.reject(new Error("invalid device id"));
+    let texts = cached.get(deviceId);
+    if (texts === undefined) {
+      texts = run(deviceId).catch((err: unknown) => {
+        cached.delete(deviceId);
+        throw err;
+      });
+      cached.set(deviceId, texts);
+    }
+    return texts;
   };
 }

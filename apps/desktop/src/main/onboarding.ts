@@ -92,8 +92,8 @@ export interface OnboardingDeps {
   /** Whether profiles may be removed (not under a managed lock). */
   canRemove(): boolean;
   /**
-   * Whether this machine is connected as the profile's deployment's device (device@1 status), for
-   * the signed-out page's note. Absent: never.
+   * Whether this machine has any connection into the profile's deployment (the last `status
+   * --json` read), for the signed-out page's note. Absent: never.
    */
   deviceConnected?: (profileId: string) => boolean;
   /** This machine's name, as the authorize page shows it. */

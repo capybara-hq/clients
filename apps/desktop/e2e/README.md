@@ -53,7 +53,7 @@ What it covers:
   profile's `cb-theme` cookie (path `/`, `SameSite=Lax`, not HttpOnly) in its partition.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{0,0,0,0}`, controls `{0,0,92,48}`) with `signIn@1`, `notify@1`, `openExternal@1`,
-  `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
+  `chrome@1`; `device@2` appears after discovery (macOS or Linux, `localDevices`, protocol 6 in
   range) without a reload. `executeInMainWorld` works.
 - Same-origin and `/plugin-ui/...` iframes do not see `capybaraShell`.
 - A `signIn@1` call without a user activation is refused (`no_activation`); a real click opens
@@ -64,8 +64,9 @@ What it covers:
 - `POST /api/v1/auth/login` from the window is blocked and never reaches the server.
 - The desktop user agent goes to the profile's origin (page, fetch, exchange); a redirect hop to
   another origin gets Chromium's own user agent, and the Shell environment is absent there.
-- A `device@1` event subscription returns an unsubscribe function across `contextBridge`, and
-  calling it (twice) does not throw.
+- A `device@2` event subscription returns an unsubscribe function across `contextBridge`, and
+  calling it (twice) does not throw. `device@2.requestCeiling` refuses the old shape, an empty
+  request and a device id that is not a connection into the page's deployment.
 - The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
   the main window and shows the small window's signed-out page; the profile stays, signed out.
   When the logout completes only after the page navigated to `/login`, that `/login` is stopped

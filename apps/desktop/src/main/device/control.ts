@@ -1,9 +1,10 @@
-// The client of a running device's control socket (spec §4.2, §9.3): newline-delimited JSON over
-// the unix socket `<stateDir>/control.sock` that every `capybara-device start` opens, whoever
-// started it (the login service or a terminal). The app attaches through it for the live status,
-// the running list and drain. Only the package's types are imported: its runtime entry pulls the
-// whole program, which belongs in Resources/device, not in the main-process bundle. The two
-// path rules it exports are restated below and pinned against the package in the tests.
+// The client of a running device connection's control socket (spec §4.2, §9.3): newline-delimited
+// JSON over the unix socket every `capybara-device start` opens for its connection, whoever started
+// it (the login service or a terminal). The app attaches through it for the live status, the
+// running list and drain. A socket path comes only from `status --json` (its `controlSocket`,
+// checked by machine.ts), never from listing the state directory. Only the package's types are
+// imported: its runtime entry pulls the whole program, which belongs in Resources/device, not in
+// the main-process bundle. The state directory rule is restated below and pinned in the tests.
 
 import { lstatSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -26,11 +27,6 @@ export class ControlError extends Error {
     this.code = code;
     this.name = "ControlError";
   }
-}
-
-/** `<stateDir>/control.sock` (the package's `controlSocketPath`). */
-export function controlSocketPath(stateDir: string): string {
-  return join(stateDir, "control.sock");
 }
 
 /** `$XDG_CONFIG_HOME/capybara-device`, or `~/.config/capybara-device` (the package's `stateDir`). */
@@ -146,19 +142,19 @@ function lineReader(onLine: (msg: unknown) => void, overflow: () => void) {
   };
 }
 
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const t = setTimeout(fn, ms);
+  return () => clearTimeout(t);
+}
+
 type Answer = { ok: true; result: unknown } | { ok: false; code: string; message: string };
 
-export function controlClient(stateDir: string, deps: ControlClientDeps = {}): ControlClient {
-  const path = controlSocketPath(stateDir);
+/** The client of the control socket at `path` (a `controlSocket` from `status --json`). */
+export function controlClient(path: string, deps: ControlClientDeps = {}): ControlClient {
   const connect = deps.connect ?? ((p: string) => createConnection(p) as unknown as SocketLike);
   const isOwnSocket = deps.isOwnSocket ?? defaultIsOwnSocket;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const schedule =
-    deps.schedule ??
-    ((fn: () => void, ms: number) => {
-      const t = setTimeout(fn, ms);
-      return () => clearTimeout(t);
-    });
+  const schedule = deps.schedule ?? defaultSchedule;
 
   /** One request on its own connection; undefined when no runner answers. */
   function request(op: ControlRequest["op"]): Promise<Answer | undefined> {
@@ -293,6 +289,134 @@ export function controlClient(stateDir: string, deps: ControlClientDeps = {}): C
         stopped = true;
         cancelRetry?.();
         sock?.destroy();
+      };
+    },
+  };
+}
+
+/** The client of a connection no read has shown a socket for: no runner answers. */
+const NO_RUNNER: ControlClient = {
+  status: async () => undefined,
+  running: async () => [],
+  drain: async () => {
+    throw new ControlError("no_runner", "No capybara-device runner answers for this connection");
+  },
+  subscribe(cb) {
+    cb(undefined);
+    return () => {};
+  },
+};
+
+/** What the connection controls use of one connection as `status --json` showed it. */
+export interface ConnectionSocket {
+  deviceId: string;
+  /** The checked control socket path; null when the program gave none that passed the check. */
+  controlSocket: string | null;
+  control: "ok" | "absent" | "unavailable";
+}
+
+export interface ConnectionControls<C extends ConnectionSocket> {
+  /** Every connection of this machine now (`status --json`); remembered for {@link forDevice}. */
+  read(): Promise<C[]>;
+  /** The control client of a connection's socket as the last read showed it. */
+  forDevice(deviceId: string): ControlClient;
+  /**
+   * Calls `cb` when any connection's runner status changes and when a connection appears, goes
+   * or changes its control state (`status --json` again every {@link RESCAN_MS}). Answers how to
+   * stop.
+   */
+  subscribeAll(cb: () => void): () => void;
+}
+
+/** How often {@link ConnectionControls.subscribeAll} reads the connections again. */
+export const RESCAN_MS = 5000;
+
+export function createConnectionControls<C extends ConnectionSocket>(
+  deps: ControlClientDeps & { readConnections: () => Promise<C[]> },
+): ConnectionControls<C> {
+  const schedule = deps.schedule ?? defaultSchedule;
+  let sockets = new Map<string, string>();
+
+  async function read(): Promise<C[]> {
+    const all = await deps.readConnections();
+    sockets = new Map(
+      all.flatMap((c) => (c.controlSocket === null ? [] : [[c.deviceId, c.controlSocket]])),
+    );
+    return all;
+  }
+
+  return {
+    read,
+
+    forDevice(deviceId) {
+      const path = sockets.get(deviceId);
+      return path === undefined ? NO_RUNNER : controlClient(path, deps);
+    },
+
+    subscribeAll(cb) {
+      let stopped = false;
+      let first = true;
+      let cancelScan: (() => void) | undefined;
+      // By device id: what the last read showed of it, and its socket subscription if any.
+      const followed = new Map<string, { key: string; stop?: () => void }>();
+
+      const notify = () => {
+        if (!stopped) cb();
+      };
+      const keyOf = (c: C) => `${c.control}\0${c.controlSocket ?? ""}`;
+      function follow(c: C): { key: string; stop?: () => void } {
+        const key = keyOf(c);
+        if (c.controlSocket === null) return { key };
+        let initial = true;
+        const stop = controlClient(c.controlSocket, deps).subscribe(() => {
+          // the status at subscription time is already known from the read
+          if (initial) {
+            initial = false;
+            return;
+          }
+          notify();
+        });
+        return { key, stop };
+      }
+
+      async function scan(): Promise<void> {
+        cancelScan = undefined;
+        let all: C[] | undefined;
+        try {
+          all = await read();
+        } catch {
+          all = undefined; // an unreadable status keeps what is followed until the next scan
+        }
+        if (stopped) return;
+        if (all !== undefined) {
+          let changed = false;
+          const seen = new Set<string>();
+          for (const c of all) {
+            seen.add(c.deviceId);
+            const cur = followed.get(c.deviceId);
+            if (cur?.key === keyOf(c)) continue;
+            cur?.stop?.();
+            followed.set(c.deviceId, follow(c));
+            changed = true;
+          }
+          for (const [id, cur] of followed) {
+            if (seen.has(id)) continue;
+            cur.stop?.();
+            followed.delete(id);
+            changed = true;
+          }
+          if (changed && !first) notify();
+          first = false;
+        }
+        cancelScan = schedule(() => void scan(), RESCAN_MS);
+      }
+
+      void scan();
+      return () => {
+        stopped = true;
+        cancelScan?.();
+        for (const cur of followed.values()) cur.stop?.();
+        followed.clear();
       };
     },
   };

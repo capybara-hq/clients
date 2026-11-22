@@ -53,9 +53,14 @@ import {
 import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
-import { controlClient, deviceStateDir } from "./device/control.ts";
+import { createConnectionControls, deviceStateDir } from "./device/control.ts";
 import { createDeviceDialogs, dialogPlatformOf } from "./device/dialogs.ts";
-import { readKeepAwake, readMachine } from "./device/machine.ts";
+import {
+  connectionsHere,
+  type MachineConnection,
+  readConnections,
+  readKeepAwake,
+} from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
 import { createTrayDevice } from "./device/tray-device.ts";
@@ -173,7 +178,7 @@ function start(): void {
 
     // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
     // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
-    // connecting (device@1 below); at start a packaged app only repairs an installed service whose
+    // connecting (device@2 below); at start a packaged app only repairs an installed service whose
     // app moved, then restarts it if an update replaced the bundled device it runs.
     const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
     const deviceCli = createDeviceCli({
@@ -185,8 +190,23 @@ function start(): void {
     // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
     // running for the app is ended with it.
     app.on("will-quit", () => deviceCli.dispose());
+    // Every connection of this machine (`status --json`) and each one's control socket. The last
+    // list read, by whoever read it, answers the signed-out page's device note.
+    let lastConnections: MachineConnection[] = [];
+    const connections = createConnectionControls({
+      readConnections: async () => {
+        lastConnections = await readConnections(deviceCli, deviceStateDir(process.env, homedir()));
+        return lastConnections;
+      },
+    });
     // `env`: `service install` records a PATH that also finds docker (launchd's is short).
-    const deviceService = createDeviceService({ cli: deviceCli, resourcesPath, env: process.env });
+    const deviceService = createDeviceService({
+      cli: deviceCli,
+      resourcesPath,
+      env: process.env,
+      connections: () => connections.read(),
+      log: (message, err) => console.error(message, err ?? ""),
+    });
     const profiles = createProfileStore({
       file: join(app.getPath("userData"), "profiles.json"),
       fs,
@@ -240,7 +260,6 @@ function start(): void {
 
     // One dialog at a time per profile, for a page's call and the tray's click alike.
     const confirmGate = createConfirmGate();
-    const control = controlClient(deviceStateDir(process.env, homedir()));
     const bridge = createShellBridge<ProfileTarget>({
       gate: confirmGate,
       resolveSender: (sender) => windows.resolveSender(sender),
@@ -278,7 +297,7 @@ function start(): void {
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       describeEvents: (profile) => bridge.describeEvents(profile),
-      // Each load of a deployment window asks its discovery again whether device@1 is offered.
+      // Each load of a deployment window asks its discovery again whether device@2 is offered.
       onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
       // The menus mark the platforms with an open window.
@@ -410,11 +429,11 @@ function start(): void {
       log: (message, err) => console.error(message, err ?? ""),
     });
     const showDialog = shellDialogs.show;
-    // device@1 (spec §8, §9): native confirmations attached to the calling window.
+    // device@2 (spec §8, §9): native confirmations attached to the calling window.
     const device = createDeviceCapability({
       cli: deviceCli,
+      controls: connections,
       service: deviceService,
-      control,
       dialogs: createDeviceDialogs({
         showDialog,
         iconFor,
@@ -443,10 +462,10 @@ function start(): void {
     // there. A profile is saved only when its first sign-in completes (spec §6.3).
     // The provisional profile whose sign-in began last: its partition gets the app's choices.
     let begun: Profile | undefined;
-    /** This machine is connected as the profile's deployment's device (the tray's status). */
+    /** This machine has a connection into the profile's deployment (the last list read). */
     const deviceConnectedTo = (id: string): boolean => {
-      const d = trayDevice.current();
-      return d.icon !== "not_connected" && d.profileId === id;
+      const profile = profiles.get(id);
+      return profile !== undefined && connectionsHere(lastConnections, profile).length > 0;
     };
     /** The device note the signed-out page last rendered (`<profileId>:<connected>`). */
     let lastDeviceNote: string | undefined;
@@ -566,15 +585,22 @@ function start(): void {
       else onboarding.openConnect(managed.profiles?.[0]);
     };
 
-    // This machine's device in the tray (spec §9.6). Its actions are device@1's own functions.
+    // This machine's device connections in the tray (spec §9.6): a row per connection. The tray is
+    // the app's own UI, not a page, so it may show any deployment's connection; its actions name
+    // the device id of the row, and device@2 refuses unless that is a connection into the profile
+    // the action is for. Its actions are device@2's own functions.
     const trayDevice = createTrayDevice({
-      // Managed 「连接本机」 off: no device in the tray, like device@1 is not offered.
+      // Managed 「连接本机」 off: no device in the tray, like device@2 is not offered.
       enabled: managed.connectThisMachine !== false,
-      control,
-      readMachine: () => readMachine(deviceCli),
-      readKeepAwake: () => readKeepAwake(deviceCli),
+      controls: connections,
+      readKeepAwake: (deviceId) => readKeepAwake(deviceCli, deviceId),
       profiles: visibleProfiles,
-      impl: device.impl,
+      impl: {
+        pause: (ctx, deviceId) => device.impl.pause(ctx, { deviceId }),
+        resume: (ctx, deviceId) => device.impl.resume(ctx, { deviceId }),
+        disconnect: (ctx, deviceId) => device.impl.disconnect(ctx, { deviceId }),
+        setKeepAwake: (ctx, deviceId, mode) => device.impl.setKeepAwake(ctx, { deviceId, mode }),
+      },
       gate: confirmGate,
       openDevicePage: (profile, path) => openProfile(profile, profile.base + path),
       onChange: () => {
@@ -797,7 +823,7 @@ function start(): void {
       };
     }
     function render(): void {
-      const state = { ...menuState(), device: trayDevice.current() };
+      const state = { ...menuState(), devices: trayDevice.current() };
       tray.update(state);
       Menu.setApplicationMenu(
         Menu.buildFromTemplate(
@@ -904,10 +930,13 @@ function start(): void {
     // `afterUpdate` call at the next start is the one that finds the new device on disk and
     // restarts the service on it.
     if (app.isPackaged) {
+      // One connection's failed repair must not skip the restart of the others.
+      const failedCheck = (err: unknown) => console.error("device service check failed", err);
       void deviceService
         .repairService()
+        .catch(failedCheck)
         .then(() => deviceService.afterUpdate())
-        .catch((err: unknown) => console.error("device service check failed", err));
+        .catch(failedCheck);
       const updates = setupUpdates({
         autoUpdater,
         managed,

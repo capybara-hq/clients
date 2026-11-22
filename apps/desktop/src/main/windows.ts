@@ -186,7 +186,7 @@ export interface WindowManagerDeps {
   openExternal(url: string): unknown;
   /** The capability descriptors offered to a profile now. */
   describe(profile: Profile): CapabilityDescriptors;
-  /** The event names offered to a profile now (`device@1.onStatus`). */
+  /** The event names offered to a profile now (`device@2.onStatus`). */
   describeEvents?: (profile: Profile) => CapabilityDescriptors;
   /** A profile window committed a main-frame navigation: what is offered may be decided again. */
   onProfileLoad?: (profile: Profile) => void;

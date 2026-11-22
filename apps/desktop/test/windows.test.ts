@@ -525,7 +525,7 @@ describe("the main window's rectangle", () => {
   });
 });
 
-describe("device@1 support", () => {
+describe("device@2 support", () => {
   test("a main-frame navigation of a profile window reports the profile load", () => {
     const onProfileLoad = vi.fn();
     const { windows, created } = setup({ onProfileLoad });
@@ -545,14 +545,14 @@ describe("device@1 support", () => {
 
   test("change carries the event names when there are any", () => {
     const { windows, created } = setup({
-      describe: () => ({ "device@1": ["status"] }),
-      describeEvents: () => ({ "device@1": ["onStatus"] }),
+      describe: () => ({ "device@2": ["status"] }),
+      describeEvents: () => ({ "device@2": ["onStatus"] }),
     });
     windows.openProfileWindow(p1);
     windows.broadcastChange(p1.id);
     expect(created[0]?.webContents.send).toHaveBeenLastCalledWith(
       SHELL_CHANNELS.change,
-      expect.objectContaining({ events: { "device@1": ["onStatus"] } }),
+      expect.objectContaining({ events: { "device@2": ["onStatus"] } }),
     );
   });
 

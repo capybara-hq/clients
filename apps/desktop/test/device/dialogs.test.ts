@@ -104,7 +104,6 @@ describe("the connect dialog", () => {
 describe("the other confirmations", () => {
   test("every one defaults to and cancels with its first button, confirms with its last", async () => {
     const { dialogs, shown } = setup(false);
-    expect(await dialogs.confirmDisconnectOther(null, "https://other.example.com")).toBe(false);
     expect(await dialogs.confirmResume(null, named)).toBe(false);
     expect(
       await dialogs.confirmWidenCeiling(
@@ -114,7 +113,7 @@ describe("the other confirmations", () => {
       ),
     ).toBe(false);
     expect(await dialogs.confirmRaiseKeepAwake(null, "connected")).toBe(false);
-    expect(await dialogs.confirmRemoveDevice(null, named)).toBe(false);
+    expect(await dialogs.confirmRemoveDevice(null, named, 1)).toBe(false);
     for (const { options } of shown) {
       expect(options.buttons).toHaveLength(2);
       expect(options.defaultId).toBe(0);
@@ -124,24 +123,21 @@ describe("the other confirmations", () => {
     }
   });
 
-  test("disconnecting another deployment names only its origin", async () => {
-    const { dialogs, shown } = setup(true);
-    expect(await dialogs.confirmDisconnectOther(null, "https://other.example.com")).toBe(true);
-    expect(shown[0]?.options.title).toContain("https://other.example.com");
-    expect(shown[0]?.options.tone).toBe("danger");
-  });
-
   test("the widening dialog names each widened item, then the program's own texts", async () => {
     const cases = [
       [{ outsideSandbox: true, network: false, projectReach: false }, "沙箱外运行：允许"],
       [{ outsideSandbox: false, network: true, projectReach: false }, "网络：开放（公共互联网）"],
       [
-        { outsideSandbox: false, network: false, projectReach: true },
-        "项目范围：整个系统用户（os-user）",
+        { outsideSandbox: false, network: false, projectReach: "paths" },
+        "项目范围：列出的项目路径（paths）",
       ],
       [
-        { outsideSandbox: true, network: true, projectReach: true },
-        "沙箱外运行：允许\n网络：开放（公共互联网）\n项目范围：整个系统用户（os-user）",
+        { outsideSandbox: false, network: false, projectReach: "machine" },
+        "项目范围：整台机器，密钥和其他连接除外（machine）",
+      ],
+      [
+        { outsideSandbox: true, network: true, projectReach: "machine" },
+        "沙箱外运行：允许\n网络：开放（公共互联网）\n项目范围：整台机器，密钥和其他连接除外（machine）",
       ],
     ] as const;
     for (const [widened, lines] of cases) {
@@ -156,12 +152,12 @@ describe("the other confirmations", () => {
     const { dialogs, shown } = setup(true, "en");
     await dialogs.confirmWidenCeiling(
       null,
-      { outsideSandbox: true, network: true, projectReach: true },
+      { outsideSandbox: true, network: true, projectReach: "paths" },
       ["W."],
     );
     expect(shown[0]?.options.detail).toBe(
       "Running outside the sandbox: allowed\nNetwork: open (the public internet)\n" +
-        "Project reach: the whole OS user (os-user)\n\nW.",
+        "Project reach: the listed project paths (paths)\n\nW.",
     );
   });
 
@@ -183,12 +179,29 @@ describe("the other confirmations", () => {
     expect(en.shown[0]?.options.detail).toContain("lid switch");
   });
 
-  test("profile removal asks 是 / 否 about the device", async () => {
+  test("profile removal asks 是 / 否 about the platform's devices, naming how many", async () => {
     const { dialogs, shown } = setup(true);
-    expect(await dialogs.confirmRemoveDevice(null, named)).toBe(true);
+    expect(await dialogs.confirmRemoveDevice(null, named, 2)).toBe(true);
     expect(shown[0]?.options.buttons).toEqual(["否", "是"]);
     expect(shown[0]?.options.tone).toBe("danger");
+    expect(shown[0]?.options.title).toBe("同时断开本机在这个平台上的 2 个设备并退出登录？");
     expect(shown[0]?.options.detail).toContain("Acme 平台");
+    const en = setup(true, "en");
+    await en.dialogs.confirmRemoveDevice(null, named, 3);
+    expect(en.shown[0]?.options.title).toBe(
+      "Also disconnect this computer's 3 devices on this platform and log them out?",
+    );
+    // One connection: no "1 devices".
+    const one = setup(true, "en");
+    await one.dialogs.confirmRemoveDevice(null, named, 1);
+    expect(one.shown[0]?.options.title).toBe(
+      "Also disconnect this computer's device on this platform and log it out?",
+    );
+    expect(one.shown[0]?.options.detail).toContain("as a local device");
+    expect(en.shown[0]?.options.detail).toContain("as local devices");
+    const zhOne = setup(true);
+    await zhOne.dialogs.confirmRemoveDevice(null, named, 1);
+    expect(zhOne.shown[0]?.options.title).toBe("同时断开本机在这个平台上的设备并退出登录？");
   });
 });
 
@@ -205,8 +218,8 @@ describe("the dialogs' language (spec 12)", () => {
       platform: "darwin",
     });
     await dialogs.confirmConnect(null, named);
-    await dialogs.confirmRemoveDevice(null, named);
-    await dialogs.confirmDisconnectOther(null, "https://other.example.com");
+    await dialogs.confirmRemoveDevice(null, named, 1);
+    await dialogs.confirmRaiseKeepAwake(null, "connected");
     expect(shown[0]?.buttons).toEqual(["Cancel", "Allow"]);
     expect(shown[0]?.profileId).toBe(named.id);
     expect(shown[1]?.title).not.toMatch(/[一-鿿]/);

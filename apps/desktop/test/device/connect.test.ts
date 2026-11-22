@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { DeviceCliOptions } from "../../src/main/device/cli.ts";
 import { createConnect, verificationUrl } from "../../src/main/device/connect.ts";
+import { DeviceServiceError } from "../../src/main/device/service.ts";
 import {
   carriesSecret,
   ctxFor,
@@ -8,8 +9,8 @@ import {
   fakeDialogs,
   fakeService,
   fakeVerification,
-  loggedIn,
   profileA,
+  threeConnections,
 } from "./fake-device.ts";
 
 /** A login the test drives: `verification`, then `done` or an error, then the exit. */
@@ -42,12 +43,18 @@ function scriptedLogin() {
 const LOGIN = "login --json --url https://a.example.com/team";
 const VERIFY = "https://a.example.com/team/devices/link?code=ABCD-EFGH";
 
+/** The `done` event of a login that added `dev_new`. */
+const DONE = { event: "done", deviceId: "dev_new", orgId: "org_1", dir: "/x", replaced: false };
+
 function setup(
   o: { status?: Record<string, unknown>; answer?: Parameters<typeof fakeDialogs>[0] } = {},
 ) {
   const login = scriptedLogin();
   const cli = fakeCli(
-    { ...(o.status && { status: o.status }), service: { installed: true, loaded: true } },
+    {
+      status: o.status ?? threeConnections(),
+      service: { installed: true, loaded: true },
+    },
     { [LOGIN]: login.handler },
   );
   const dialogs = fakeDialogs(o.answer ?? true);
@@ -112,12 +119,12 @@ describe("connect", () => {
         parent: ctx.window,
       },
     ]);
-    s.login.emit({ event: "done", deviceId: "dev_9", orgId: "org_1", dir: "/x" });
+    s.login.emit(DONE);
     expect(s.verification.close).toHaveBeenCalled();
     s.login.exit(0);
     expect(await result).toBe("connected");
-    expect(s.service.ensureService).toHaveBeenCalledOnce();
-    expect(s.cli.writes()).toEqual([LOGIN, "service start"]);
+    expect(s.service.ensureService).toHaveBeenCalledExactlyOnceWith("dev_new");
+    expect(s.cli.writes()).toEqual([LOGIN, "service start -c dev_new"]);
   });
 
   test("closing the verification window ends the login: cancelled, no service", async () => {
@@ -138,11 +145,11 @@ describe("connect", () => {
     await s.login.started;
     s.login.emit({ event: "verification", url: "https://evil.example.com/x?code=1" });
     expect(s.login.opts?.signal?.aborted).toBe(true);
-    await expect(result).rejects.toMatchObject({ code: "failed" });
+    expect(await result).toEqual({ error: "login_failed" });
     expect(s.verification.open).not.toHaveBeenCalled();
   });
 
-  test("denied in the browser is cancelled; another error fails", async () => {
+  test("denied in the browser is cancelled; another error answers login_failed", async () => {
     const denied = setup();
     const r1 = denied.connect(ctxFor(), { orgId: "org_1" });
     await denied.login.started;
@@ -157,60 +164,28 @@ describe("connect", () => {
     await expired.login.started;
     expired.login.emit({ event: "error", code: "device_sign_in.expired", message: "expired" });
     expired.login.exit(1);
-    await expect(r2).rejects.toMatchObject({ code: "failed" });
+    expect(await r2).toEqual({ error: "login_failed" });
     expect(expired.service.ensureService).not.toHaveBeenCalled();
   });
 
-  test("a failed service start fails the connect", async () => {
-    const login = scriptedLogin();
-    const cli = fakeCli({}, { [LOGIN]: login.handler, "service start": () => ({ code: 1 }) });
-    const connect = createConnect({
-      cli: cli.cli,
-      service: fakeService(),
-      dialogs: fakeDialogs(true).dialogs,
-      openVerification: fakeVerification().open,
-    });
-    const result = connect(ctxFor(), { orgId: "org_1" });
-    await login.started;
-    login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
-    login.exit(0);
-    await expect(result).rejects.toMatchObject({ code: "failed" });
+  test("a done event without a safe device id runs nothing for it: login_failed", async () => {
+    for (const deviceId of [undefined, 7, "", "../x", "-c x"]) {
+      const s = setup();
+      const result = s.connect(ctxFor(), { orgId: "org_1" });
+      await s.login.started;
+      s.login.emit({ ...DONE, deviceId });
+      s.login.exit(0);
+      expect(await result).toEqual({ error: "login_failed" });
+      expect(s.service.ensureService).not.toHaveBeenCalled();
+      expect(s.cli.writes()).toEqual([LOGIN]);
+    }
   });
 
-  test("already connected to this deployment: connected, no dialog, no login", async () => {
-    const s = setup({ status: loggedIn() });
-    expect(await s.connect(ctxFor(), { orgId: "org_1" })).toBe("connected");
-    expect(s.dialogs.asked).toEqual([]);
-    expect(s.cli.writes()).toEqual([]);
-  });
-
-  test("logged in elsewhere: asks to disconnect it first (service stop, logout), then logs in", async () => {
-    const s = setup({ status: loggedIn({ url: "https://other.example.com" }) });
-    const ctx = ctxFor();
-    const result = s.connect(ctx, { orgId: "org_1" });
-    await s.login.started;
-    expect(s.dialogs.names()).toEqual(["confirmConnect", "confirmDisconnectOther"]);
-    expect(s.dialogs.asked[1]?.args).toEqual([ctx.window, "https://other.example.com"]);
-    expect(s.cli.writes()).toEqual(["service stop", "logout", LOGIN]);
-    s.login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
-    s.login.exit(0);
-    expect(await result).toBe("connected");
-  });
-
-  test("refusing to disconnect the other deployment stops: cancelled, nothing changed", async () => {
-    const s = setup({
-      status: loggedIn({ url: "https://other.example.com" }),
-      answer: (name) => name !== "confirmDisconnectOther",
-    });
-    expect(await s.connect(ctxFor(), { orgId: "org_1" })).toBe("cancelled");
-    expect(s.cli.writes()).toEqual([]);
-  });
-
-  test("a terminal runner of the other deployment is ended by logout alone", async () => {
+  test("connect answers { error: 'service_failed' } when the login service does not start", async () => {
     const login = scriptedLogin();
     const cli = fakeCli(
-      { status: loggedIn({ url: "https://other.example.com" }), service: { installed: false } },
-      { [LOGIN]: login.handler },
+      {},
+      { [LOGIN]: login.handler, "service start -c dev_new": () => ({ code: 1 }) },
     );
     const connect = createConnect({
       cli: cli.cli,
@@ -220,10 +195,54 @@ describe("connect", () => {
     });
     const result = connect(ctxFor(), { orgId: "org_1" });
     await login.started;
-    expect(cli.writes()).toEqual(["logout", LOGIN]);
-    login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
+    login.emit(DONE);
     login.exit(0);
-    await result;
+    expect(await result).toEqual({ error: "service_failed" });
+  });
+
+  test("an app run from a temporary place answers { error: 'app_location' }", async () => {
+    const login = scriptedLogin();
+    const cli = fakeCli({}, { [LOGIN]: login.handler });
+    const service = fakeService();
+    service.ensureService.mockRejectedValueOnce(
+      new DeviceServiceError("app_location", "move it to Applications first"),
+    );
+    const connect = createConnect({
+      cli: cli.cli,
+      service,
+      dialogs: fakeDialogs(true).dialogs,
+      openVerification: fakeVerification().open,
+    });
+    const result = connect(ctxFor(), { orgId: "org_1" });
+    await login.started;
+    login.emit(DONE);
+    login.exit(0);
+    expect(await result).toEqual({ error: "app_location" });
+    expect(cli.writes()).toEqual([LOGIN]);
+  });
+
+  test("connect adds a connection without touching another platform's", async () => {
+    // The machine has A's two connections and B's one; connecting from A again adds a fourth.
+    const s = setup();
+    const result = s.connect(ctxFor(), { orgId: "org_1" });
+    await s.login.started;
+    expect(s.dialogs.names()).toEqual(["confirmConnect"]);
+    s.login.emit(DONE);
+    s.login.exit(0);
+    expect(await result).toBe("connected");
+    expect(s.cli.writes()).toEqual([LOGIN, "service start -c dev_new"]);
+    expect(s.cli.commands().some((c) => c.startsWith("logout") || c.includes("stop"))).toBe(false);
+    expect(s.cli.calls.flatMap((c) => c.args)).not.toContain("dev_b1");
+  });
+
+  test("a connection already into this deployment does not short-cut: a new one is added", async () => {
+    const s = setup();
+    const result = s.connect(ctxFor(), { orgId: "org_2" });
+    await s.login.started;
+    s.login.emit({ ...DONE, orgId: "org_2" });
+    s.login.exit(0);
+    expect(await result).toBe("connected");
+    expect(s.dialogs.names()).toEqual(["confirmConnect"]);
   });
 
   test("one connect at a time across every profile: another answers busy", async () => {
@@ -239,7 +258,7 @@ describe("connect", () => {
     await expect(s.connect(ctxFor(other), { orgId: "org_2" })).rejects.toMatchObject({
       code: "busy",
     });
-    s.login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
+    s.login.emit(DONE);
     s.login.exit(0);
     expect(await first).toBe("connected");
     // Free again afterwards: the next connect runs its own login.
@@ -247,7 +266,7 @@ describe("connect", () => {
     await vi.waitFor(() =>
       expect(s.cli.writes().filter((c) => c.startsWith("login"))).toHaveLength(2),
     );
-    s.login.emit({ event: "done", deviceId: "d", orgId: "org_1", dir: "/x" });
+    s.login.emit(DONE);
     s.login.exit(0);
     expect(await again).toBe("connected");
   });
@@ -264,8 +283,6 @@ describe("connect", () => {
       { orgId: "org 1" },
       { orgId: "org_1&x=1" },
       { orgId: "a".repeat(200) },
-      { orgId: "org_1", deviceId: "../x" },
-      { orgId: "org_1", deviceId: 3 },
     ]) {
       await expect(s.connect(ctxFor(), input)).rejects.toMatchObject({ code: "failed" });
     }
@@ -274,9 +291,12 @@ describe("connect", () => {
   });
 
   test("no result carries the credential", async () => {
-    const s = setup({ status: loggedIn() });
-    const r = await s.connect(ctxFor(), { orgId: "org_1" });
-    expect(carriesSecret(r)).toBe(false);
+    const s = setup();
+    const result = s.connect(ctxFor(), { orgId: "org_1" });
+    await s.login.started;
+    s.login.emit({ ...DONE, credential: "cap_dev_SECRET_credential_value" });
+    s.login.exit(0);
+    expect(carriesSecret(await result)).toBe(false);
   });
 
   test("the login's lines are never logged", async () => {
@@ -293,7 +313,7 @@ describe("connect", () => {
     const result = connect(ctxFor(), { orgId: "org_1" });
     await login.started;
     login.emit({ event: "verification", url: "https://evil.example.com/?code=SECRETCODE" });
-    await expect(result).rejects.toMatchObject({ code: "failed" });
+    expect(await result).toEqual({ error: "login_failed" });
     expect(JSON.stringify(log.mock.calls)).not.toContain("SECRETCODE");
   });
 });

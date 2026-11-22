@@ -8,6 +8,7 @@ import {
   type TrayDevice,
   type TrayLike,
   trayMenuModel,
+  worstIcon,
 } from "../src/main/tray.ts";
 
 const actions = (): TrayActions => ({
@@ -388,7 +389,30 @@ describe("start at login (spec 9.4)", () => {
   });
 });
 
-describe("the tray's device state (spec 9.6)", () => {
+const device = (over: Partial<TrayDevice> = {}): TrayDevice => ({
+  deviceId: "dev_1",
+  host: "a.example.com",
+  orgLabel: "Acme",
+  icon: "online",
+  running: 0,
+  keepAwake: "while-busy",
+  profileId: "p1",
+  ...over,
+});
+
+describe("worstIcon", () => {
+  const d = (icon: TrayDevice["icon"]) => device({ icon });
+  test("offline over busy over paused over online; none: not connected", () => {
+    expect(worstIcon([d("online"), d("busy")])).toBe("busy");
+    expect(worstIcon([d("busy"), d("offline")])).toBe("offline");
+    expect(worstIcon([d("online"), d("paused")])).toBe("paused");
+    expect(worstIcon([d("busy"), d("paused")])).toBe("busy");
+    expect(worstIcon([d("online")])).toBe("online");
+    expect(worstIcon([])).toBe("not_connected");
+  });
+});
+
+describe("the tray's device rows (spec 9.6)", () => {
   const deviceActions = () => ({
     pause: vi.fn(),
     resume: vi.fn(),
@@ -396,127 +420,125 @@ describe("the tray's device state (spec 9.6)", () => {
     setKeepAwake: vi.fn(),
     openDevicePage: vi.fn(),
   });
-  const withDevice = (device: TrayDevice, locale: "zh" | "en" = "zh") => ({
+  const withDevices = (devices: TrayDevice[], locale: "zh" | "en" = "zh") => ({
     ...state,
     locale,
-    device,
+    devices,
   });
-  const online: TrayDevice = {
-    icon: "online",
-    running: 0,
-    keepAwake: "while-busy",
-    profileId: "p1",
-    deviceId: "dev_1",
-  };
   const a = (d = deviceActions()) => ({ ...actions(), device: d });
-  const section = (items: MenuItemModel[]) => {
-    const i = items.findIndex((x) => x.label === "本机");
-    return items.slice(0, i + 1);
-  };
+  const rows = (items: MenuItemModel[]) =>
+    items.filter((i) => i.submenu && i.label?.includes(" · "));
+  const row = (items: MenuItemModel[], n = 0) => rows(items)[n];
 
-  test("not connected: no device entries at all", () => {
-    expect(
-      labels(
-        trayMenuModel(withDevice({ icon: "not_connected", running: 0, keepAwake: "off" }), a()),
-      ),
-    ).toEqual(labels(trayMenuModel(state, actions())));
+  test("no connections: no device entries at all", () => {
+    expect(labels(trayMenuModel(withDevices([]), a()))).toEqual(
+      labels(trayMenuModel(state, actions())),
+    );
   });
 
-  test("online: status, running count, 暂停, 断开, keep-awake, 本机", () => {
-    const items = trayMenuModel(withDevice(online), a());
+  test("one row per connection: host · org · state, each with its own submenu", () => {
+    const items = trayMenuModel(
+      withDevices([
+        device(),
+        device({ deviceId: "dev_2", host: "b.example.com", orgLabel: "Beta", icon: "paused" }),
+      ]),
+      a(),
+    );
     expect(labels(items)).toEqual([
       "Example",
       "Other",
       "-",
       "添加平台",
       "-",
+      "a.example.com · Acme · 在线",
+      "b.example.com · Beta · 已暂停",
+      "-",
+      "打开窗口",
+      "-",
+      "退出",
+    ]);
+    expect(labels(row(items, 0)?.submenu ?? [])).toEqual([
       "本机：在线",
       "运行中：0",
       "暂停",
       "断开",
       "保持唤醒",
       "本机",
-      "-",
-      "打开窗口",
-      "-",
-      "退出",
     ]);
-    expect(section(items)).toHaveLength(11);
-  });
-
-  test("paused: 恢复 instead of 暂停", () => {
-    const l = labels(trayMenuModel(withDevice({ ...online, icon: "paused" }), a()));
-    expect(l).toContain("本机：已暂停");
-    expect(l).toContain("恢复");
-    expect(l).not.toContain("暂停");
-    expect(l).toContain("断开");
+    expect(labels(row(items, 1)?.submenu ?? [])).toEqual([
+      "本机：已暂停",
+      "运行中：0",
+      "恢复",
+      "断开",
+      "保持唤醒",
+      "本机",
+    ]);
   });
 
   test("busy shows the running count; offline says offline", () => {
-    expect(labels(trayMenuModel(withDevice({ ...online, icon: "busy", running: 3 }), a()))).toEqual(
+    const busy = row(trayMenuModel(withDevices([device({ icon: "busy", running: 3 })]), a()));
+    expect(labels(busy?.submenu ?? [])).toEqual(
       expect.arrayContaining(["本机：在线", "运行中：3", "暂停"]),
     );
-    expect(labels(trayMenuModel(withDevice({ ...online, icon: "offline" }), a()))).toEqual(
-      expect.arrayContaining(["本机：离线", "暂停"]),
+    const off = row(trayMenuModel(withDevices([device({ icon: "offline" })]), a()));
+    expect(off?.label).toBe("a.example.com · Acme · 离线");
+  });
+
+  test("an action on a row runs for that connection only", () => {
+    const d = deviceActions();
+    const items = trayMenuModel(
+      withDevices([device(), device({ deviceId: "dev_a2", profileId: "p2", icon: "paused" })]),
+      a(d),
     );
-  });
-
-  test("the entries call the device actions with the profile", () => {
-    const d = deviceActions();
-    const items = trayMenuModel(withDevice(online), a(d));
-    const click = (label: string) =>
-      items.find((i) => i.label === label)?.click?.({ checked: false });
-    click("暂停");
-    click("断开");
-    click("本机");
-    expect(d.pause).toHaveBeenCalledWith("p1");
-    expect(d.disconnect).toHaveBeenCalledWith("p1");
+    const click = (n: number, label: string) =>
+      row(items, n)
+        ?.submenu?.find((i) => i.label === label)
+        ?.click?.({ checked: false });
+    click(0, "暂停");
+    click(0, "断开");
+    click(0, "本机");
+    expect(d.pause).toHaveBeenCalledWith("p1", "dev_1");
+    expect(d.disconnect).toHaveBeenCalledWith("p1", "dev_1");
     expect(d.openDevicePage).toHaveBeenCalledWith("p1", "dev_1");
-    const paused = trayMenuModel(withDevice({ ...online, icon: "paused" }), a(d));
-    paused.find((i) => i.label === "恢复")?.click?.({ checked: false });
-    expect(d.resume).toHaveBeenCalledWith("p1");
+    click(1, "恢复");
+    expect(d.resume).toHaveBeenCalledWith("p2", "dev_a2");
+    expect(d.resume).toHaveBeenCalledTimes(1);
+    expect(d.pause).toHaveBeenCalledTimes(1);
   });
 
-  test("keep-awake is a radio submenu with the current mode checked", () => {
+  test("keep-awake is a radio submenu per row with the current mode checked", () => {
     const d = deviceActions();
-    const items = trayMenuModel(withDevice({ ...online, keepAwake: "connected" }), a(d));
-    const sub = items.find((i) => i.label === "保持唤醒")?.submenu ?? [];
+    const items = trayMenuModel(withDevices([device({ keepAwake: "connected" })]), a(d));
+    const sub = row(items)?.submenu?.find((i) => i.label === "保持唤醒")?.submenu ?? [];
     expect(sub.map((i) => [i.label, i.type, i.checked])).toEqual([
       ["关闭", "radio", false],
       ["运行任务时", "radio", false],
       ["连接期间", "radio", true],
     ]);
     sub[1]?.click?.({ checked: true });
-    expect(d.setKeepAwake).toHaveBeenCalledWith("p1", "while-busy");
+    expect(d.setKeepAwake).toHaveBeenCalledWith("p1", "dev_1", "while-busy");
   });
 
-  test("a deployment that is not a saved profile: the state shows, the actions are disabled", () => {
-    const { profileId: _p, ...unknown } = online;
-    const items = trayMenuModel(withDevice(unknown), a());
+  test("a connection to a deployment without a saved profile shows its row without actions", () => {
+    const items = trayMenuModel(withDevices([device({ profileId: undefined })]), a());
+    const sub = row(items)?.submenu ?? [];
     for (const label of ["暂停", "断开", "保持唤醒", "本机"]) {
-      expect(items.find((i) => i.label === label)?.enabled).toBe(false);
+      expect(sub.find((i) => i.label === label)?.enabled).toBe(false);
     }
-    expect(labels(items)).toContain("本机：在线");
+    expect(row(items)?.label).toBe("a.example.com · Acme · 在线");
   });
 
   test("English text comes from the catalog", () => {
-    expect(
-      labels(trayMenuModel(withDevice({ ...online, icon: "busy", running: 2 }, "en"), a())),
-    ).toEqual(
-      expect.arrayContaining([
-        "This computer: online",
-        "Running: 2",
-        "Pause",
-        "Disconnect",
-        "Keep awake",
-        "This computer",
-      ]),
+    const items = trayMenuModel(withDevices([device({ icon: "busy", running: 2 })], "en"), a());
+    expect(row(items)?.label).toBe("a.example.com · Acme · online");
+    expect(labels(row(items)?.submenu ?? [])).toEqual(
+      expect.arrayContaining(["Running: 2", "Pause", "Disconnect", "Keep awake", "This computer"]),
     );
   });
 
   test("quit stays the last entry and calls only quit", () => {
     const x = a();
-    const items = trayMenuModel(withDevice(online), x);
+    const items = trayMenuModel(withDevices([device()]), x);
     items.at(-1)?.click?.({ checked: false });
     expect(x.quit).toHaveBeenCalledTimes(1);
     expect(x.device.pause).not.toHaveBeenCalled();
@@ -524,7 +546,7 @@ describe("the tray's device state (spec 9.6)", () => {
   });
 });
 
-describe("the tray icon follows the device state", () => {
+describe("the tray icon follows the worst connection", () => {
   function setup() {
     const tray: TrayLike = {
       setToolTip: vi.fn(),
@@ -541,21 +563,20 @@ describe("the tray icon follows the device state", () => {
     });
     return { tray, controller };
   }
-  const dev = (icon: TrayDevice["icon"], running = 0): TrayDevice => ({
-    icon,
-    running,
-    keepAwake: "off",
-  });
+  const dev = (icon: TrayDevice["icon"], running = 0) => device({ icon, running });
 
   test.each([
-    ["not_connected", 0, "Capybara", ""],
-    ["online", 0, "Capybara · 本机：在线", ""],
-    ["offline", 0, "Capybara · 本机：离线", "!"],
-    ["paused", 0, "Capybara · 本机：已暂停", "⏸"],
-    ["busy", 2, "Capybara · 本机：在线 · 运行中：2", "2"],
-  ] as const)("%s: tooltip %s, title suffix %s", (icon, running, tooltip, title) => {
+    [[], "Capybara", ""],
+    [[dev("online")], "Capybara · 本机：在线", ""],
+    [[dev("offline")], "Capybara · 本机：离线", "!"],
+    [[dev("paused")], "Capybara · 本机：已暂停", "⏸"],
+    [[dev("busy", 2)], "Capybara · 本机：在线 · 运行中：2", "2"],
+    [[dev("online"), dev("paused")], "Capybara · 本机：已暂停", "⏸"],
+    [[dev("busy", 1), dev("online"), dev("busy", 2)], "Capybara · 本机：在线 · 运行中：3", "3"],
+    [[dev("busy", 2), dev("offline"), dev("paused")], "Capybara · 本机：离线", "!"],
+  ] as const)("%j: tooltip %s, title suffix %s", (devices, tooltip, title) => {
     const { tray, controller } = setup();
-    controller.update({ ...state, device: dev(icon, running) });
+    controller.update({ ...state, devices: [...devices] });
     expect(tray.setToolTip).toHaveBeenLastCalledWith(tooltip);
     expect(tray.setTitle).toHaveBeenLastCalledWith(title);
   });
@@ -578,7 +599,7 @@ describe("the tray icon follows the device state", () => {
     controller.update(state);
     expect(tray.setToolTip).toHaveBeenLastCalledWith("Capybara");
     expect(tray.setTitle).toHaveBeenLastCalledWith("Capybara");
-    controller.update({ ...state, device: dev("paused") });
+    controller.update({ ...state, devices: [dev("paused")] });
     expect(tray.setTitle).toHaveBeenLastCalledWith("Capybara ⏸");
   });
 });

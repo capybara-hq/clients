@@ -1,4 +1,4 @@
-// The confirmations of device@1 (spec §9.1, §9.3, §9.5, §9.7, §6.3): shell dialogs (§7.4), drawn
+// The confirmations of device@2 (spec §9.1, §9.3, §9.5, §9.7, §6.3): shell dialogs (§7.4), drawn
 // by the app in a window of its own attached to the profile's window, so the page can neither draw
 // nor click them. Every dialog has two buttons, cancel first (取消 / 否: the cancel button, where
 // the focus starts, so Enter and Escape refuse) and the confirming one last; only a deliberate
@@ -12,12 +12,11 @@ import {
   type ShellDialogOptions,
   type ShowShellDialog,
 } from "../shell-dialog.ts";
+import type { ProjectReach } from "./machine.ts";
 
 export interface DeviceDialogs {
   /** 「允许 <平台名称>（<host>）在这台电脑上运行命令吗？」 */
   confirmConnect(parent: unknown, profile: Profile): Promise<boolean>;
-  /** This machine is logged in to `origin`: disconnect it first (spec §9.3)? */
-  confirmDisconnectOther(parent: unknown, origin: string): Promise<boolean>;
   confirmResume(parent: unknown, profile: Profile): Promise<boolean>;
   /**
    * Names each widened item first, so a page asking for both cannot pass as asking for one; then
@@ -25,7 +24,7 @@ export interface DeviceDialogs {
    */
   confirmWidenCeiling(
     parent: unknown,
-    widened: { outsideSandbox: boolean; network: boolean; projectReach: boolean },
+    widened: CeilingWidening,
     texts: string[],
     profile?: Profile,
   ): Promise<boolean>;
@@ -34,8 +33,18 @@ export interface DeviceDialogs {
     mode: Exclude<KeepAwakeMode, "off">,
     profile?: Profile,
   ): Promise<boolean>;
-  /** Removing a profile this machine is connected to: disconnect and log the device out too? */
-  confirmRemoveDevice(parent: unknown, profile: Profile): Promise<boolean>;
+  /**
+   * Removing a profile this machine has `count` connections into: disconnect them and log them
+   * out too?
+   */
+  confirmRemoveDevice(parent: unknown, profile: Profile, count: number): Promise<boolean>;
+}
+
+/** What a widening `requestCeiling` widens; `projectReach` is the wider reach asked for. */
+export interface CeilingWidening {
+  outsideSandbox: boolean;
+  network: boolean;
+  projectReach: false | Exclude<ProjectReach, "workspace">;
 }
 
 /**
@@ -130,16 +139,6 @@ export function createDeviceDialogs(deps: {
       });
     },
 
-    confirmDisconnectOther: (parent, origin) => {
-      const tr = trOf();
-      return ask(parent, {
-        tone: "danger",
-        message: tr("device.disconnect_other.message", { origin }),
-        detail: tr("device.disconnect_other.detail"),
-        confirm: tr("device.disconnect_other.confirm"),
-      });
-    },
-
     confirmResume: (parent, profile) => {
       const tr = trOf(profile);
       return ask(parent, {
@@ -159,7 +158,9 @@ export function createDeviceDialogs(deps: {
           [
             ...(widened.outsideSandbox ? [tr("device.ceiling.change.outside_sandbox")] : []),
             ...(widened.network ? [tr("device.ceiling.change.network")] : []),
-            ...(widened.projectReach ? [tr("device.ceiling.change.project_reach")] : []),
+            ...(widened.projectReach
+              ? [tr(`device.ceiling.change.project_reach.${widened.projectReach}`)]
+              : []),
           ].join("\n"),
           ...texts,
         ].join("\n\n"),
@@ -179,12 +180,16 @@ export function createDeviceDialogs(deps: {
       });
     },
 
-    confirmRemoveDevice: (parent, profile) => {
+    confirmRemoveDevice: (parent, profile, count) => {
       const tr = trOf(profile);
       const { name, host } = platformLabel(profile);
       return ask(parent, {
-        message: tr("device.remove.message"),
-        detail: tr("device.remove.detail", { platform: name ?? host }),
+        message: tr(count === 1 ? "device.remove.message.one" : "device.remove.message.other", {
+          count: String(count),
+        }),
+        detail: tr(count === 1 ? "device.remove.detail.one" : "device.remove.detail.other", {
+          platform: name ?? host,
+        }),
         confirm: tr("device.remove.yes"),
         cancel: tr("device.remove.no"),
         tone: "danger",
