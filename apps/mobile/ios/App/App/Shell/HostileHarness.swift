@@ -2,7 +2,7 @@
 // Launched with `-hostilePort <p>`, the app opens a real ProfileWebView for the profile origin
 // http://127.0.0.1:<p> (the test's loopback server) on its own identified data store, answers
 // `test@1.ping` with "pong", pushes one state change when the profile document says hello and one on every drop, and
-// reports every gate decision to the server's /native-log.
+// reports every gate decision (and whether the app's view takes touches) to the server's /native-log.
 
 #if DEBUG
 import UIKit
@@ -14,6 +14,9 @@ final class HostileHarness: NSObject, ShellCallSink, ShellGateMonitor {
     private let port: Int
     private let session = URLSession(configuration: .ephemeral)
     private var webView: ProfileWebView?
+    /// Whether the app's view takes touches: the launch splash turns them off until it is gone,
+    /// while XCUITest already finds the page hittable (a tap before then is lost).
+    private var touchable: NSKeyValueObservation?
 
     private init(port: Int) {
         self.port = port
@@ -52,6 +55,10 @@ final class HostileHarness: NSObject, ShellCallSink, ShellGateMonitor {
             controller.view.addSubview(view)
             webView = view
             log(["event": "harness-start", "os": UIDevice.current.systemVersion])
+            // From viewDidAppear the splash is up or already gone, so the first value is real.
+            touchable = controller.view.observe(\.isUserInteractionEnabled, options: [.initial, .new]) { [weak self] view, _ in
+                self?.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
+            }
             view.load(URLRequest(url: URL(string: "\(origin)/top.html")!))
         } catch {
             log(["event": "harness-error", "error": String(describing: error)])
