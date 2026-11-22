@@ -4,11 +4,7 @@
 // takes the confirmation slot for them) and, decided here from the machine's own state, a
 // widening `requestCeiling` and a raising `setKeepAwake` (they take the slot through
 // `ctx.confirm` only then); narrowing and lowering apply at once (spec §9.5, §9.7).
-import type {
-  KeepAwakeMode,
-  RunningOperationView,
-  ThisMachineStatus,
-} from "@capybara-hq/plugin-sdk";
+import type { DeviceRunningOp, KeepAwakeMode } from "@capybara-hq/plugin-sdk";
 import type { ConfirmScope } from "../ipc.ts";
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
@@ -36,6 +32,7 @@ import {
   readCeiling,
   readKeepAwake,
   readMachine,
+  type ThisMachineStatus,
   widensField,
 } from "./machine.ts";
 import type { DeviceService } from "./service.ts";
@@ -46,8 +43,8 @@ export interface DeviceCapabilityDeps {
   service: Pick<DeviceService, "ensureService">;
   control: Pick<ControlClient, "running" | "drain" | "subscribe">;
   dialogs: DeviceDialogs;
-  /** The device program's own risk texts (texts.ts). */
-  texts(): Promise<DeviceTexts>;
+  /** The device program's own risk texts for a connection (texts.ts). */
+  texts(deviceId: string): Promise<DeviceTexts>;
   openVerification(target: DeviceTarget, url: string): VerificationWindow;
   log?: (message: string, err?: unknown) => void;
 }
@@ -69,7 +66,7 @@ async function serviceState(cli: DeviceCli): Promise<{ installed: boolean; loade
   return state;
 }
 
-function toView(op: unknown): RunningOperationView | null {
+function toView(op: unknown): DeviceRunningOp | null {
   if (typeof op !== "object" || op === null) return null;
   const o = op as Record<string, unknown>;
   const nullable = (v: unknown) => v === null || typeof v === "string";
@@ -103,7 +100,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     }
     const [service, keepAwakeMode] = await Promise.all([
       serviceState(cli),
-      here.live ? Promise.resolve(here.live.keepAwake.mode) : readKeepAwake(cli),
+      here.live ? Promise.resolve(here.live.keepAwake.mode) : readKeepAwake(cli, here.deviceId),
     ]);
     return machineStatus(profile, machine, { serviceInstalled: service.installed, keepAwakeMode });
   }
@@ -192,12 +189,12 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       return statusFor(ctx.profile, await readMachine(cli));
     },
 
-    async running(ctx: Ctx): Promise<RunningOperationView[]> {
+    async running(ctx: Ctx): Promise<DeviceRunningOp[]> {
       const machine = await readMachine(cli);
       // Another deployment's operations are never shown.
       if (!isThisDeployment(machine, ctx.profile)) return [];
       const ops = await deps.control.running();
-      return ops.map(toView).filter((v): v is RunningOperationView => v !== null);
+      return ops.map(toView).filter((v): v is DeviceRunningOp => v !== null);
     },
 
     connect: (ctx: Ctx, input: unknown) => connect(ctx, input),
@@ -248,8 +245,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       const req = parseCeilingRequest(input);
       if (req === undefined) throw failed();
       const machine = await connectedHere(ctx.profile);
-      const cur = await readCeiling(cli);
-      const args = ceilingSetArgs(req);
+      const cur = await readCeiling(cli, machine.deviceId);
+      const args = ceilingSetArgs(machine.deviceId, req);
       const widened = Object.fromEntries(
         CEILING_FIELDS.map((f) => [f, widensField(cur, req, f)]),
       ) as Record<CeilingField, boolean>;
@@ -265,7 +262,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       return ctx.confirm(async () => {
         let texts: DeviceTexts;
         try {
-          texts = await deps.texts();
+          texts = await deps.texts(machine.deviceId);
         } catch (err) {
           log("the device program's risk texts are unavailable; no widening", err);
           throw failed();
@@ -284,7 +281,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         // the person did not see named. Known limit: with --yes the program does not decide again,
         // so a narrowing landing between this read and the write is not caught; closing that needs
         // a precondition the program checks under its lock (an expected revision).
-        const now = await readCeiling(cli);
+        const now = await readCeiling(cli, machine.deviceId);
         if (CEILING_FIELDS.some((f) => widensField(now, req, f) && !widened[f])) throw failed();
         await run(cli, [...args, "--yes"]);
         return "applied";
@@ -293,8 +290,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
 
     async setKeepAwake(ctx: Ctx, mode: unknown): Promise<"applied" | "cancelled"> {
       if (!isKeepAwakeMode(mode)) throw failed();
-      await connectedHere(ctx.profile);
-      const cur = await readKeepAwake(cli);
+      const machine = await connectedHere(ctx.profile);
+      const cur = await readKeepAwake(cli, machine.deviceId);
       const rank = (m: KeepAwakeMode) => KEEP_AWAKE_MODES.indexOf(m);
       if (rank(mode) <= rank(cur)) {
         if (mode === cur) return "applied";
@@ -308,7 +305,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised, ctx.profile)))
           return "cancelled";
         // Lowered while the dialog was open: the raise would be larger than the one confirmed.
-        if (rank(await readKeepAwake(cli)) < rank(cur)) throw failed();
+        if (rank(await readKeepAwake(cli, machine.deviceId)) < rank(cur)) throw failed();
         await run(cli, ["keep-awake", raised, "--yes"]);
         changed();
         return "applied";

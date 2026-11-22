@@ -12,9 +12,8 @@ import type { KeepAwakeMode } from "@capybara-hq/plugin-sdk";
 import type { ConfirmGate, ConfirmScope } from "../ipc.ts";
 import type { Profile } from "../profiles.ts";
 import type { TrayDevice, TrayDeviceActions, TrayIconState } from "../tray.ts";
-import { ID_PATTERN } from "./connect.ts";
 import type { ControlClient, LiveStatus } from "./control.ts";
-import { type Machine, originOf } from "./machine.ts";
+import { ID_PATTERN, type Machine, originOf } from "./machine.ts";
 
 /** How often the running list is read while a runner lives. */
 export const RUNNING_POLL_MS = 5000;

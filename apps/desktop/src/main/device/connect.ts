@@ -6,7 +6,7 @@
 import type { Profile } from "../profiles.ts";
 import type { DeviceCli } from "./cli.ts";
 import type { DeviceDialogs } from "./dialogs.ts";
-import { failed, isThisDeployment, originOf, readMachine } from "./machine.ts";
+import { failed, ID_PATTERN, isThisDeployment, originOf, readMachine } from "./machine.ts";
 import type { DeviceService } from "./service.ts";
 
 /** The calling profile and its window (the parent of every dialog and of the child window). */
@@ -31,9 +31,6 @@ export interface ConnectDeps {
   onChanged?: () => void;
   log?: (message: string, err?: unknown) => void;
 }
-
-/** Opaque kernel ids: a conservative charset and length, checked before any use. */
-export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
  * The verification URL the login printed, with `org=<orgId>` set, only when it is on the profile's

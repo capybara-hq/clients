@@ -53,9 +53,9 @@ import {
 import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
-import { controlClient, deviceStateDir } from "./device/control.ts";
+import { type ControlClient, createConnectionControls, deviceStateDir } from "./device/control.ts";
 import { createDeviceDialogs, dialogPlatformOf } from "./device/dialogs.ts";
-import { readKeepAwake, readMachine } from "./device/machine.ts";
+import { failed, readConnections, readKeepAwake, readMachine } from "./device/machine.ts";
 import { createDeviceService } from "./device/service.ts";
 import { createDeviceTexts } from "./device/texts.ts";
 import { createTrayDevice } from "./device/tray-device.ts";
@@ -240,7 +240,29 @@ function start(): void {
 
     // One dialog at a time per profile, for a page's call and the tray's click alike.
     const confirmGate = createConfirmGate();
-    const control = controlClient(deviceStateDir(process.env, homedir()));
+    const connections = createConnectionControls({
+      readConnections: () => readConnections(deviceCli, deviceStateDir(process.env, homedir())),
+    });
+    // The device@1 wiring knows one connection per machine: until it is replaced (plan Task 13),
+    // it sees the first connection `status --json` lists.
+    const firstDeviceId = async () => (await connections.read())[0]?.deviceId;
+    const control: ControlClient = {
+      status: async () => {
+        const id = await firstDeviceId();
+        return id === undefined ? undefined : connections.forDevice(id).status();
+      },
+      running: async () => {
+        const id = await firstDeviceId();
+        return id === undefined ? [] : connections.forDevice(id).running();
+      },
+      drain: async () => connections.forDevice((await firstDeviceId()) ?? "").drain(),
+      subscribe: (cb) => {
+        const report = () => void control.status().then(cb, () => cb(undefined));
+        const stop = connections.subscribeAll(report);
+        report();
+        return stop;
+      },
+    };
     const bridge = createShellBridge<ProfileTarget>({
       gate: confirmGate,
       resolveSender: (sender) => windows.resolveSender(sender),
@@ -432,7 +454,8 @@ function start(): void {
         windows.openChildWindow(target.profile, target.window, url),
       log: (message, err) => console.error(message, err ?? ""),
     });
-    bridge.registerCapability(SHELL_CAPABILITY_KEYS.device, device.impl, {
+    // device@1 until its device@2 replacement (plan Task 13): the SDK's key is now device@2.
+    bridge.registerCapability("device@1", device.impl, {
       confirming: device.confirming,
       events: device.events,
       available: (profile) => deviceAvailability.isAvailable(profile),
@@ -572,7 +595,11 @@ function start(): void {
       enabled: managed.connectThisMachine !== false,
       control,
       readMachine: () => readMachine(deviceCli),
-      readKeepAwake: () => readKeepAwake(deviceCli),
+      readKeepAwake: async () => {
+        const id = await firstDeviceId();
+        if (id === undefined) throw failed();
+        return readKeepAwake(deviceCli, id);
+      },
       profiles: visibleProfiles,
       impl: device.impl,
       gate: confirmGate,

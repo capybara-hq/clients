@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { DeviceCeilingRequest } from "@capybara-hq/plugin-sdk";
 import { describe, expect, expectTypeOf, test, vi } from "vitest";
 import {
   BUNDLED_DEVICE_PROTOCOL,
@@ -13,8 +12,16 @@ import type { SpawnLike } from "../../src/main/device/cli.ts";
 import type { LiveStatus, RunningOperation } from "../../src/main/device/control.ts";
 import {
   type CeilingField,
+  ceilingSetArgs,
+  connectionsHere,
+  connectionView,
+  type DeviceCeilingRequest,
+  type MachineConnection,
   type OwnerCeiling,
   parseCeilingRequest,
+  readCeiling,
+  readConnections,
+  readKeepAwake,
 } from "../../src/main/device/machine.ts";
 import { createDeviceTexts } from "../../src/main/device/texts.ts";
 import type { Profile } from "../../src/main/profiles.ts";
@@ -28,6 +35,7 @@ import {
   live,
   loggedIn,
   profileA,
+  SECRET,
 } from "./fake-device.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +50,7 @@ const TEXTS = {
 const meta = (over: Record<string, unknown> = {}) => ({
   name: "Acme",
   icon: null,
-  protocols: { device: { min: 4, max: 4 } },
+  protocols: { device: { min: 6, max: 6 } },
   features: { localDevices: true, appSignIn: true },
   ...over,
 });
@@ -95,13 +103,13 @@ describe("when device@1 is offered", () => {
       }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 5, max: 6 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 7, max: 8 } } }) }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 1, max: 3 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 1, max: 5 } } }) }),
     ).toBe(false);
     expect(
-      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 3, max: 5 } } }) }),
+      deviceOffered({ ...base, meta: meta({ protocols: { device: { min: 5, max: 7 } } }) }),
     ).toBe(true);
     expect(deviceOffered({ ...base, meta: { error: "unreachable" } })).toBe(false);
   });
@@ -321,7 +329,7 @@ describe("pause, disconnect, resume", () => {
 describe("requestCeiling", () => {
   /** Everything allowed on the machine. */
   const wide = { outsideSandbox: true, network: "open", projectReach: "os-user" } as const;
-  /** The machine's ceiling as `ceiling show --json` prints it. */
+  /** The machine's ceiling as `ceiling show -c dev_1 --json` prints it. */
   const shown = (c: { outsideSandbox: boolean; network: string; projectReach: string }) => ({
     lines: [{ ...c, allowedDomains: [], revision: null }],
   });
@@ -331,7 +339,7 @@ describe("requestCeiling", () => {
     const ctx = ctxFor();
     expect(await s.device.impl.requestCeiling(ctx, { network: "allowlist" })).toBe("applied");
     // Without --yes: the program decides again under its lock, so a race cannot widen.
-    expect(s.cli.writes()).toEqual(["ceiling set --network allowlist"]);
+    expect(s.cli.writes()).toEqual(["ceiling set -c dev_1 --network allowlist"]);
     expect(s.dialogs.asked).toEqual([]);
     expect(ctx.confirm).not.toHaveBeenCalled();
   });
@@ -341,15 +349,15 @@ describe("requestCeiling", () => {
     await s.device.impl.requestCeiling(ctxFor(), { outsideSandbox: false });
     await s.device.impl.requestCeiling(ctxFor(), { projectReach: "workspace" });
     expect(s.cli.writes()).toEqual([
-      "ceiling set --outside-sandbox off",
-      "ceiling set --project-reach workspace",
+      "ceiling set -c dev_1 --outside-sandbox off",
+      "ceiling set -c dev_1 --project-reach workspace",
     ]);
   });
 
   test("a narrowing the program refuses (it became a widening under its lock) fails", async () => {
     const s = setup(
       { status: loggedIn(), ceiling: wide },
-      { handlers: { "ceiling set --network allowlist": () => ({ code: 2 }) } },
+      { handlers: { "ceiling set -c dev_1 --network allowlist": () => ({ code: 2 }) } },
     );
     await expect(
       s.device.impl.requestCeiling(ctxFor(), { network: "allowlist" }),
@@ -372,7 +380,7 @@ describe("requestCeiling", () => {
       ],
     });
     expect(s.cli.writes()).toEqual([
-      "ceiling set --outside-sandbox on --network open --project-reach os-user --yes",
+      "ceiling set -c dev_1 --outside-sandbox on --network open --project-reach os-user --yes",
     ]);
   });
 
@@ -383,7 +391,7 @@ describe("requestCeiling", () => {
       { outsideSandbox: false, network: true, projectReach: false },
       [TEXTS.ceilingWidening],
     ]);
-    expect(s.cli.writes()).toEqual(["ceiling set --network open --yes"]);
+    expect(s.cli.writes()).toEqual(["ceiling set -c dev_1 --network open --yes"]);
   });
 
   test("a widening with a narrowing names only the widened field", async () => {
@@ -400,7 +408,7 @@ describe("requestCeiling", () => {
       [TEXTS.ceilingWidening],
     ]);
     expect(s.cli.writes()).toEqual([
-      "ceiling set --outside-sandbox off --project-reach os-user --yes",
+      "ceiling set -c dev_1 --outside-sandbox off --project-reach os-user --yes",
     ]);
   });
 
@@ -419,7 +427,7 @@ describe("requestCeiling", () => {
       { status: loggedIn() },
       {
         handlers: {
-          "ceiling show --json": () => {
+          "ceiling show -c dev_1 --json": () => {
             reads++;
             // Before: the network already open; after the dialog it was narrowed meanwhile.
             return shown({
@@ -444,7 +452,7 @@ describe("requestCeiling", () => {
       { status: loggedIn() },
       {
         handlers: {
-          "ceiling show --json": () => {
+          "ceiling show -c dev_1 --json": () => {
             reads++;
             return shown({
               outsideSandbox: reads === 2,
@@ -457,7 +465,7 @@ describe("requestCeiling", () => {
     );
     expect(await s.device.impl.requestCeiling(ctxFor(), wide)).toBe("applied");
     expect(s.cli.writes()).toEqual([
-      "ceiling set --outside-sandbox on --network open --project-reach os-user --yes",
+      "ceiling set -c dev_1 --outside-sandbox on --network open --project-reach os-user --yes",
     ]);
   });
 
@@ -509,7 +517,7 @@ describe("requestCeiling", () => {
       { status: loggedIn() },
       {
         handlers: {
-          "ceiling show --json": () => ({
+          "ceiling show -c dev_1 --json": () => ({
             lines: [{ fullAccess: false, projectReach: "workspace", revision: null }],
           }),
         },
@@ -573,7 +581,7 @@ describe("setKeepAwake", () => {
       { status: loggedIn() },
       {
         handlers: {
-          "keep-awake show --json": () => {
+          "keep-awake show -c dev_1 --json": () => {
             reads++;
             return { lines: [{ keepAwake: reads === 1 ? "while-busy" : "off" }] };
           },
@@ -737,15 +745,18 @@ describe("the program's risk texts", () => {
     const login = (await import(
       pathToFileURL(join(DEVICE_PKG, "dist/commands/login.js")).href
     )) as {
-      OUTSIDE_SANDBOX_RISK_TEXT: string;
+      outsideSandboxRiskText: (deviceId: string) => string;
     };
-    const got = await texts();
+    const got = await texts("dev_1");
     expect(got).toEqual({
       ceilingWidening: ceiling.CEILING_WIDENING_TEXT,
-      outsideSandboxRisk: login.OUTSIDE_SANDBOX_RISK_TEXT,
+      outsideSandboxRisk: login.outsideSandboxRiskText("dev_1"),
     });
-    // Asked once per app run.
-    expect(await texts()).toBe(got);
+    expect(got.outsideSandboxRisk).toContain("logout -c dev_1");
+    // Asked once per connection per app run.
+    expect(await texts("dev_1")).toBe(got);
+    // An unsafe device id never reaches the program.
+    await expect(texts("../evil")).rejects.toThrow(/invalid device id/);
   });
 
   test("a program that prints nothing usable refuses", async () => {
@@ -756,14 +767,200 @@ describe("the program's risk texts", () => {
         options,
       ) as unknown as ReturnType<SpawnLike>;
     const texts = createDeviceTexts({ resourcesPath: "/nowhere", spawn: quietSpawn, env: {} });
-    await expect(texts()).rejects.toThrow();
+    await expect(texts("dev_1")).rejects.toThrow();
   });
 });
 
 describe("the request shape", () => {
-  test("the shell's ceiling fields are exactly the SDK's DeviceCeilingRequest", () => {
+  test("the shell's ceiling fields are exactly the device@1 DeviceCeilingRequest", () => {
     expectTypeOf<Partial<OwnerCeiling>>().toEqualTypeOf<DeviceCeilingRequest>();
     expectTypeOf<keyof DeviceCeilingRequest>().toEqualTypeOf<CeilingField>();
     expectTypeOf(parseCeilingRequest).returns.toEqualTypeOf<DeviceCeilingRequest | undefined>();
+  });
+});
+
+describe("the connection readers", () => {
+  const MACHINE = "/m/capybara-device";
+  const SOCKET = `${MACHINE}/run/0123456789abcdef.sock`;
+  /** One connection as `status --json` prints it, with fields the readers must not pass on. */
+  const entry = (over: Record<string, unknown> = {}) => ({
+    deviceId: "dev_1",
+    orgId: "org_1",
+    orgName: "Acme",
+    deviceName: "laptop",
+    url: "https://a.example.com/team",
+    host: "a.example.com",
+    mode: "os",
+    dir: "/Users/me/capybara-device/dev_1",
+    serviceInstalled: true,
+    controlSocket: SOCKET,
+    control: "ok",
+    live: live(),
+    credential: SECRET,
+    ...over,
+  });
+  const statusCli = (connections: unknown[], extra: Record<string, unknown> = {}) =>
+    fakeCli({ status: { connections, unreadable: [], ...extra } });
+
+  test("readConnections keeps only the named fields and drops an unsafe device id", async () => {
+    const f = statusCli([
+      entry(),
+      entry({ deviceId: "../evil", controlSocket: `${MACHINE}/run/fedcba9876543210.sock` }),
+      entry({ deviceId: "dev 2" }),
+      entry({ deviceId: "dev_3", mode: "vm" }),
+    ]);
+    const all = await readConnections(f.cli, MACHINE);
+    expect(f.commands()).toEqual(["status --json"]);
+    expect(all).toEqual([
+      {
+        deviceId: "dev_1",
+        orgId: "org_1",
+        orgName: "Acme",
+        deviceName: "laptop",
+        url: "https://a.example.com/team",
+        host: "a.example.com",
+        mode: "os",
+        serviceInstalled: true,
+        controlSocket: SOCKET,
+        control: "ok",
+        live: live(),
+      },
+    ]);
+    expect(carriesSecret(all)).toBe(false);
+  });
+
+  test("no connection is an empty list; another shape fails", async () => {
+    await expect(readConnections(statusCli([]).cli, MACHINE)).resolves.toEqual([]);
+    const old = fakeCli({ status: loggedIn() });
+    await expect(readConnections(old.cli, MACHINE)).rejects.toEqual({ code: "failed" });
+  });
+
+  test("a control socket outside <machineDir>/run/<16 hex>.sock is never kept", async () => {
+    for (const controlSocket of [
+      "/tmp/evil.sock",
+      `${MACHINE}/run/0123456789ABCDEF.sock`,
+      `${MACHINE}/run/../run/0123456789abcdef.sock`,
+      `${MACHINE}/connections/dev_1/control.sock`,
+      `/other/run/0123456789abcdef.sock`,
+      "",
+      5,
+    ]) {
+      const [c] = await readConnections(statusCli([entry({ controlSocket })]).cli, MACHINE);
+      expect(c).toMatchObject({ controlSocket: null, control: "unavailable", live: null });
+      expect(c?.controlReason).toBeTypeOf("string");
+    }
+    // The program's own reason survives when it already said unavailable.
+    const [u] = await readConnections(
+      statusCli([
+        entry({
+          controlSocket: "",
+          control: "unavailable",
+          controlReason: "status failed: x",
+          live: null,
+        }),
+      ]).cli,
+      MACHINE,
+    );
+    expect(u).toMatchObject({ control: "unavailable", controlReason: "status failed: x" });
+  });
+
+  test("a live status is kept only when control is ok and it has the runner's shape", async () => {
+    const [absent] = await readConnections(
+      statusCli([entry({ control: "absent", live: live() })]).cli,
+      MACHINE,
+    );
+    expect(absent?.live).toBeNull();
+    const [bad] = await readConnections(statusCli([entry({ live: { pid: "x" } })]).cli, MACHINE);
+    expect(bad?.live).toBeNull();
+  });
+
+  const conn = (over: Partial<MachineConnection> = {}): MachineConnection => ({
+    deviceId: "dev_1",
+    orgId: "org_1",
+    orgName: null,
+    deviceName: null,
+    url: "https://a.example.com/team",
+    host: "a.example.com",
+    mode: "os",
+    serviceInstalled: false,
+    controlSocket: SOCKET,
+    control: "ok",
+    live: live(),
+    ...over,
+  });
+
+  test("connectionsHere keeps only the profile's own origin", () => {
+    const here1 = conn();
+    const here2 = conn({ deviceId: "dev_2", url: "https://A.example.com/other" });
+    const elsewhere = conn({ deviceId: "dev_3", url: "https://b.example.com" });
+    const port = conn({ deviceId: "dev_4", url: "https://a.example.com:8443" });
+    expect(connectionsHere([here1, elsewhere, here2, port], profileA)).toEqual([here1, here2]);
+  });
+
+  test("connectionView: live, unavailable, stopped", () => {
+    const long = "x".repeat(400);
+    expect(
+      connectionView(
+        conn({
+          serviceInstalled: true,
+          live: live({
+            connection: "offline",
+            offlineReason: long,
+            keepAwake: { mode: "connected", held: true, unavailable: long },
+            lastWakeAt: "2026-11-20T09:00:00.000Z",
+          }),
+        }),
+        "off",
+      ),
+    ).toEqual({
+      deviceId: "dev_1",
+      orgId: "org_1",
+      mode: "os",
+      serviceInstalled: true,
+      connection: "offline",
+      offlineReason: "x".repeat(300),
+      keepAwake: { mode: "connected", held: true, unavailable: "x".repeat(300) },
+      lastWakeAt: "2026-11-20T09:00:00.000Z",
+    });
+    expect(
+      connectionView(
+        conn({ control: "unavailable", controlReason: long, live: null }),
+        "while-busy",
+      ),
+    ).toMatchObject({
+      connection: "offline",
+      offlineReason: "x".repeat(300),
+      keepAwake: { mode: "while-busy", held: false },
+    });
+    expect(connectionView(conn({ control: "absent", live: null }), "off")).toEqual({
+      deviceId: "dev_1",
+      orgId: "org_1",
+      mode: "os",
+      serviceInstalled: false,
+      connection: "stopped",
+      keepAwake: { mode: "off", held: false },
+    });
+  });
+
+  test("the per-connection reads and writes name the connection", async () => {
+    const f = fakeCli({ keepAwake: "connected" });
+    await expect(readKeepAwake(f.cli, "dev_1")).resolves.toBe("connected");
+    await expect(readCeiling(f.cli, "dev_1")).resolves.toEqual({
+      outsideSandbox: false,
+      network: "allowlist",
+      projectReach: "workspace",
+    });
+    expect(f.commands()).toEqual([
+      "keep-awake show -c dev_1 --json",
+      "ceiling show -c dev_1 --json",
+    ]);
+    expect(ceilingSetArgs("dev_1", { network: "open" })).toEqual([
+      "ceiling",
+      "set",
+      "-c",
+      "dev_1",
+      "--network",
+      "open",
+    ]);
   });
 });

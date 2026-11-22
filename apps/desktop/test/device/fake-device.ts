@@ -64,7 +64,8 @@ export type Handler = (
 
 /**
  * Answers by the command (the arguments joined with spaces). `status --json`, `service status
- * --json`, `ceiling show --json` and `keep-awake show --json` have defaults from `state`.
+ * --json`, `ceiling show -c dev_1 --json` and `keep-awake show -c dev_1 --json` have defaults
+ * from `state`.
  */
 export function fakeCli(
   state: {
@@ -96,7 +97,7 @@ export function fakeCli(
           { installed: false, loaded: false, running: false, binExists: false, ...state.service },
         ],
       };
-    } else if (cmd === "ceiling show --json") {
+    } else if (cmd === "ceiling show -c dev_1 --json") {
       r = {
         lines: [
           {
@@ -110,7 +111,7 @@ export function fakeCli(
           },
         ],
       };
-    } else if (cmd === "keep-awake show --json") {
+    } else if (cmd === "keep-awake show -c dev_1 --json") {
       r = { lines: [{ keepAwake: state.keepAwake ?? "while-busy" }] };
     } else r = { code: 0 };
     for (const line of (r as Scripted).lines ?? []) o?.onLine?.(line);
@@ -124,8 +125,8 @@ export function fakeCli(
         ![
           "status --json",
           "service status --json",
-          "ceiling show --json",
-          "keep-awake show --json",
+          "ceiling show -c dev_1 --json",
+          "keep-awake show -c dev_1 --json",
         ].includes(c),
     );
   return { cli, calls, commands, writes };

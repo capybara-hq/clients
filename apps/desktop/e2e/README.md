@@ -53,7 +53,7 @@ What it covers:
   profile's `cb-theme` cookie (path `/`, `SameSite=Lax`, not HttpOnly) in its partition.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{0,0,0,0}`, controls `{0,0,92,48}`) with `signIn@1`, `notify@1`, `openExternal@1`,
-  `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 4 in
+  `chrome@1`; `device@1` appears after discovery (macOS or Linux, `localDevices`, protocol 6 in
   range) without a reload. `executeInMainWorld` works.
 - Same-origin and `/plugin-ui/...` iframes do not see `capybaraShell`.
 - A `signIn@1` call without a user activation is refused (`no_activation`); a real click opens

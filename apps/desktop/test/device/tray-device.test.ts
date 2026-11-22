@@ -100,7 +100,7 @@ function harness(
     ...(o.enabled === undefined ? {} : { enabled: o.enabled }),
     control,
     readMachine: () => readMachine(f.cli),
-    readKeepAwake: () => readKeepAwake(f.cli),
+    readKeepAwake: () => readKeepAwake(f.cli, "dev_1"),
     profiles: () => [profileA],
     impl: cap.impl,
     gate,
