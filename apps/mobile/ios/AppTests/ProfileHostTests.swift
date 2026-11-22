@@ -122,7 +122,7 @@ final class ProfileHostTests: XCTestCase {
         }
 
         let running = try await waitFor(15) { server.count("/timer") >= 3 && server.count("/loop") >= 3 }
-        XCTAssertTrue(running, "page never ran: timer \(server.count("/timer")) loop \(server.count("/loop"))")
+        XCTAssertTrue(running, "page never ran: document \(server.count("/")) timer \(server.count("/timer")) loop \(server.count("/loop"))")
 
         weak var view = host.view(for: "loop")
         host.close("loop")

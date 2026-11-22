@@ -51,6 +51,18 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
     #endif
     @MainActor private var auth: AuthSession?
 
+    #if DEBUG
+    override public func load() {
+        // From the start, not with the first profile: the address page is up before any profile
+        // WebView, and its UI test waits for touches too. Changes only: the launch splash (shown
+        // after every plugin's load) turns touches off, then on again once it is gone.
+        guard let log = LoaderTestLog.current, let view = bridge?.viewController?.view else { return }
+        touchable = view.observe(\.isUserInteractionEnabled, options: [.new]) { view, _ in
+            log.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
+        }
+    }
+    #endif
+
     @MainActor private func profileHost() -> ProfileHost? {
         if let host { return host }
         guard let controller = bridge?.viewController as? CAPBridgeViewController else { return nil }
@@ -75,9 +87,6 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
             made.sheet = { url in
                 log.log(["event": "sheet", "url": url.absoluteString])
                 present(url)
-            }
-            touchable = controller.view.observe(\.isUserInteractionEnabled, options: [.initial, .new]) { view, _ in
-                log.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
             }
             BrowserSheet.Observer.current = BrowserSheet.Observer(log: log.log)
         }
