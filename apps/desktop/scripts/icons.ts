@@ -1,8 +1,9 @@
 // Generates apps/desktop/build/icons from the Capybara logo bitmap (no dependencies: a tiny PNG
 // encoder on node:zlib). Run: node scripts/icons.ts
 //   icon.png               1024x1024, the app and Dock fallback icon (orange logo on a white rounded square)
-//   trayTemplate.png       16x16, black on transparent: a macOS template image
-//   trayTemplate@2x.png    32x32, the same at twice the size
+//   trayTemplate.png       22x22, black on transparent: a macOS template image (22 pt, the
+//                          menu bar's height), the @2x image scaled down by half
+//   trayTemplate@2x.png    44x44, the logo in 3 px cells: a 13x10-cell glyph of 19.5x15 pt
 //   icon.icns              the macOS app icon (electron-builder's mac.icon): every size of an
 //                          .iconset (16 to 1024, scaled down from the 1024 image), packed by
 //                          macOS's `iconutil`; skipped with a message on other systems
@@ -25,7 +26,6 @@ const BITMAP = [
   "..XX..X..XX...",
   "..XX..X..XX...",
 ] as const;
-const COLS = 14;
 const ROWS = 10;
 
 type Rgba = [number, number, number, number];
@@ -91,13 +91,27 @@ function drawLogo(
   });
 }
 
-function tray(size: number): Buffer {
+/** The filled columns of the bitmap: the first one and the width (the first column is empty). */
+function filledColumns(): { first: number; width: number } {
+  const used = BITMAP.flatMap((row) => [...row].flatMap((c, x) => (c === "." ? [] : [x])));
+  const first = Math.min(...used);
+  return { first, width: Math.max(...used) - first + 1 };
+}
+
+/**
+ * The @2x tray template's pixels: a 44 px (22 pt) square, the height of the macOS menu bar, with
+ * the logo in 3 px cells (13x10 filled cells, 19.5x15 pt), the largest integer cell that fits, like
+ * the 16-18 pt glyphs of other status items. Centred on the filled columns; crisp pixel art.
+ */
+function trayPixels2x(): Uint8Array {
+  const size = 44;
+  const cell = 3;
   const px = new Uint8Array(size * size * 4);
-  const cell = Math.floor(size / 16);
-  const left = Math.floor((size - COLS * cell) / 2);
+  const { first, width } = filledColumns();
+  const left = Math.floor((size - width * cell) / 2) - first * cell;
   const top = Math.floor((size - ROWS * cell) / 2);
   drawLogo(px, size, cell, left, top, [0, 0, 0, 255]);
-  return encodePng(size, px);
+  return px;
 }
 
 /** The 1024 px app icon's RGBA pixels. */
@@ -127,9 +141,7 @@ function appPixels(): Uint8Array {
   // the first 40 px cut (68%), which read small in the Dock (maintainer feedback 2026-11-21).
   const cell = 46;
   // Centred on the filled columns (the bitmap's first column is empty), not the 14-column box.
-  const used = BITMAP.flatMap((row) => [...row].flatMap((c, x) => (c === "." ? [] : [x])));
-  const first = Math.min(...used);
-  const width = Math.max(...used) - first + 1;
+  const { first, width } = filledColumns();
   const left = (size - width * cell) / 2 - first * cell;
   const top = (size - ROWS * cell) / 2;
   drawLogo(px, size, cell, left, top, [255, 106, 19, 255]);
@@ -173,8 +185,11 @@ const out = new URL("../build/icons/", import.meta.url);
 mkdirSync(out, { recursive: true });
 const big = appPixels();
 writeFileSync(new URL("icon.png", out), encodePng(1024, big));
-writeFileSync(new URL("trayTemplate.png", out), tray(16));
-writeFileSync(new URL("trayTemplate@2x.png", out), tray(32));
+// One glyph size on every display: the @1x image is the @2x one scaled down, not 1 px cells (which
+// would be a 13x10 pt glyph next to the @2x's 19.5x15 pt).
+const tray2x = trayPixels2x();
+writeFileSync(new URL("trayTemplate.png", out), encodePng(22, downscale(tray2x, 44, 22)));
+writeFileSync(new URL("trayTemplate@2x.png", out), encodePng(44, tray2x));
 
 if (process.platform === "darwin") {
   // In the gitignored build cache: iconutil needs a directory named *.iconset.
