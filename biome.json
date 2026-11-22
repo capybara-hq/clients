@@ -15,6 +15,7 @@
       "!.worktrees",
       "!pnpm-lock.yaml",
       "!.changeset/*.md",
+      "!.agents/skills",
       "!apps/desktop/design",
       "!apps/mobile/ios",
       "!apps/mobile/android"
