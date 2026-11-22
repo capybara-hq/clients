@@ -276,7 +276,7 @@ async function main(): Promise<void> {
     profiles: { list: () => list() },
   });
   // nav@1: iOS only, offered while the window has a strip (StripDetector.swift); native reports
-  // each change and the registry tells the shown page with one `change`.
+  // each change of the strip and its side, and the registry tells the shown page with one `change`.
   const nav = createNav<LoaderProfile>({
     registry,
     native: navNativeFrom(plugin),
@@ -287,7 +287,8 @@ async function main(): Promise<void> {
   if (platform === "ios") {
     // Listen first, then ask: a change between the two is not lost.
     connectStrip(plugin, nav);
-    nav.stripChanged(await stripAtStart(plugin));
+    const start = await stripAtStart(plugin);
+    nav.stripChanged(start.visible, start.side);
   }
   registerMobileCapabilities(registry, {
     signIn: { capability: signIn.capability, available: (p) => support.available(p) },

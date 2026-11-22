@@ -3,6 +3,7 @@
 // activation and one dialog per profile for confirming functions, and runs the implementation.
 // Capabilities are named functions only: nothing generic crosses from the page.
 
+import type { CapabilityFields, CapabilityFieldValue } from "@capybara-hq/shell";
 import { createDialogGate } from "./dialog-gate.ts";
 import type { HostPort } from "./host-port.ts";
 import {
@@ -29,13 +30,20 @@ export interface CapabilityImpl<P extends ProfileRef = ProfileRef> {
    * close its dialog then; it must also settle when its dialog is dismissed.
    */
   confirming?: readonly string[];
+  /**
+   * Data fields of the capability object (`nav@1`'s `side`): primitives the shell decides, read
+   * each time the descriptors are built, so a change to one reaches the page through `refresh`.
+   */
+  fields?(profile: P): Record<string, CapabilityFieldValue>;
 }
 
 export interface CapabilityRegistry<P extends ProfileRef = ProfileRef> {
   register(key: string, impl: CapabilityImpl<P>, opts?: { available?(profile: P): boolean }): void;
+  /** `fields` is present only when an offered capability has data fields. */
   descriptors(profile: P): {
     capabilities: Record<string, string[]>;
     events: Record<string, string[]>;
+    fields?: CapabilityFields;
   };
   dispatch(msg: ShellCallMessage): Promise<ShellCallResult>;
   emit(profileId: string, key: string, event: string, payload: unknown): void;
@@ -102,6 +110,7 @@ export function createRegistry<P extends ProfileRef>(deps: {
   const describe = (profile: P) => {
     const capabilities: Record<string, string[]> = {};
     const events: Record<string, string[]> = {};
+    const fields: CapabilityFields = {};
     for (const key of registry.keys()) {
       const entry = offered(key, profile);
       if (!entry) continue;
@@ -109,8 +118,17 @@ export function createRegistry<P extends ProfileRef>(deps: {
       if (entry.impl.events && entry.impl.events.length > 0) {
         events[key] = [...entry.impl.events];
       }
+      if (entry.impl.fields) {
+        try {
+          fields[key] = { ...entry.impl.fields(profile) };
+        } catch {
+          // a field that cannot be read is left out, the capability stays
+        }
+      }
     }
-    return { capabilities, events };
+    return Object.keys(fields).length > 0
+      ? { capabilities, events, fields }
+      : { capabilities, events };
   };
 
   return {

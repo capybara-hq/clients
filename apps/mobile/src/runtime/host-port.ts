@@ -2,6 +2,7 @@
 // ShellPlugin.kt). Native forwards each gated call as a `call` event; the runtime answers with
 // `reply`, and sends state changes and capability events to a profile's current document.
 import type { ShellState } from "@capybara-hq/shell";
+import type { NativeLook } from "./appearance.ts";
 import { isShellCallMessage, type ShellCallMessage, type ShellCallResult } from "./protocol.ts";
 
 export interface HostPort {
@@ -109,11 +110,11 @@ export interface ProfileHostPort {
    * makes a fresh one. Nothing happens when it has no WebView.
    */
   close(profileId: string): Promise<void>;
-  /** The background behind the profile's WebView and the status bar style. */
-  setAppearance(
-    profileId: string,
-    look: { background: string; statusBar: "light" | "dark" },
-  ): Promise<void>;
+  /**
+   * The background behind the profile's WebView and the status bar style; with the page's
+   * accent (the strip's top item, iOS).
+   */
+  setAppearance(profileId: string, look: NativeLook): Promise<void>;
   onLoad(listener: (e: LoadEvent) => void): () => void;
   onDocument(listener: (e: DocumentEvent) => void): () => void;
 }
@@ -126,11 +127,7 @@ export interface ProfileHostPlugin {
   open(options: OpenProfileRequest): Promise<void>;
   showError(options: { profileId: string }): Promise<void>;
   close(options: { profileId: string }): Promise<void>;
-  setAppearance(options: {
-    profileId: string;
-    background: string;
-    statusBar: "light" | "dark";
-  }): Promise<void>;
+  setAppearance(options: { profileId: string } & NativeLook): Promise<void>;
 }
 
 function isLoadEvent(v: unknown): v is LoadEvent {

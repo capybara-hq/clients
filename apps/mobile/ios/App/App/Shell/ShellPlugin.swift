@@ -4,8 +4,9 @@
 // `reply`, `pushState` and `event` go back to the profile's WebView. It also carries the
 // `ProfileHostPort` (Task 16): `open`, `showError`, `close`, `setAppearance`, and the `load` and
 // `document` events (the document events let the runtime cancel a dead document's calls and
-// push the current state to a new one). And the strip (Task 31): `stripState`, `navSet`, and the
-// `stripChanged`, `sectionSelected` and `menuTapped` events (src/runtime/capabilities/nav.ts).
+// push the current state to a new one). And the strip (Task 31, nav@1 minor version of
+// 2026-11-22): `stripState`, `navSet`, and the `stripChanged` (with the side), `sectionSelected`,
+// `actionTapped` and `accountTapped` events (src/runtime/capabilities/nav.ts).
 
 import AuthenticationServices
 import Capacitor
@@ -55,11 +56,15 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let controller = bridge?.viewController as? CAPBridgeViewController else { return nil }
         let made = ProfileHost(controller: controller)
         made.sink = self
-        made.onStrip = { [weak self] visible in
-            self?.notifyListeners("stripChanged", data: ["visible": visible])
+        made.onStrip = { [weak self] visible, side in
+            #if DEBUG
+            LoaderTestLog.current?.log(["event": "stripChanged", "visible": visible, "side": side.rawValue])
+            #endif
+            self?.notifyListeners("stripChanged", data: ["visible": visible, "side": side.rawValue])
         }
         made.onSection = { [weak self] id in self?.notifyListeners("sectionSelected", data: ["id": id]) }
-        made.onMenu = { [weak self] in self?.notifyListeners("menuTapped", data: [:]) }
+        made.onAction = { [weak self] in self?.notifyListeners("actionTapped", data: [:]) }
+        made.onAccount = { [weak self] in self?.notifyListeners("accountTapped", data: [:]) }
         #if DEBUG
         if let log = LoaderTestLog.current {
             #if targetEnvironment(simulator)
@@ -199,8 +204,12 @@ extension ShellPlugin {
             call.reject("setAppearance needs profileId, background #rrggbb and statusBar light|dark")
             return
         }
+        // The page's accent for the strip's action; both or neither (`nativeLook`).
+        let accent = call.getString("accent").flatMap { UIColor(shellHex: $0) }
+        let onAccent = call.getString("onAccent").flatMap { UIColor(shellHex: $0) }
         DispatchQueue.main.async {
-            self.profileHost()?.setAppearance(profileId, background: color, lightContent: statusBar == "light")
+            self.profileHost()?.setAppearance(profileId, background: color, lightContent: statusBar == "light",
+                                              accent: accent, onAccent: onAccent)
             #if DEBUG
             LoaderTestLog.current?.log(["event": "appearance", "background": hex, "statusBar": statusBar])
             #endif
@@ -243,22 +252,25 @@ extension ShellPlugin {
     /// Whether the window has a strip now (StripDetector); later changes come as `stripChanged`.
     @objc func stripState(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            call.resolve(["visible": self.profileHost()?.stripVisible ?? false])
+            let now = self.profileHost()?.stripNow ?? (false, .right)
+            call.resolve(["visible": now.visible, "side": now.side.rawValue])
         }
     }
 
-    /// `nav@1.set`, validated by the runtime: the sections, their badge text and the menu button.
+    /// `nav@1.set`, validated by the runtime: the pill's items with their badge text, the action and
+    /// the account avatar.
     @objc func navSet(_ call: CAPPluginCall) {
         guard let raw = call.getObject("state"), let state = StripState(json: raw) else {
             #if DEBUG
             LoaderTestLog.current?.log(["event": "navSet", "ok": false])
             #endif
-            call.reject("navSet needs a state with items, current and menu")
+            call.reject("navSet needs a state with items, current, action and account")
             return
         }
         DispatchQueue.main.async {
             #if DEBUG
-            LoaderTestLog.current?.log(["event": "navSet", "ok": true, "items": state.items.map(\.id)])
+            LoaderTestLog.current?.log(["event": "navSet", "ok": true, "items": state.items.map(\.id),
+                                        "current": state.current ?? NSNull()])
             #endif
             self.profileHost()?.setStrip(state)
             call.resolve()

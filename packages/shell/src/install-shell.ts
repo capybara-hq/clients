@@ -11,6 +11,15 @@ export type ShellCallResult = { ok: true; value: unknown } | { ok: false; code: 
 /** Key -> function names; the page's callers are built from this list and nothing else. */
 export type CapabilityDescriptors = Record<string, string[]>;
 
+/** A data field's value on a capability object: a primitive, never an object or a function. */
+export type CapabilityFieldValue = string | number | boolean | null;
+
+/**
+ * Key -> data fields of that capability's object (e.g. `nav@1`'s `side`). A field named like one
+ * of the capability's functions or events is dropped: data never replaces a caller.
+ */
+export type CapabilityFields = Record<string, Record<string, CapabilityFieldValue>>;
+
 export interface ShellInsets {
   top: number;
   right: number;
@@ -25,6 +34,8 @@ export interface ShellState {
   capabilities: CapabilityDescriptors;
   /** Key -> event names: each becomes a function that takes a listener and returns an unsubscribe. */
   events?: CapabilityDescriptors;
+  /** Key -> data fields, set on that capability's object (only for a key it offers). */
+  fields?: CapabilityFields;
 }
 
 export interface ShellInit extends ShellState {
@@ -61,11 +72,12 @@ export function installShellEnvironment(
   const buildCapabilities = (
     descriptors: CapabilityDescriptors,
     events: CapabilityDescriptors | undefined,
+    fields: CapabilityFields | undefined,
   ) => {
     const out: Record<string, object> = {};
     const keys = new Set([...Object.keys(descriptors), ...Object.keys(events ?? {})]);
     for (const key of keys) {
-      const fns: Record<string, (...args: never[]) => unknown> = {};
+      const fns: Record<string, unknown> = {};
       for (const name of descriptors[key] ?? []) {
         fns[name] = (...args: unknown[]) =>
           bridge.call(key, name, args).then((r) => {
@@ -89,6 +101,18 @@ export function installShellEnvironment(
           });
         };
       }
+      const data = fields?.[key];
+      if (typeof data === "object" && data !== null) {
+        for (const name of Object.keys(data)) {
+          const value = data[name];
+          const primitive =
+            value === null ||
+            typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean";
+          if (primitive && !Object.hasOwn(fns, name)) fns[name] = value;
+        }
+      }
       out[key] = Object.freeze(fns);
     }
     return Object.freeze(out);
@@ -97,7 +121,7 @@ export function installShellEnvironment(
   const desktop = init.kind === "desktop";
   let insets = freezeInsets(init.insets);
   let controls = freezeControls(init.controls);
-  let capabilities = buildCapabilities(init.capabilities, init.events);
+  let capabilities = buildCapabilities(init.capabilities, init.events, init.fields);
 
   const shell = {
     version: 1 as const,
@@ -131,7 +155,7 @@ export function installShellEnvironment(
   bridge.onChange((state) => {
     insets = freezeInsets(state.insets);
     if (desktop) controls = freezeControls(state.controls);
-    capabilities = buildCapabilities(state.capabilities, state.events);
+    capabilities = buildCapabilities(state.capabilities, state.events, state.fields);
     for (const listener of [...listeners]) {
       try {
         listener();

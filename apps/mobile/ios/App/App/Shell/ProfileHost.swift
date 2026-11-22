@@ -5,8 +5,9 @@
 // and the status bar style).
 //
 // While the window has a strip (StripDetector, the iPhone Duo) the container sits in StripHost's
-// selected tab, under the vertical system tab bar in the strip; else in the plain place above
-// Capacitor's WebView. It moves between them on each change, the WebViews inside untouched.
+// selected tab, under the pill the OS floats in the strip; else in the plain place above
+// Capacitor's WebView. It moves between them on each change, the WebViews inside untouched; a
+// split side change (the strip moving to the other edge) only moves the avatar.
 
 import Capacitor
 import UIKit
@@ -45,11 +46,15 @@ final class ProfileHost {
     private var containerShown = false
     private let probe = StripProbe()
     private var stripHost: StripHost?
-    /// The window gained or lost its strip.
-    var onStrip: ((Bool) -> Void)?
-    /// A strip section was tapped (the selected one too) / the strip's menu button was tapped.
+    /// The window gained or lost its strip, or the strip moved to the other edge.
+    var onStrip: ((Bool, StripSide) -> Void)?
+    /// A pill item was tapped (the selected section and search too) / the pill's top item (the
+    /// action) / the account avatar.
     var onSection: ((String) -> Void)?
-    var onMenu: (() -> Void)?
+    var onAction: (() -> Void)?
+    var onAccount: (() -> Void)?
+    /// The page's accent for the strip's action (chrome@1 tokens).
+    private var accent: (UIColor, UIColor)?
 
     /// `controller` nil (tests): the container is never attached to a window.
     init(controller: CAPBridgeViewController?) {
@@ -61,10 +66,11 @@ final class ProfileHost {
         }
         container.isHidden = true
         container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        probe.onChange = { [weak self] visible in
+        probe.onChange = { [weak self] visible, side in
             guard let self else { return }
+            self.stripHost?.side = side
             self.placeContainer()
-            self.onStrip?(visible)
+            self.onStrip?(visible, side)
         }
     }
 
@@ -76,24 +82,36 @@ final class ProfileHost {
         probe.evaluate()
     }
 
-    /// Whether the window has a strip now.
-    var stripVisible: Bool {
+    /// Whether the window has a strip now, and its edge.
+    var stripNow: (visible: Bool, side: StripSide) {
         probe.evaluate()
-        return probe.visible
+        return (probe.visible, probe.side)
     }
 
-    /// The web's sections for the strip (`nav@1.set`, already validated by the runtime).
+    /// The web's pill and avatar for the strip (`nav@1.set`, already validated by the runtime).
     func setStrip(_ state: StripState) {
         strip().apply(state)
     }
 
-    private func strip() -> StripHost {
+    /// The strip's host, made on first use (a test reads it too).
+    func strip() -> StripHost {
         if let stripHost { return stripHost }
         let made = StripHost()
+        made.side = probe.side
         made.onSelect = { [weak self] id in self?.onSection?(id) }
-        made.onMenu = { [weak self] in self?.onMenu?() }
+        made.onAction = { [weak self] in self?.onAction?() }
+        made.onAccount = { [weak self] in self?.onAccount?() }
+        made.loadAvatar = { [weak self] url, done in self?.loadAvatar(url, done: done) ?? done(nil) }
+        if let accent { made.setAccent(accent.0, ink: accent.1) }
         stripHost = made
         return made
+    }
+
+    /// The avatar of the shown profile's page: with its cookies only on its own origin.
+    private func loadAvatar(_ url: URL, done: @escaping (UIImage?) -> Void) {
+        guard let shown, let view = views[shown] else { return done(nil) }
+        StripAvatar.load(url, profileOrigin: view.profileOrigin.serialized,
+                         cookies: view.configuration.websiteDataStore.httpCookieStore, done: done)
     }
 
     /// Over the local pages, under the splash: right above Capacitor's own scroll view.
@@ -196,7 +214,10 @@ final class ProfileHost {
         DataStores.shared.webViewReleased()
     }
 
-    func setAppearance(_ profileId: String, background: UIColor, lightContent: Bool) {
+    func setAppearance(_ profileId: String, background: UIColor, lightContent: Bool,
+                       accent fill: UIColor? = nil, onAccent ink: UIColor? = nil) {
+        if let fill, let ink { accent = (fill, ink) } else { accent = nil }
+        stripHost?.setAccent(fill, ink: ink)
         self.background = background
         container.backgroundColor = background
         views[profileId]?.setBackground(background)
