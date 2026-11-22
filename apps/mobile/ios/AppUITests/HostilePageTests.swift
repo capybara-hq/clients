@@ -28,6 +28,13 @@ final class HostilePageTests: XCTestCase {
         let popupReady = expectation(description: "popup document ready")
         server.onReport(doc: "popup-ready") { popupReady.fulfill() }
         wait(for: [popupReady], timeout: 180)
+        // The launch splash turns touches off on the app's view until the runtime drops it, while
+        // XCUITest already finds the button hittable: a tap before then never clicks (CI, #50).
+        let touchable = expectation(description: "the app takes touches")
+        server.onNative({ $0["event"] as? String == "touchable" && $0["enabled"] as? Bool == true }) {
+            touchable.fulfill()
+        }
+        wait(for: [touchable], timeout: 60)
         let button = app.webViews.buttons["Open popup"]
         XCTAssertTrue(button.waitForExistence(timeout: 30))
         button.tap()
