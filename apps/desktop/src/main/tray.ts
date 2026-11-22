@@ -33,9 +33,8 @@ export interface TrayDevice {
 
 export interface TrayState {
   locale: Locale;
-  profiles: { id: string; name: string }[];
-  /** The profile in front (the last used one), shown checked. */
-  activeId?: string | undefined;
+  /** The offered profiles; `open`: a main window of it is open now. */
+  profiles: { id: string; name: string; open: boolean }[];
   /** Managed `lockDeployments`: 「添加平台」 is not offered. */
   lockDeployments: boolean;
   /** The machine's device; absent or `not_connected`: no device entries. */
@@ -64,15 +63,24 @@ export interface TrayActions {
 const SEPARATOR: MenuItemModel = { type: "separator" };
 
 /**
+ * A platform's entry label. Several platforms can have windows open at once, so the menus check
+ * none of them (no radio): an open one carries a dot and a localized word in the label itself
+ * ("Example • Open"), which every OS draws and screen readers announce (a `sublabel` or tooltip is
+ * not shown or not read on every OS, and a bare symbol is skipped as punctuation).
+ */
+export function platformLabel(locale: Locale, profile: { name: string; open: boolean }): string {
+  return profile.open ? t(locale, "platform.open_label", { platform: profile.name }) : profile.name;
+}
+
+/**
  * The profile switcher, 「添加平台」 and 「移除平台」 (one entry per platform): shared by the tray and
- * the app menu. Under `lockDeployments` the offered profiles are the managed ones, and neither
- * adding nor removing is offered.
+ * the app menu. A click shows the platform: focuses its window, or opens one. Under
+ * `lockDeployments` the offered profiles are the managed ones, and neither adding nor removing is
+ * offered.
  */
 export function platformItems(state: TrayState, actions: TrayActions): MenuItemModel[] {
   const items: MenuItemModel[] = state.profiles.map((p) => ({
-    label: p.name,
-    type: "radio",
-    checked: p.id === state.activeId,
+    label: platformLabel(state.locale, p),
     click: () => actions.showProfile(p.id),
   }));
   if (!state.lockDeployments) {
