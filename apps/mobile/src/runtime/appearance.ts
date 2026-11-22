@@ -15,6 +15,12 @@ export interface NativeLook {
   background: string;
   /** `light` content on a dark scheme, `dark` content on a light one. */
   statusBar: "light" | "dark";
+  /**
+   * The page's accent and the ink on it, opaque `#rrggbb`, when it sent its tokens: the strip
+   * fills its top item with them (nav@1, iOS). Absent: the shell's own tint.
+   */
+  accent?: string;
+  onAccent?: string;
 }
 
 const TOKEN_NAMES = ["bg", "panel", "ink", "muted", "line", "accent", "onAccent"] as const;
@@ -75,10 +81,17 @@ export function validAppearanceInput(v: unknown): ChromeAppearance | null {
 }
 
 export function nativeLook(a: ChromeAppearance): NativeLook {
-  return {
+  const look: NativeLook = {
     background: opaqueHex(a.background) ?? (a.scheme === "dark" ? "#0a0a0a" : "#faf9f6"),
     statusBar: a.scheme === "dark" ? "light" : "dark",
   };
+  const accent = opaqueHex(a.tokens?.accent);
+  const onAccent = opaqueHex(a.tokens?.onAccent);
+  if (accent && onAccent) {
+    look.accent = accent;
+    look.onAccent = onAccent;
+  }
+  return look;
 }
 
 export const appearanceKey = (profileId: string) => `appearance.${profileId}`;

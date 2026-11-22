@@ -1,34 +1,80 @@
-// `nav@1` (mobile app spec §5.2, §6.1, decided 2026-11-21): the iPhone Duo's strip navigation. iOS
-// only, and offered exactly while the window has a strip, so its presence is the strip's
-// visibility: native reports the strip (`stripChanged`), the registry re-evaluates and the page
-// gets one `change`. The web hands the sections, their counts and the strip's menu button with
-// `set`; the shell draws them with its own icon per id (StripHost.swift) and tells the shown
-// profile's page about taps (`onSelect`, the current section included, and `onMenu`). Not
-// confirming, no activation.
-import {
-  NAV_SECTION_ORDER,
-  type NavSectionId,
-  type NavStateV1,
-  SHELL_CAPABILITY_KEYS,
-} from "@capybara-hq/plugin-sdk";
+// `nav@1` (mobile app spec §5.2, §6.1; interaction model §10, minor version of 2026-11-22): the
+// iPhone Duo's strip navigation. iOS only, and offered exactly while the window has a strip, so
+// its presence is the strip's visibility: native reports the strip and its side (`stripChanged`),
+// the registry re-evaluates and the page gets one `change`. The web hands the pill's items (the
+// sections and search), its top item (the action) and the account avatar with `set`; the shell
+// draws them with its own glyph per id / icon (StripHost.swift) and tells the shown profile's page
+// about taps (`onSelect`, the current section and search included; `onAction`; `onAccount`). The
+// capability object carries the strip's `side`. No menu button (D12). Not confirming, no
+// activation.
+//
+// Lockstep: the web sends exactly this shape and the shell takes nothing else (no older-web path
+// before 0.1.0). The types mirror the SDK's `NavStateV1` of core phase 0b; they come from the SDK
+// once the clients move to the release that carries it.
+import { MENU_ITEM_ID, MOBILE_SHELL_LIMITS, SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
 import type { ProfileRef } from "../protocol.ts";
 import type { CapabilityImpl, CapabilityRegistry } from "../registry.ts";
 import { fail, isRecord, onlyKeys } from "./limits.ts";
 
 export const NAV_KEY = SHELL_CAPABILITY_KEYS.nav;
 
-/**
- * The label and count limits of decision 2 (nav label 1..32, count an integer 0..9999). They move
- * to `MOBILE_SHELL_LIMITS.navLabel` / `navCount` in the SDK with core Task 30; until that release
- * the shell keeps the same values here.
- */
-export const NAV_LIMITS = { label: 32, count: 9999 } as const;
+/** The pill's items in display order (the SDK's `NAV_SECTION_ORDER` of phase 0b). */
+export const NAV_ITEM_ORDER = ["chats", "inbox", "agents", "schedules", "search"] as const;
+export type NavItemId = (typeof NAV_ITEM_ORDER)[number];
+/** What `current` may name: a section, never `search`. */
+export type NavSectionId = Exclude<NavItemId, "search">;
+export type NavActionIcon = "plus" | "square-pen";
+export type StripSide = "left" | "right";
 
-/** What the native strip draws: the sections in order with the OS badge text, and the menu button. */
-export interface NavNativeState {
-  items: { id: NavSectionId; label: string; badge: string | null }[];
+export interface NavItem {
+  id: NavItemId;
+  label: string;
+  count?: number;
+  countMore?: boolean;
+}
+
+export interface NavAction {
+  id: string;
+  label: string;
+  icon: NavActionIcon;
+}
+
+export interface NavAccount {
+  name: string;
+  avatarUrl?: string | null;
+  initial: string;
+  badge?: number;
+}
+
+/** `nav@1.set`'s input (the SDK's `NavStateV1` of phase 0b). */
+export interface NavState {
+  items: NavItem[];
+  /** The section on screen; null: none (the highlight is cleared, the person is on the action). */
   current: NavSectionId | null;
-  menu: { label: string; badge: string | null } | null;
+  action: NavAction;
+  account?: NavAccount;
+}
+
+/**
+ * The limits of `MOBILE_SHELL_LIMITS` (`navLabel`, `navCount`, `navAccountName`) of phase 0b; the
+ * SDK release the clients use predates `navAccountName`, so the values are kept here until then.
+ */
+export const NAV_LIMITS = {
+  label: 32,
+  count: 9999,
+  accountName: 64,
+  initial: 2,
+  url: MOBILE_SHELL_LIMITS.url,
+} as const;
+
+/** What the native strip draws: OS badge text, the avatar URL already checked. */
+export interface NavNativeState {
+  items: { id: NavItemId; label: string; badge: string | null }[];
+  /** Null: no section is highlighted (coordinator ruling 2026-11-22). */
+  current: NavSectionId | null;
+  /** Null only before the page's first `set` (the strip then shows nothing). */
+  action: NavAction | null;
+  account: { name: string; avatarUrl: string | null; initial: string; badge: string | null } | null;
 }
 
 /** The native strip (`StripHost` through the `CapybaraHost` plugin). */
@@ -36,11 +82,24 @@ export interface NavNativePort {
   set(state: NavNativeState): Promise<void>;
 }
 
+/** Characters as the web counts them (code points), so an emoji is one, not two. */
+const length = (s: string) => Array.from(s).length;
+
+function text(v: unknown, max: number): string | null {
+  if (typeof v !== "string") return null;
+  const n = length(v);
+  return n > 0 && n <= max ? v : null;
+}
+
+function count(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= NAV_LIMITS.count ? v : null;
+}
+
 function badge(v: Record<string, unknown>): { count?: number; countMore?: boolean } | null {
   const out: { count?: number; countMore?: boolean } = {};
   if (v.count !== undefined) {
-    const n = v.count;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > NAV_LIMITS.count) return null;
+    const n = count(v.count);
+    if (n === null) return null;
     out.count = n;
   }
   if (v.countMore !== undefined) {
@@ -50,90 +109,166 @@ function badge(v: Record<string, unknown>): { count?: number; countMore?: boolea
   return out;
 }
 
-function label(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 && v.length <= NAV_LIMITS.label ? v : null;
+/**
+ * The avatar's URL: absolute, at most `NAV_LIMITS.url` characters, https from anywhere or plain
+ * http on the profile's own origin. Undefined when it is not one (the call then fails).
+ */
+function avatarUrl(raw: unknown, origin: string): string | undefined {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > NAV_LIMITS.url) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol === "https:" || (url.protocol === "http:" && url.origin === origin)) {
+    return url.href.length > NAV_LIMITS.url ? undefined : url.href;
+  }
+  return undefined;
 }
 
-/** The page's `set` input as a `NavStateV1`, or null when anything is off (the call then fails). */
-export function validateNavState(input: unknown): NavStateV1 | null {
-  if (!isRecord(input) || !onlyKeys(input, ["items", "current", "menu"])) return null;
-  const { items, current, menu } = input;
-  if (!Array.isArray(items) || items.length > NAV_SECTION_ORDER.length) return null;
-  const out: NavStateV1 = { items: [], current: null, menu: null };
+function account(raw: unknown, origin: string): NavAccount | null {
+  if (!isRecord(raw) || !onlyKeys(raw, ["name", "avatarUrl", "initial", "badge"])) return null;
+  const name = text(raw.name, NAV_LIMITS.accountName);
+  const initial = text(raw.initial, NAV_LIMITS.initial);
+  if (name === null || initial === null) return null;
+  const out: NavAccount = { name, initial };
+  if (raw.avatarUrl !== undefined) {
+    if (raw.avatarUrl === null) out.avatarUrl = null;
+    else {
+      const url = avatarUrl(raw.avatarUrl, origin);
+      if (url === undefined) return null;
+      out.avatarUrl = url;
+    }
+  }
+  if (raw.badge !== undefined) {
+    const n = count(raw.badge);
+    if (n === null) return null;
+    out.badge = n;
+  }
+  return out;
+}
+
+function action(raw: unknown): NavAction | null {
+  if (!isRecord(raw) || !onlyKeys(raw, ["id", "label", "icon"])) return null;
+  if (typeof raw.id !== "string" || !MENU_ITEM_ID.test(raw.id)) return null;
+  const label = text(raw.label, NAV_LIMITS.label);
+  if (label === null) return null;
+  if (raw.icon !== "plus" && raw.icon !== "square-pen") return null;
+  return { id: raw.id, label, icon: raw.icon };
+}
+
+/**
+ * The page's `set` input as a `NavState`, or null when anything is off (the call then fails):
+ * exactly `items`, `current`, `action` and an optional `account` (no `menu`); the items known,
+ * each once, in `NAV_ITEM_ORDER`; `current` null or a section among them, never `search`.
+ * `origin` is the profile's: the only origin a plain http avatar may come from.
+ */
+export function validateNavState(input: unknown, origin: string): NavState | null {
+  if (!isRecord(input) || !onlyKeys(input, ["items", "current", "action", "account"])) return null;
+  if (!("items" in input) || !("current" in input) || !("action" in input)) return null;
+  const { items, current } = input;
+  if (!Array.isArray(items) || items.length > NAV_ITEM_ORDER.length) return null;
+  const parsed: NavItem[] = [];
   let last = -1;
   for (const raw of items) {
     if (!isRecord(raw) || !onlyKeys(raw, ["id", "label", "count", "countMore"])) return null;
-    const order = NAV_SECTION_ORDER.indexOf(raw.id as NavSectionId);
-    // Known ids only, each once, in NAV_SECTION_ORDER.
+    const order = NAV_ITEM_ORDER.indexOf(raw.id as NavItemId);
+    // Known ids only, each once, in NAV_ITEM_ORDER.
     if (order <= last) return null;
     last = order;
-    const text = label(raw.label);
+    const label = text(raw.label, NAV_LIMITS.label);
     const counts = badge(raw);
-    if (text === null || counts === null) return null;
-    out.items.push({ id: raw.id as NavSectionId, label: text, ...counts });
+    if (label === null || counts === null) return null;
+    parsed.push({ id: raw.id as NavItemId, label, ...counts });
   }
+  let section: NavSectionId | null = null;
   if (current !== null) {
-    if (!out.items.some((item) => item.id === current)) return null;
-    out.current = current as NavSectionId;
+    if (current === "search" || !parsed.some((item) => item.id === current)) return null;
+    section = current as NavSectionId;
   }
-  if (menu === undefined) return null;
-  if (menu !== null) {
-    if (!isRecord(menu) || !onlyKeys(menu, ["label", "count", "countMore"])) return null;
-    const text = label(menu.label);
-    const counts = badge(menu);
-    if (text === null || counts === null) return null;
-    out.menu = { label: text, ...counts };
+  const top = action(input.action);
+  if (top === null) return null;
+  const out: NavState = { items: parsed, current: section, action: top };
+  if (input.account !== undefined) {
+    const who = account(input.account, origin);
+    if (who === null) return null;
+    out.account = who;
   }
   return out;
 }
 
 /** The OS badge text: none for 0 or no count, `99+` above 99, `N+` when the count is a floor. */
 export function badgeText(b: { count?: number; countMore?: boolean }): string | null {
-  const count = b.count ?? 0;
-  if (count <= 0) return null;
-  if (count > 99) return "99+";
-  return b.countMore ? `${count}+` : String(count);
+  const n = b.count ?? 0;
+  if (n <= 0) return null;
+  if (n > 99) return "99+";
+  return b.countMore ? `${n}+` : String(n);
 }
 
-function nativeState(state: NavStateV1): NavNativeState {
+function nativeState(state: NavState): NavNativeState {
   return {
     items: state.items.map((item) => ({ id: item.id, label: item.label, badge: badgeText(item) })),
     current: state.current,
-    menu: state.menu ? { label: state.menu.label, badge: badgeText(state.menu) } : null,
+    action: { ...state.action },
+    account: state.account
+      ? {
+          name: state.account.name,
+          avatarUrl: state.account.avatarUrl ?? null,
+          initial: state.account.initial,
+          badge: badgeText({ count: state.account.badge ?? 0 }),
+        }
+      : null,
   };
+}
+
+/** What native reports about the strip: whether the window has one, and on which edge. */
+export interface StripReport {
+  visible: boolean;
+  side: StripSide;
 }
 
 export interface NavDeps<P extends ProfileRef> {
   registry: CapabilityRegistry<P>;
   native: NavNativePort;
-  /** The profiles the registry knows: each is refreshed when the strip comes or goes. */
+  /** The profiles the registry knows: each is refreshed when the strip comes, goes or moves. */
   profiles(): P[];
   /** The profile whose WebView is on screen (the strip belongs to it), or null. */
   shown(): string | null;
-  /** The strip as native reported it at start. */
-  strip: boolean;
+  /** The strip as native reported it at start (a boolean: on the right). */
+  strip: boolean | StripReport;
 }
 
 export interface Nav<P extends ProfileRef> {
   capability: CapabilityImpl<P>;
   available(profile: P): boolean;
-  /** Native: the window gained or lost its strip. */
-  stripChanged(visible: boolean): void;
-  /** Native: a section was tapped (the selected one too). */
-  sectionSelected(id: string): void;
-  /** Native: the strip's menu button was tapped. */
-  menuTapped(): void;
   /**
-   * The runtime showed this profile: the strip draws the sections its page last set, or none until
-   * it sets them.
+   * Native: the window gained or lost its strip, or the strip moved to the other edge (an
+   * inner-display split). `side` left out keeps the one known.
+   */
+  stripChanged(visible: boolean, side?: StripSide): void;
+  /** Native: an item was tapped (the selected section and search too). */
+  sectionSelected(id: string): void;
+  /** Native: the pill's top item was tapped. */
+  actionTapped(): void;
+  /** Native: the account avatar was tapped. */
+  accountTapped(): void;
+  /**
+   * The runtime showed this profile: the strip draws what its page last set, or nothing until it
+   * sets it.
    */
   profileShown(profileId: string): void;
 }
 
-const EMPTY: NavNativeState = { items: [], current: null, menu: null };
+const EMPTY: NavNativeState = { items: [], current: null, action: null, account: null };
+
+export const NAV_EVENTS = ["onSelect", "onAction", "onAccount"] as const;
 
 export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
-  let strip = deps.strip;
+  const start: StripReport =
+    typeof deps.strip === "boolean" ? { visible: deps.strip, side: "right" } : deps.strip;
+  let strip = start.visible;
+  let side: StripSide = start.side;
   // Profile id -> what its page last set; drawn when that profile is the one shown.
   const states = new Map<string, NavNativeState>();
 
@@ -141,7 +276,7 @@ export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
     const state = states.get(profileId);
     if (state && deps.shown() === profileId) deps.native.set(state).catch(() => {});
   };
-  const emit = (event: "onSelect" | "onMenu", payload: unknown) => {
+  const emit = (event: (typeof NAV_EVENTS)[number], payload: unknown) => {
     const id = deps.shown();
     if (strip && id !== null) deps.registry.emit(id, NAV_KEY, event, payload);
   };
@@ -150,34 +285,40 @@ export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
     capability: {
       functions: {
         async set(ctx, input) {
-          const state = validateNavState(input);
+          const state = validateNavState(input, ctx.profile.origin);
           if (!state) return fail();
           states.set(ctx.profile.id, nativeState(state));
           draw(ctx.profile.id);
         },
       },
-      events: ["onSelect", "onMenu"],
+      events: NAV_EVENTS,
+      fields: () => ({ side }),
     },
     available: () => strip,
-    stripChanged(visible) {
-      if (visible === strip) return;
+    stripChanged(visible, next) {
+      const moved = next !== undefined && next !== side;
+      if (visible === strip && !moved) return;
       strip = visible;
+      if (next !== undefined) side = next;
       for (const profile of deps.profiles()) deps.registry.refresh(profile.id);
     },
     sectionSelected(id) {
-      if (!NAV_SECTION_ORDER.includes(id as NavSectionId)) return;
+      if (!NAV_ITEM_ORDER.includes(id as NavItemId)) return;
       emit("onSelect", id);
     },
-    menuTapped() {
-      emit("onMenu", null);
+    actionTapped() {
+      emit("onAction", null);
+    },
+    accountTapped() {
+      emit("onAccount", null);
     },
     profileShown(profileId) {
-      // A removed profile's sections go with it (an id is never trusted to mean the same page).
+      // A removed profile's state goes with it (an id is never trusted to mean the same page).
       const known = new Set(deps.profiles().map((p) => p.id));
       for (const id of [...states.keys()]) if (!known.has(id)) states.delete(id);
       if (deps.shown() !== profileId) return;
-      // A page that has not set its sections yet (still loading, or an older web) gets an empty
-      // strip: never the previous profile's labels and badges over this profile's page.
+      // A page that has not set its state yet (still loading) gets an empty strip: never the
+      // previous profile's labels, badges and avatar over this profile's page.
       deps.native.set(states.get(profileId) ?? EMPTY).catch(() => {});
     },
   };
@@ -195,11 +336,11 @@ export function registerNav<P extends ProfileRef>(
 
 /** The strip part of the `CapybaraHost` plugin (ShellPlugin.swift with StripHost.swift). */
 export interface StripHostPlugin {
-  /** Whether the window has a strip now (StripDetector). */
-  stripState(): Promise<{ visible: boolean }>;
+  /** Whether the window has a strip now and its edge (StripDetector). */
+  stripState(): Promise<{ visible: boolean; side?: StripSide }>;
   navSet(options: { state: NavNativeState }): Promise<void>;
   addListener(
-    eventName: "stripChanged" | "sectionSelected" | "menuTapped",
+    eventName: "stripChanged" | "sectionSelected" | "actionTapped" | "accountTapped",
     listener: (e: unknown) => void,
   ): Promise<{ remove(): Promise<void> }>;
 }
@@ -209,33 +350,45 @@ export function navNativeFrom(plugin: Pick<StripHostPlugin, "navSet">): NavNativ
   return { set: (state) => plugin.navSet({ state }) };
 }
 
-/** The strip as native reports it at start; false when native cannot say. */
-export async function stripAtStart(plugin: Pick<StripHostPlugin, "stripState">): Promise<boolean> {
+const sideOf = (v: unknown): StripSide | undefined =>
+  v === "left" || v === "right" ? v : undefined;
+
+/** The strip as native reports it at start; none (on the right) when native cannot say. */
+export async function stripAtStart(
+  plugin: Pick<StripHostPlugin, "stripState">,
+): Promise<StripReport> {
   try {
-    return (await plugin.stripState()).visible === true;
+    const state = await plugin.stripState();
+    return { visible: state.visible === true, side: sideOf(state.side) ?? "right" };
   } catch {
-    return false;
+    return { visible: false, side: "right" };
   }
 }
 
 /** Forwards native's strip events to `nav`; malformed events are ignored. Returns how to stop. */
 export function connectStrip<P extends ProfileRef>(
   plugin: Pick<StripHostPlugin, "addListener">,
-  nav: Pick<Nav<P>, "stripChanged" | "sectionSelected" | "menuTapped">,
+  nav: Pick<Nav<P>, "stripChanged" | "sectionSelected" | "actionTapped" | "accountTapped">,
 ): () => void {
   let stopped = false;
   const field = (e: unknown, key: string): unknown => (isRecord(e) ? e[key] : undefined);
   const handles = [
     plugin.addListener("stripChanged", (e) => {
       const visible = field(e, "visible");
-      if (!stopped && typeof visible === "boolean") nav.stripChanged(visible);
+      if (stopped || typeof visible !== "boolean") return;
+      const side = sideOf(field(e, "side"));
+      if (side === undefined) nav.stripChanged(visible);
+      else nav.stripChanged(visible, side);
     }),
     plugin.addListener("sectionSelected", (e) => {
       const id = field(e, "id");
       if (!stopped && typeof id === "string") nav.sectionSelected(id);
     }),
-    plugin.addListener("menuTapped", () => {
-      if (!stopped) nav.menuTapped();
+    plugin.addListener("actionTapped", () => {
+      if (!stopped) nav.actionTapped();
+    }),
+    plugin.addListener("accountTapped", () => {
+      if (!stopped) nav.accountTapped();
     }),
   ];
   return () => {

@@ -1,9 +1,11 @@
 <!doctype html>
-<!-- Task 31: the strip navigation through nav@1, the way the web (core Task 30) uses it. With
-     nav@1 the page marks <html data-native-nav>, sets the four sections (收件箱 with a count) and,
-     while it is narrow (compact: the Duo's outer display), the menu button; when wide (the inner
-     display) `menu: null`. onSelect moves the location to the section's route without a reload;
-     onMenu is reported. Every change (the strip coming or going) re-reads nav@1. -->
+<!-- Task 31 and the nav@1 minor version of 2026-11-22: the strip through nav@1, the way the web
+     (core phase 0b) uses it. With nav@1 the page marks <html data-native-nav> and data-strip (the
+     reported side), and sets the pill: the action (新会话, square-pen; 新建智能体, plus, on
+     /agents while narrow), 对话 / 收件箱 (a count) / 智能体 / 定时任务 / 搜索, current by route
+     (null on the home "/"), and the account avatar with a badge. onSelect moves the location to
+     the section's route without a reload (search is only reported); onAction goes home; onAccount
+     is reported. Every change (the strip coming, going or moving) re-reads nav@1. -->
 <html lang="zh">
   <head>
     <meta charset="utf-8" />
@@ -11,17 +13,23 @@
     <style>
       html, body { margin: 0; background: #f4f1ea; font: 17px -apple-system, sans-serif; }
       #probe { position: fixed; top: 0; right: 0; width: 0; padding-right: env(safe-area-inset-right); }
-      main { padding: 80px 16px; padding-right: calc(16px + env(safe-area-inset-right)); }
+      #probe-left { position: fixed; top: 0; left: 0; width: 0; padding-left: env(safe-area-inset-left); }
+      main { padding: 80px 16px; padding-right: calc(16px + env(safe-area-inset-right));
+             padding-left: calc(16px + env(safe-area-inset-left)); }
+      :root { --cb-accent: #ff6a13; }
     </style>
   </head>
   <body>
     <div id="probe"></div>
+    <div id="probe-left"></div>
     <main>
       <p id="status">waiting</p>
       <p id="path"></p>
     </main>
     <script>
-      const routes = { chats: "/", inbox: "/inbox", agents: "/agents", schedules: "/schedules" };
+      const routes = { chats: "/conversations", inbox: "/inbox", agents: "/agents", schedules: "/schedules" };
+      const sectionOf = (path) =>
+        Object.keys(routes).find((id) => routes[id] === path) ?? null;
       let seq = 0;
       const report = (doc, results) =>
         fetch("/report", {
@@ -29,26 +37,49 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ doc, results: { ...results, seq: seq++ } }),
         });
-      const envRight = () => parseFloat(getComputedStyle(document.getElementById("probe")).paddingRight);
+      const px = (id, prop) => parseFloat(getComputedStyle(document.getElementById(id))[prop]);
+      const envRight = () => px("probe", "paddingRight");
+      const envLeft = () => px("probe-left", "paddingLeft");
       const shell = window.capybaraShell;
       let stops = [];
       let narrow = null;
-      const state = () => ({
-        items: [
-          { id: "chats", label: "对话" },
-          { id: "inbox", label: "收件箱", count: 3 },
-          { id: "agents", label: "智能体" },
-          { id: "schedules", label: "定时任务" },
-        ],
-        current: "chats",
-        menu: innerWidth < 600 ? { label: "菜单", count: 3 } : null,
-      });
+      const state = () => {
+        const agentsPrimary = innerWidth < 600 && location.pathname === "/agents";
+        return {
+          items: [
+            { id: "chats", label: "对话" },
+            { id: "inbox", label: "收件箱", count: 3 },
+            { id: "agents", label: "智能体" },
+            { id: "schedules", label: "定时任务" },
+            { id: "search", label: "搜索" },
+          ],
+          current: sectionOf(location.pathname),
+          action: agentsPrimary
+            ? { id: "new-agent", label: "新建智能体", icon: "plus" }
+            : { id: "new-conversation", label: "新会话", icon: "square-pen" },
+          account: { name: "Grace Hopper", initial: "G", avatarUrl: null, badge: 2 },
+        };
+      };
       const show = () => {
         const nav = shell?.capabilities?.["nav@1"];
         document.documentElement.toggleAttribute("data-native-nav", !!nav);
+        if (nav) document.documentElement.setAttribute("data-strip", nav.side ?? "right");
         document.getElementById("status").textContent = nav ? "native nav" : "no native nav";
         document.getElementById("path").textContent = location.pathname;
         return nav;
+      };
+      const send = (why) => {
+        const nav = show();
+        if (!nav) return;
+        const s = state();
+        nav.set(s).then(
+          () => report(`strip-set-${why}`, { ok: true, current: s.current, action: s.action.id }),
+          (e) => report(`strip-set-${why}`, { error: String(e) }),
+        );
+      };
+      const go = (path) => {
+        history.pushState(null, "", path);
+        send("route");
       };
       const attach = (why) => {
         for (const stop of stops) stop();
@@ -58,21 +89,33 @@
         if (nav) {
           stops.push(
             nav.onSelect((id) => {
-              history.pushState(null, "", routes[id]);
-              show();
+              if (id === "search") return report("strip-select-search", { id });
+              go(routes[id]);
               report(`strip-select-${id}`, { id, path: location.pathname });
             }),
-            nav.onMenu(() => report("strip-menu", {})),
+            nav.onAction(() => {
+              const from = location.pathname;
+              go("/");
+              report("strip-action", { from, path: location.pathname });
+            }),
+            nav.onAccount(() => report("strip-account", {})),
           );
-          nav.set(state()).then(
-            () => report(`strip-set-${why}`, { ok: true, menu: state().menu }),
-            (e) => report(`strip-set-${why}`, { error: String(e) }),
-          );
+          // The old shape (menu) must be refused by this shell.
+          nav
+            .set({ ...state(), menu: null })
+            .then(
+              () => report(`strip-oldshape-${why}`, { ok: true }),
+              () => report(`strip-oldshape-${why}`, { ok: false }),
+            );
+          send(why);
         }
         report(`strip-${why}`, {
           nav: !!nav,
+          side: nav ? (nav.side ?? null) : null,
+          onMenu: nav ? "onMenu" in nav : null,
           dataNativeNav: document.documentElement.hasAttribute("data-native-nav"),
           envRight: envRight(),
+          envLeft: envLeft(),
           width: innerWidth,
         });
       };
@@ -80,11 +123,25 @@
         report("strip-ready", { error: "no capybaraShell" });
       } else {
         // env() can read 0 right after load (spike 1.4): wait a frame or two before measuring.
+        // The page's accent reaches the strip's action through chrome@1 (its tokens).
+        shell.capabilities["chrome@1"]
+          ?.setAppearance({
+            scheme: "light",
+            background: "#f4f1ea",
+            tokens: {
+              bg: "#f4f1ea", panel: "#ffffff", ink: "#1a1a1a", muted: "#6b6b6b",
+              line: "#e0dcd3", accent: "#ff6a13", onAccent: "#ffffff",
+            },
+          })
+          .catch(() => {});
         requestAnimationFrame(() => requestAnimationFrame(() => attach("ready")));
         shell.on("change", () => attach("change"));
-        new ResizeObserver(() => {
-          if (envRight() > 0) report("strip-env", { envRight: envRight(), width: innerWidth });
-        }).observe(document.getElementById("probe"), { box: "border-box" });
+        const observer = new ResizeObserver(() => {
+          if (envRight() > 0 || envLeft() > 0)
+            report("strip-env", { envRight: envRight(), envLeft: envLeft(), width: innerWidth });
+        });
+        observer.observe(document.getElementById("probe"), { box: "border-box" });
+        observer.observe(document.getElementById("probe-left"), { box: "border-box" });
         addEventListener("resize", () => {
           if ((innerWidth < 600) === narrow) return;
           attach("resize");

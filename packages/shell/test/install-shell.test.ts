@@ -79,3 +79,53 @@ describe("installShellEnvironment for desktop", () => {
     expect(shell.controls).toEqual({ x: 0, y: 0, width: 80, height: 28 });
   });
 });
+
+describe("capability data fields", () => {
+  const withNav: ShellInit & { kind: "mobile" } = {
+    ...mobile,
+    capabilities: { "nav@1": ["set"] },
+    events: { "nav@1": ["onSelect"] },
+    fields: { "nav@1": { side: "right" }, "gone@1": { x: 1 } },
+  };
+
+  test("set on the offered capability's frozen object, beside its functions and events", () => {
+    const target: Record<string, unknown> = {};
+    installShellEnvironment(withNav, bridge(), target);
+    const caps = (target.capybaraShell as { capabilities: Record<string, Record<string, unknown>> })
+      .capabilities;
+    expect(caps["nav@1"]?.side).toBe("right");
+    expect(typeof caps["nav@1"]?.set).toBe("function");
+    expect(typeof caps["nav@1"]?.onSelect).toBe("function");
+    expect(Object.isFrozen(caps["nav@1"])).toBe(true);
+    // A key that is not offered gets no object from its fields alone.
+    expect(caps["gone@1"]).toBeUndefined();
+  });
+
+  test("a change replaces the values; a field never shadows a function or event", () => {
+    const target: Record<string, unknown> = {};
+    const b = bridge();
+    installShellEnvironment(withNav, b, target);
+    const shell = target.capybaraShell as {
+      capabilities: Record<string, Record<string, unknown>>;
+    };
+    b.fire({
+      ...withNav,
+      fields: { "nav@1": { side: "left", set: "x", onSelect: 2 } },
+    });
+    expect(shell.capabilities["nav@1"]?.side).toBe("left");
+    expect(typeof shell.capabilities["nav@1"]?.set).toBe("function");
+    expect(typeof shell.capabilities["nav@1"]?.onSelect).toBe("function");
+  });
+
+  test("non-primitive values are dropped", () => {
+    const target: Record<string, unknown> = {};
+    const fields = { "nav@1": { side: { evil: true }, fn: () => 1 } } as unknown as NonNullable<
+      ShellInit["fields"]
+    >;
+    installShellEnvironment({ ...withNav, fields }, bridge(), target);
+    const caps = (target.capybaraShell as { capabilities: Record<string, Record<string, unknown>> })
+      .capabilities;
+    expect(caps["nav@1"]).not.toHaveProperty("side");
+    expect(caps["nav@1"]).not.toHaveProperty("fn");
+  });
+});

@@ -98,8 +98,7 @@ export function createLoader<P extends LoaderProfile>(deps: LoaderDeps<P>): Load
   let shown: P | null = null;
 
   const stateOf = (profile: P): ShellState => {
-    const { capabilities, events } = deps.registry.descriptors(profile);
-    return { insets: { ...NO_INSETS }, capabilities, events };
+    return { insets: { ...NO_INSETS }, ...deps.registry.descriptors(profile) };
   };
 
   const showError = (kind: ErrorKind, code?: string) => {

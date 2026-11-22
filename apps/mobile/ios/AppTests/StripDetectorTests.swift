@@ -32,4 +32,31 @@ final class StripDetectorTests: XCTestCase {
         let ipad = UIEdgeInsets(top: 24, left: 0, bottom: 20, right: 0)
         XCTAssertFalse(StripDetector.hasStrip(safeArea: ipad, reservedRegion: nil))
     }
+
+    // The strip's side (interaction model §10.7, D16): right with one app in the foreground, left
+    // only for the left app of an inner-display split.
+
+    func testTheSideIsRightForOneApp() {
+        let outer = UIEdgeInsets(top: 0, left: 0, bottom: 34, right: 84)
+        XCTAssertEqual(StripDetector.strip(safeArea: outer, reservedRegion: nil, width: 466), .right)
+    }
+
+    func testTheLeftAppOfASplitHasItsStripOnTheLeft() {
+        let leftApp = UIEdgeInsets(top: 0, left: 84, bottom: 20, right: 0)
+        XCTAssertEqual(StripDetector.strip(safeArea: leftApp, reservedRegion: nil, width: 500), .left)
+        XCTAssertTrue(StripDetector.hasStrip(safeArea: leftApp, reservedRegion: nil))
+    }
+
+    func testAReservedRegionGivesItsEdge() {
+        let right = CGRect(x: 382, y: 0, width: 84, height: 678)
+        XCTAssertEqual(StripDetector.strip(safeArea: .zero, reservedRegion: right, width: 466), .right)
+        let left = CGRect(x: 0, y: 0, width: 84, height: 678)
+        XCTAssertEqual(StripDetector.strip(safeArea: .zero, reservedRegion: left, width: 466), .left)
+    }
+
+    func testBothSidesOrNoneIsNoStrip() {
+        let landscape = UIEdgeInsets(top: 0, left: 59, bottom: 21, right: 59)
+        XCTAssertNil(StripDetector.strip(safeArea: landscape, reservedRegion: nil, width: 852))
+        XCTAssertNil(StripDetector.strip(safeArea: .zero, reservedRegion: nil, width: 852))
+    }
 }
