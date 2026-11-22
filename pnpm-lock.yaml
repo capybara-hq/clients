@@ -47,8 +47,8 @@ importers:
         specifier: 0.1.0-rc.19
         version: 0.1.0-rc.19
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.41
-        version: 0.1.0-rc.41
+        specifier: 0.1.0-rc.53
+        version: 0.1.0-rc.53
       '@capybara-hq/shell':
         specifier: workspace:*
         version: link:../../packages/shell
@@ -102,8 +102,8 @@ importers:
         specifier: 8.6.2
         version: 8.6.2
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.46
-        version: 0.1.0-rc.46
+        specifier: 0.1.0-rc.53
+        version: 0.1.0-rc.53
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -237,11 +237,8 @@ packages:
     engines: {node: '>=22.12'}
     hasBin: true
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.41':
-    resolution: {integrity: sha512-n3qnCHS0s/rPlPP1a1drMxOsAi+wkYM2BcKZChH8b3ieCoga4j6GW1XErnISHNYd80rsHIMjgnBSn8hFsVLnow==}
-
-  '@capybara-hq/plugin-sdk@0.1.0-rc.46':
-    resolution: {integrity: sha512-7pOLVAF3f9Jt9g1OTM50YzcehSILLxRvOPpb4q7XFMxzK31rnuy4dFPX9PVoWWLnZp2FmYBcpRobt/yfABgf5g==}
+  '@capybara-hq/plugin-sdk@0.1.0-rc.53':
+    resolution: {integrity: sha512-yPoLMtxdp/5a2Wc2UZYdMJt87bzXHnvZcck+kArmifKF2yuO8qkmJrFinnnFa4mSuG5vEzcUK3YKUDEeNUmYDA==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -3128,22 +3125,7 @@ snapshots:
 
   '@capybara-hq/device@0.1.0-rc.19': {}
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.41':
-    dependencies:
-      '@types/mdast': 4.0.4
-      kysely: 0.29.9
-      mdast-util-from-markdown: 2.1.0
-      mdast-util-gfm: 3.1.0
-      mdast-util-to-markdown: 2.2.0
-      micromark-extension-gfm: 3.0.0
-      saxes: 6.0.0
-      semver: 7.8.6
-      yaml: 2.9.1
-      zod: 4.6.7
-    transitivePeerDependencies:
-      - supports-color
-
-  '@capybara-hq/plugin-sdk@0.1.0-rc.46':
+  '@capybara-hq/plugin-sdk@0.1.0-rc.53':
     dependencies:
       '@types/mdast': 4.0.4
       kysely: 0.29.9

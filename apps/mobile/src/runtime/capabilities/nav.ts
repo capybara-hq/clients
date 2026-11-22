@@ -9,71 +9,57 @@
 // activation.
 //
 // Lockstep: the web sends exactly this shape and the shell takes nothing else (no older-web path
-// before 0.1.0). The types mirror the SDK's `NavStateV1` of core phase 0b; they come from the SDK
-// once the clients move to the release that carries it.
-import { MENU_ITEM_ID, MOBILE_SHELL_LIMITS, SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
+// before 0.1.0). The types and limits are the SDK's (`NavStateV1`, `NAV_SECTION_ORDER`,
+// `MOBILE_SHELL_LIMITS`); the shell still validates every input at run time.
+import {
+  MENU_ITEM_ID,
+  MOBILE_SHELL_LIMITS,
+  NAV_SECTION_ORDER,
+  type NavAccountV1,
+  type NavActionV1,
+  type NavCapabilityV1,
+  type NavItemV1,
+  type NavSectionId,
+  type NavStateV1,
+  SHELL_CAPABILITY_KEYS,
+} from "@capybara-hq/plugin-sdk";
 import type { ProfileRef } from "../protocol.ts";
 import type { CapabilityImpl, CapabilityRegistry } from "../registry.ts";
 import { fail, isRecord, onlyKeys } from "./limits.ts";
 
 export const NAV_KEY = SHELL_CAPABILITY_KEYS.nav;
 
-/** The pill's items in display order (the SDK's `NAV_SECTION_ORDER` of phase 0b). */
-export const NAV_ITEM_ORDER = ["chats", "inbox", "agents", "schedules", "search"] as const;
-export type NavItemId = (typeof NAV_ITEM_ORDER)[number];
+/** The pill's items in display order: the sections and, last, `search`. */
+export const NAV_ITEM_ORDER = NAV_SECTION_ORDER;
 /** What `current` may name: a section, never `search`. */
-export type NavSectionId = Exclude<NavItemId, "search">;
-export type NavActionIcon = "plus" | "square-pen";
-export type StripSide = "left" | "right";
+export type NavCurrentId = Exclude<NavSectionId, "search">;
+export type StripSide = NonNullable<NavCapabilityV1["side"]>;
 
-export interface NavItem {
-  id: NavItemId;
-  label: string;
-  count?: number;
-  countMore?: boolean;
-}
-
-export interface NavAction {
-  id: string;
-  label: string;
-  icon: NavActionIcon;
-}
-
-export interface NavAccount {
-  name: string;
-  avatarUrl?: string | null;
-  initial: string;
-  badge?: number;
-}
-
-/** `nav@1.set`'s input (the SDK's `NavStateV1` of phase 0b). */
-export interface NavState {
-  items: NavItem[];
+/** `nav@1.set`'s input once validated: `current` is never `search`. */
+export type NavState = Omit<NavStateV1, "current"> & {
   /** The section on screen; null: none (the highlight is cleared, the person is on the action). */
-  current: NavSectionId | null;
-  action: NavAction;
-  account?: NavAccount;
-}
+  current: NavCurrentId | null;
+};
 
 /**
- * The limits of `MOBILE_SHELL_LIMITS` (`navLabel`, `navCount`, `navAccountName`) of phase 0b; the
- * SDK release the clients use predates `navAccountName`, so the values are kept here until then.
+ * The SDK's `nav@1` limits (`navLabel`, `navCount`, `navAccountName`, `url`), plus the account
+ * initial's length, which the SDK states only in prose (1..2 characters).
  */
 export const NAV_LIMITS = {
-  label: 32,
-  count: 9999,
-  accountName: 64,
+  label: MOBILE_SHELL_LIMITS.navLabel,
+  count: MOBILE_SHELL_LIMITS.navCount,
+  accountName: MOBILE_SHELL_LIMITS.navAccountName,
   initial: 2,
   url: MOBILE_SHELL_LIMITS.url,
 } as const;
 
 /** What the native strip draws: OS badge text, the avatar URL already checked. */
 export interface NavNativeState {
-  items: { id: NavItemId; label: string; badge: string | null }[];
+  items: { id: NavSectionId; label: string; badge: string | null }[];
   /** Null: no section is highlighted (coordinator ruling 2026-11-22). */
-  current: NavSectionId | null;
+  current: NavCurrentId | null;
   /** Null only before the page's first `set` (the strip then shows nothing). */
-  action: NavAction | null;
+  action: NavActionV1 | null;
   account: { name: string; avatarUrl: string | null; initial: string; badge: string | null } | null;
 }
 
@@ -127,12 +113,12 @@ function avatarUrl(raw: unknown, origin: string): string | undefined {
   return undefined;
 }
 
-function account(raw: unknown, origin: string): NavAccount | null {
+function account(raw: unknown, origin: string): NavAccountV1 | null {
   if (!isRecord(raw) || !onlyKeys(raw, ["name", "avatarUrl", "initial", "badge"])) return null;
   const name = text(raw.name, NAV_LIMITS.accountName);
   const initial = text(raw.initial, NAV_LIMITS.initial);
   if (name === null || initial === null) return null;
-  const out: NavAccount = { name, initial };
+  const out: NavAccountV1 = { name, initial };
   if (raw.avatarUrl !== undefined) {
     if (raw.avatarUrl === null) out.avatarUrl = null;
     else {
@@ -149,7 +135,7 @@ function account(raw: unknown, origin: string): NavAccount | null {
   return out;
 }
 
-function action(raw: unknown): NavAction | null {
+function action(raw: unknown): NavActionV1 | null {
   if (!isRecord(raw) || !onlyKeys(raw, ["id", "label", "icon"])) return null;
   if (typeof raw.id !== "string" || !MENU_ITEM_ID.test(raw.id)) return null;
   const label = text(raw.label, NAV_LIMITS.label);
@@ -169,23 +155,23 @@ export function validateNavState(input: unknown, origin: string): NavState | nul
   if (!("items" in input) || !("current" in input) || !("action" in input)) return null;
   const { items, current } = input;
   if (!Array.isArray(items) || items.length > NAV_ITEM_ORDER.length) return null;
-  const parsed: NavItem[] = [];
+  const parsed: NavItemV1[] = [];
   let last = -1;
   for (const raw of items) {
     if (!isRecord(raw) || !onlyKeys(raw, ["id", "label", "count", "countMore"])) return null;
-    const order = NAV_ITEM_ORDER.indexOf(raw.id as NavItemId);
+    const order = NAV_ITEM_ORDER.indexOf(raw.id as NavSectionId);
     // Known ids only, each once, in NAV_ITEM_ORDER.
     if (order <= last) return null;
     last = order;
     const label = text(raw.label, NAV_LIMITS.label);
     const counts = badge(raw);
     if (label === null || counts === null) return null;
-    parsed.push({ id: raw.id as NavItemId, label, ...counts });
+    parsed.push({ id: raw.id as NavSectionId, label, ...counts });
   }
-  let section: NavSectionId | null = null;
+  let section: NavCurrentId | null = null;
   if (current !== null) {
     if (current === "search" || !parsed.some((item) => item.id === current)) return null;
-    section = current as NavSectionId;
+    section = current as NavCurrentId;
   }
   const top = action(input.action);
   if (top === null) return null;
@@ -303,7 +289,7 @@ export function createNav<P extends ProfileRef>(deps: NavDeps<P>): Nav<P> {
       for (const profile of deps.profiles()) deps.registry.refresh(profile.id);
     },
     sectionSelected(id) {
-      if (!NAV_ITEM_ORDER.includes(id as NavItemId)) return;
+      if (!NAV_ITEM_ORDER.includes(id as NavSectionId)) return;
       emit("onSelect", id);
     },
     actionTapped() {
