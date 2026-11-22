@@ -930,10 +930,13 @@ function start(): void {
     // `afterUpdate` call at the next start is the one that finds the new device on disk and
     // restarts the service on it.
     if (app.isPackaged) {
+      // One connection's failed repair must not skip the restart of the others.
+      const failedCheck = (err: unknown) => console.error("device service check failed", err);
       void deviceService
         .repairService()
+        .catch(failedCheck)
         .then(() => deviceService.afterUpdate())
-        .catch((err: unknown) => console.error("device service check failed", err));
+        .catch(failedCheck);
       const updates = setupUpdates({
         autoUpdater,
         managed,

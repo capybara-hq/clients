@@ -187,7 +187,9 @@ export function createDeviceDialogs(deps: {
         message: tr(count === 1 ? "device.remove.message.one" : "device.remove.message.other", {
           count: String(count),
         }),
-        detail: tr("device.remove.detail", { platform: name ?? host }),
+        detail: tr(count === 1 ? "device.remove.detail.one" : "device.remove.detail.other", {
+          platform: name ?? host,
+        }),
         confirm: tr("device.remove.yes"),
         cancel: tr("device.remove.no"),
         tone: "danger",

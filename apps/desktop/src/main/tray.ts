@@ -122,6 +122,10 @@ function deviceRow(device: TrayDevice, locale: Locale, act: TrayDeviceActions | 
     if (act && profileId !== undefined) run(act, profileId);
   };
   const state = t(locale, stateKey(device.icon));
+  const rowState = t(
+    locale,
+    `tray.device.row.state.${device.icon === "busy" ? "online" : device.icon}`,
+  );
   const items: MenuItemModel[] = [
     { label: state, enabled: false },
     { label: t(locale, "tray.device.running", { count: String(device.running) }), enabled: false },
@@ -158,7 +162,11 @@ function deviceRow(device: TrayDevice, locale: Locale, act: TrayDeviceActions | 
     },
   ];
   return {
-    label: t(locale, "tray.device.row", { host: device.host, org: device.orgLabel, state }),
+    label: t(locale, "tray.device.row", {
+      host: device.host,
+      org: device.orgLabel,
+      state: rowState,
+    }),
     submenu: items,
   };
 }

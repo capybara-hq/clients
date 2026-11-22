@@ -450,8 +450,8 @@ describe("the tray's device rows (spec 9.6)", () => {
       "-",
       "添加平台",
       "-",
-      "a.example.com · Acme · 本机：在线",
-      "b.example.com · Beta · 本机：已暂停",
+      "a.example.com · Acme · 在线",
+      "b.example.com · Beta · 已暂停",
       "-",
       "打开窗口",
       "-",
@@ -481,7 +481,7 @@ describe("the tray's device rows (spec 9.6)", () => {
       expect.arrayContaining(["本机：在线", "运行中：3", "暂停"]),
     );
     const off = row(trayMenuModel(withDevices([device({ icon: "offline" })]), a()));
-    expect(off?.label).toBe("a.example.com · Acme · 本机：离线");
+    expect(off?.label).toBe("a.example.com · Acme · 离线");
   });
 
   test("an action on a row runs for that connection only", () => {
@@ -525,12 +525,12 @@ describe("the tray's device rows (spec 9.6)", () => {
     for (const label of ["暂停", "断开", "保持唤醒", "本机"]) {
       expect(sub.find((i) => i.label === label)?.enabled).toBe(false);
     }
-    expect(row(items)?.label).toContain("本机：在线");
+    expect(row(items)?.label).toBe("a.example.com · Acme · 在线");
   });
 
   test("English text comes from the catalog", () => {
     const items = trayMenuModel(withDevices([device({ icon: "busy", running: 2 })], "en"), a());
-    expect(row(items)?.label).toBe("a.example.com · Acme · This computer: online");
+    expect(row(items)?.label).toBe("a.example.com · Acme · online");
     expect(labels(row(items)?.submenu ?? [])).toEqual(
       expect.arrayContaining(["Running: 2", "Pause", "Disconnect", "Keep awake", "This computer"]),
     );

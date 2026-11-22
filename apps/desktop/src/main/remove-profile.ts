@@ -1,8 +1,8 @@
 // Removing a platform (spec §6.3), from the app menu or the tray: a shell dialog (§7.4; cancel is
 // the default, the remove button is the danger one), the device question when this machine has
 // connections into that deployment, then the profile's windows close before its partition is
-// cleared, so no window of a profile being removed passes the IPC checks while its data goes. Not offered for managed profiles under
-// `lockDeployments`. Electron objects come in as parameters.
+// cleared, so no window of a profile being removed passes the IPC checks while its data goes. Not
+// offered for managed profiles under `lockDeployments`. Electron objects come in as parameters.
 import { type Locale, t } from "@capybara-hq/shell";
 import { dialogPlatformOf, platformLabel } from "./device/dialogs.ts";
 import type { ConfirmGate } from "./ipc.ts";

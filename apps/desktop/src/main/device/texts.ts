@@ -1,8 +1,8 @@
 // The device program's own risk texts (spec §9.5): the widening dialog shows exactly what the
 // bundled program says, never a copy kept here that could drift from it. The bundled Node prints
 // the bundled package's `CEILING_WIDENING_TEXT`, `CEILING_OTHER_CONNECTIONS_TEXT` and
-// `outsideSandboxRiskText(deviceId)` as one JSON line; the answer is kept per connection for the app run (the bundled package does not change
-// while the app runs; an update installs at quit).
+// `outsideSandboxRiskText(deviceId)` as one JSON line; the answer is kept per connection for the
+// app run (the bundled package does not change while the app runs; an update installs at quit).
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { deviceEnv, devicePaths, type SpawnLike } from "./cli.ts";

@@ -197,6 +197,8 @@ describe("the other confirmations", () => {
     expect(one.shown[0]?.options.title).toBe(
       "Also disconnect this computer's device on this platform and log it out?",
     );
+    expect(one.shown[0]?.options.detail).toContain("as a local device");
+    expect(en.shown[0]?.options.detail).toContain("as local devices");
     const zhOne = setup(true);
     await zhOne.dialogs.confirmRemoveDevice(null, named, 1);
     expect(zhOne.shown[0]?.options.title).toBe("同时断开本机在这个平台上的设备并退出登录？");
