@@ -292,6 +292,29 @@ describe("profile windows", () => {
     expect(created[2]?.close).not.toHaveBeenCalled();
   });
 
+  test("onProfileWindowsChanged: after a profile window opens or closes, not the small one", () => {
+    const seen: [boolean, boolean][] = [];
+    const ref: { windows?: ReturnType<typeof setup>["windows"] } = {};
+    const onProfileWindowsChanged = vi.fn(() => {
+      seen.push([!!ref.windows?.hasProfileWindows("p1"), !!ref.windows?.hasProfileWindows("p2")]);
+    });
+    const { windows, created } = setup({ onProfileWindowsChanged });
+    ref.windows = windows;
+    windows.openProfileWindow(p1);
+    windows.openSmallWindow(COLORS);
+    windows.openProfileWindow(p2);
+    created[0]?.close();
+    created[1]?.close();
+    windows.closeProfileWindows("p2");
+    // Each call already sees the new state, so a menu rebuilt there marks the right platforms.
+    expect(seen).toEqual([
+      [true, false],
+      [true, true],
+      [false, true],
+      [false, false],
+    ]);
+  });
+
   test("closeProfileWindows forgets the windows at once, before `closed` arrives", () => {
     const onProfileClosed = vi.fn();
     const { windows, created } = setup({ onProfileClosed });

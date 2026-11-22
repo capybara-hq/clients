@@ -281,6 +281,8 @@ function start(): void {
       // Each load of a deployment window asks its discovery again whether device@1 is offered.
       onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
+      // The menus mark the platforms with an open window.
+      onProfileWindowsChanged: () => ui.stateChanged(),
       // Sign-out (spec §6.9): the partition's logout completion; the window's /login and its load
       // failures are the session watch's (spec §6.8).
       onPartitionPrepared: (profile, partition) =>
@@ -784,7 +786,12 @@ function start(): void {
     function menuState(): PlatformMenuState {
       return {
         locale: menuLocale(),
-        profiles: visibleProfiles().map((p) => ({ id: p.id, name: p.name, signedIn: p.signedIn })),
+        profiles: visibleProfiles().map((p) => ({
+          id: p.id,
+          name: p.name,
+          signedIn: p.signedIn,
+          open: windows.hasProfileWindows(p.id),
+        })),
         activeId: profiles.lastUsed()?.id,
         lockDeployments: managed.lockDeployments === true,
       };
