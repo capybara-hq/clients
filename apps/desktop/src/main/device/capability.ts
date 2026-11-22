@@ -39,6 +39,7 @@ import {
   type MachineConnection,
   parseCeilingRequest,
   readCeiling,
+  readConnectionCount,
   readKeepAwake,
   widensField,
 } from "./machine.ts";
@@ -212,6 +213,8 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     async resume(ctx: Ctx, input: unknown): Promise<"resumed" | "cancelled"> {
       const c = await connectionHere(ctx.profile, input);
       if (!(await dialogs.confirmResume(ctx.window, ctx.profile))) return "cancelled";
+      // The dialog can stay open a long time: the connection must still be one of this window's.
+      await connectionHere(ctx.profile, input);
       try {
         await deps.service.ensureService(c.deviceId);
         await run(cli, ["service", "start", "-c", c.deviceId]);
@@ -287,7 +290,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         let others = false;
         if (widened.outsideSandbox) {
           try {
-            others = (await controls.read()).length > 1;
+            others = (await readConnectionCount(cli)) > 1;
           } catch {
             others = true; // unknown: shown, as the program does when it cannot list them
           }
@@ -299,6 +302,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
         ];
         if (!(await dialogs.confirmWidenCeiling(ctx.window, widened, shown, ctx.profile)))
           return "cancelled";
+        await connectionHere(ctx.profile, input);
         // The ceiling may have narrowed while the dialog was open: --yes must not widen a field
         // the person did not see named. Known limit: with --yes the program does not decide again,
         // so a narrowing landing between this read and the write is not caught; closing that needs
@@ -327,6 +331,7 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
       return ctx.confirm(async () => {
         if (!(await dialogs.confirmRaiseKeepAwake(ctx.window, raised, ctx.profile)))
           return "cancelled";
+        await connectionHere(ctx.profile, input);
         // Lowered while the dialog was open: the raise would be larger than the one confirmed.
         if (rank(await readKeepAwake(cli, c.deviceId)) < rank(cur)) throw failed();
         await run(cli, ["keep-awake", raised, "-c", c.deviceId, "--yes"]);

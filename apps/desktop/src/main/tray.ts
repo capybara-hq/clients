@@ -21,14 +21,24 @@ export interface MenuItemModel {
  */
 export type TrayIconState = "not_connected" | "online" | "offline" | "paused" | "busy";
 
-/** This machine's device, as the tray shows it. */
+/** One of this machine's device connections, as the tray shows it. */
 export interface TrayDevice {
-  icon: TrayIconState;
+  deviceId: string;
+  host: string;
+  /** The org's name, or its id when the program has no name for it. */
+  orgLabel: string;
+  icon: Exclude<TrayIconState, "not_connected">;
   running: number;
   keepAwake: KeepAwakeMode;
-  /** The saved profile of the deployment the machine is connected to; absent: not one of ours. */
+  /** The saved profile of that deployment; absent: not one of ours, the row has no actions. */
   profileId?: string | undefined;
-  deviceId?: string | undefined;
+}
+
+/** The icon of the worst connection: offline > busy > paused > online; none: not connected. */
+export function worstIcon(devices: readonly TrayDevice[]): TrayIconState {
+  const order = ["offline", "busy", "paused", "online"] as const;
+  for (const icon of order) if (devices.some((d) => d.icon === icon)) return icon;
+  return "not_connected";
 }
 
 export interface TrayState {
@@ -37,16 +47,16 @@ export interface TrayState {
   profiles: { id: string; name: string; open: boolean }[];
   /** Managed `lockDeployments`: 「添加平台」 is not offered. */
   lockDeployments: boolean;
-  /** The machine's device; absent or `not_connected`: no device entries. */
-  device?: TrayDevice | undefined;
+  /** Every connection of this machine (the tray is the person's own UI, not a page). */
+  devices?: TrayDevice[] | undefined;
 }
 
-/** Device actions of the tray: each runs for the profile (device/tray-device.ts). */
+/** Device actions of the tray: each runs for one connection of a saved profile (tray-device.ts). */
 export interface TrayDeviceActions {
-  pause(profileId: string): unknown;
-  resume(profileId: string): unknown;
-  disconnect(profileId: string): unknown;
-  setKeepAwake(profileId: string, mode: KeepAwakeMode): unknown;
+  pause(profileId: string, deviceId: string): unknown;
+  resume(profileId: string, deviceId: string): unknown;
+  disconnect(profileId: string, deviceId: string): unknown;
+  setKeepAwake(profileId: string, deviceId: string, mode: KeepAwakeMode): unknown;
   openDevicePage(profileId: string, deviceId: string): unknown;
 }
 
@@ -103,37 +113,33 @@ const KEEP_AWAKE_ORDER: KeepAwakeMode[] = ["off", "while-busy", "connected"];
 const stateKey = (icon: Exclude<TrayIconState, "not_connected">) =>
   `tray.device.state.${icon === "busy" ? "online" : icon}`;
 
-/** The device section: state, running count, 暂停 / 恢复, 断开, keep-awake, 「本机」. */
-function deviceItems(state: TrayState, actions: TrayActions): MenuItemModel[] {
-  const device = state.device;
-  if (!device || device.icon === "not_connected") return [];
-  const { locale } = state;
-  const act = actions.device;
-  const profileId = device.profileId;
+/** One connection's row: a submenu with its state, running count, 暂停 / 恢复, 断开, keep-awake, 「本机」. */
+function deviceRow(device: TrayDevice, locale: Locale, act: TrayDeviceActions | undefined) {
+  const { profileId, deviceId } = device;
   // Without a saved profile for the deployment there is no dialog parent or page to open.
   const usable = profileId !== undefined && act !== undefined;
-  const go = (run: (a: TrayDeviceActions, id: string) => unknown) => () => {
+  const go = (run: (a: TrayDeviceActions, profile: string) => unknown) => () => {
     if (act && profileId !== undefined) run(act, profileId);
   };
-  const paused = device.icon === "paused";
-  return [
-    { label: t(locale, stateKey(device.icon)), enabled: false },
+  const state = t(locale, stateKey(device.icon));
+  const items: MenuItemModel[] = [
+    { label: state, enabled: false },
     { label: t(locale, "tray.device.running", { count: String(device.running) }), enabled: false },
-    paused
+    device.icon === "paused"
       ? {
           label: t(locale, "tray.device.resume"),
           enabled: usable,
-          click: go((a, id) => a.resume(id)),
+          click: go((a, p) => a.resume(p, deviceId)),
         }
       : {
           label: t(locale, "tray.device.pause"),
           enabled: usable,
-          click: go((a, id) => a.pause(id)),
+          click: go((a, p) => a.pause(p, deviceId)),
         },
     {
       label: t(locale, "tray.device.disconnect"),
       enabled: usable,
-      click: go((a, id) => a.disconnect(id)),
+      click: go((a, p) => a.disconnect(p, deviceId)),
     },
     {
       label: t(locale, "tray.device.keep_awake"),
@@ -142,38 +148,45 @@ function deviceItems(state: TrayState, actions: TrayActions): MenuItemModel[] {
         label: t(locale, `tray.device.keep_awake.${mode}`),
         type: "radio" as const,
         checked: device.keepAwake === mode,
-        click: go((a, id) => a.setKeepAwake(id, mode)),
+        click: go((a, p) => a.setKeepAwake(p, deviceId, mode)),
       })),
     },
     {
       label: t(locale, "tray.device.page"),
-      enabled: usable && device.deviceId !== undefined,
-      click: () => {
-        if (act && profileId !== undefined && device.deviceId !== undefined) {
-          act.openDevicePage(profileId, device.deviceId);
-        }
-      },
+      enabled: usable,
+      click: go((a, p) => a.openDevicePage(p, deviceId)),
     },
   ];
-}
-
-/** The icon's tooltip and title suffix (one template image; the state rides on text). */
-export function trayIndication(state: TrayState): { tooltip: string; suffix: string } {
-  const device = state.device;
-  if (!device || device.icon === "not_connected") return { tooltip: "", suffix: "" };
-  const { locale } = state;
-  const label = t(locale, stateKey(device.icon));
-  if (device.icon === "busy") {
-    const count = t(locale, "tray.device.running", { count: String(device.running) });
-    return { tooltip: `${label} · ${count}`, suffix: String(device.running) };
-  }
   return {
-    tooltip: label,
-    suffix: device.icon === "offline" ? "!" : device.icon === "paused" ? "⏸" : "",
+    label: t(locale, "tray.device.row", { host: device.host, org: device.orgLabel, state }),
+    submenu: items,
   };
 }
 
-/** The tray menu: profiles, 「添加平台」, the device section, open window, quit. */
+/** The device section: one row per connection. */
+function deviceItems(state: TrayState, actions: TrayActions): MenuItemModel[] {
+  return (state.devices ?? []).map((d) => deviceRow(d, state.locale, actions.device));
+}
+
+/** The icon's tooltip and title suffix: the worst state and the running count of all of them. */
+export function trayIndication(state: TrayState): { tooltip: string; suffix: string } {
+  const devices = state.devices ?? [];
+  const worst = worstIcon(devices);
+  if (worst === "not_connected") return { tooltip: "", suffix: "" };
+  const { locale } = state;
+  const label = t(locale, stateKey(worst));
+  const total = devices.reduce((n, d) => n + d.running, 0);
+  if (worst === "busy") {
+    const count = t(locale, "tray.device.running", { count: String(total) });
+    return { tooltip: `${label} · ${count}`, suffix: String(total) };
+  }
+  return {
+    tooltip: label,
+    suffix: worst === "offline" ? "!" : worst === "paused" ? "⏸" : "",
+  };
+}
+
+/** The tray menu: profiles, 「添加平台」, a row per device connection, open window, quit. */
 export function trayMenuModel(state: TrayState, actions: TrayActions): MenuItemModel[] {
   const platforms = platformItems(state, actions);
   const device = deviceItems(state, actions);

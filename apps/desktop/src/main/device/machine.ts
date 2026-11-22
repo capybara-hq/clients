@@ -18,20 +18,6 @@ export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 /** A refusal the bridge passes to the page as `{ code }` (only ShellCallError codes survive). */
 export const failed = (): { code: "failed" } => ({ code: "failed" });
 
-export type Machine =
-  | { loggedIn: false }
-  | {
-      loggedIn: true;
-      /** The deployment address the device logged in to (base, no trailing slash). */
-      url: string;
-      orgId: string;
-      deviceId: string;
-      mode: "os" | "docker";
-      control: "ok" | "absent" | "unavailable";
-      controlReason?: string;
-      live: LiveStatus | null;
-    };
-
 export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-busy", "connected"];
 
 export const isKeepAwakeMode = (v: unknown): v is KeepAwakeMode =>
@@ -52,32 +38,6 @@ async function readJson<T>(
   if (out === undefined) throw failed();
   return out;
 }
-
-function parseMachine(v: unknown): Machine | undefined {
-  if (!isRecord(v)) return undefined;
-  if (v.loggedIn === false) return { loggedIn: false };
-  if (v.loggedIn !== true) return undefined;
-  const { url, orgId, deviceId, mode, control, controlReason, live } = v;
-  if (typeof url !== "string" || typeof orgId !== "string" || typeof deviceId !== "string") {
-    return undefined;
-  }
-  if (mode !== "os" && mode !== "docker") return undefined;
-  if (control !== "ok" && control !== "absent" && control !== "unavailable") return undefined;
-  return {
-    loggedIn: true,
-    url,
-    orgId,
-    deviceId,
-    mode,
-    control,
-    ...(typeof controlReason === "string" && { controlReason }),
-    live: control === "ok" && isLiveStatus(live) ? live : null,
-  };
-}
-
-/** `status --json` (exit 1 only means "not logged in"; the JSON line is the answer). */
-export const readMachine = (cli: DeviceCli): Promise<Machine> =>
-  readJson(cli, ["status", "--json"], parseMachine);
 
 /** One connection of this machine, as `status --json` shows it (only these fields). */
 export interface MachineConnection {
@@ -163,6 +123,17 @@ export const readConnections = (cli: DeviceCli, machineDir: string): Promise<Mac
   readJson(cli, ["status", "--json"], (v) =>
     isRecord(v) && Array.isArray(v.connections)
       ? v.connections.flatMap((c) => parseConnection(c, machineDir) ?? [])
+      : undefined,
+  );
+
+/**
+ * How many connection directories `status --json` lists, the readable and the unreadable ones
+ * (the program's own other-connections check counts both).
+ */
+export const readConnectionCount = (cli: DeviceCli): Promise<number> =>
+  readJson(cli, ["status", "--json"], (v) =>
+    isRecord(v) && Array.isArray(v.connections)
+      ? v.connections.length + (Array.isArray(v.unreadable) ? v.unreadable.length : 0)
       : undefined,
   );
 
@@ -309,8 +280,6 @@ export function originOf(url: string): string | null {
   const n = normalizeAddress(url);
   return n.ok ? n.origin : null;
 }
-
-export type LoggedInMachine = Extract<Machine, { loggedIn: true }>;
 
 /** The longest offline reason passed to the page. */
 const REASON_MAX = 300;

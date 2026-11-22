@@ -53,11 +53,10 @@ import {
 import { createDeviceAvailability } from "./device/availability.ts";
 import { createDeviceCapability } from "./device/capability.ts";
 import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
-import { type ControlClient, createConnectionControls, deviceStateDir } from "./device/control.ts";
+import { createConnectionControls, deviceStateDir } from "./device/control.ts";
 import { createDeviceDialogs, dialogPlatformOf } from "./device/dialogs.ts";
 import {
   connectionsHere,
-  failed,
   type MachineConnection,
   readConnections,
   readKeepAwake,
@@ -586,61 +585,21 @@ function start(): void {
       else onboarding.openConnect(managed.profiles?.[0]);
     };
 
-    // The tray shows one connection until it has a row per connection (plan Task 14): the first
-    // one `status --json` lists. The tray is the app's own UI, not a page, so it may show any
-    // deployment's connection; its actions name the device id it shows, and device@2 refuses
-    // unless that is a connection into the profile the action is for.
-    const trayConnection = async () => (await connections.read())[0];
-    const trayControl: Pick<ControlClient, "subscribe" | "running" | "status"> = {
-      status: async () => {
-        const c = await trayConnection();
-        return c === undefined ? undefined : connections.forDevice(c.deviceId).status();
-      },
-      running: async () => {
-        const c = await trayConnection();
-        return c === undefined ? [] : connections.forDevice(c.deviceId).running();
-      },
-      subscribe: (cb) => {
-        const report = () => void trayControl.status().then(cb, () => cb(undefined));
-        const stop = connections.subscribeAll(report);
-        report();
-        return stop;
-      },
-    };
-    /** The device the tray shows, as device@2's argument. */
-    const shownDevice = () => ({ deviceId: trayDevice.current().deviceId });
-
-    // This machine's device in the tray (spec §9.6). Its actions are device@2's own functions.
+    // This machine's device connections in the tray (spec §9.6): a row per connection. The tray is
+    // the app's own UI, not a page, so it may show any deployment's connection; its actions name
+    // the device id of the row, and device@2 refuses unless that is a connection into the profile
+    // the action is for. Its actions are device@2's own functions.
     const trayDevice = createTrayDevice({
       // Managed 「连接本机」 off: no device in the tray, like device@2 is not offered.
       enabled: managed.connectThisMachine !== false,
-      control: trayControl,
-      readMachine: async () => {
-        const c = await trayConnection();
-        if (c === undefined) return { loggedIn: false };
-        const { url, orgId, deviceId, mode, control, controlReason, live } = c;
-        return {
-          loggedIn: true,
-          url,
-          orgId,
-          deviceId,
-          mode,
-          control,
-          live,
-          ...(controlReason !== undefined && { controlReason }),
-        };
-      },
-      readKeepAwake: async () => {
-        const c = await trayConnection();
-        if (c === undefined) throw failed();
-        return readKeepAwake(deviceCli, c.deviceId);
-      },
+      controls: connections,
+      readKeepAwake: (deviceId) => readKeepAwake(deviceCli, deviceId),
       profiles: visibleProfiles,
       impl: {
-        pause: (ctx) => device.impl.pause(ctx, shownDevice()),
-        resume: (ctx) => device.impl.resume(ctx, shownDevice()),
-        disconnect: (ctx) => device.impl.disconnect(ctx, shownDevice()),
-        setKeepAwake: (ctx, mode) => device.impl.setKeepAwake(ctx, { ...shownDevice(), mode }),
+        pause: (ctx, deviceId) => device.impl.pause(ctx, { deviceId }),
+        resume: (ctx, deviceId) => device.impl.resume(ctx, { deviceId }),
+        disconnect: (ctx, deviceId) => device.impl.disconnect(ctx, { deviceId }),
+        setKeepAwake: (ctx, deviceId, mode) => device.impl.setKeepAwake(ctx, { deviceId, mode }),
       },
       gate: confirmGate,
       openDevicePage: (profile, path) => openProfile(profile, profile.base + path),
@@ -864,7 +823,7 @@ function start(): void {
       };
     }
     function render(): void {
-      const state = { ...menuState(), device: trayDevice.current() };
+      const state = { ...menuState(), devices: trayDevice.current() };
       tray.update(state);
       Menu.setApplicationMenu(
         Menu.buildFromTemplate(

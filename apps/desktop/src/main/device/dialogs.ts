@@ -184,7 +184,9 @@ export function createDeviceDialogs(deps: {
       const tr = trOf(profile);
       const { name, host } = platformLabel(profile);
       return ask(parent, {
-        message: tr("device.remove.message", { count: String(count) }),
+        message: tr(count === 1 ? "device.remove.message.one" : "device.remove.message.other", {
+          count: String(count),
+        }),
         detail: tr("device.remove.detail", { platform: name ?? host }),
         confirm: tr("device.remove.yes"),
         cancel: tr("device.remove.no"),

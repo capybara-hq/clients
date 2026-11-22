@@ -1130,3 +1130,77 @@ describe("the connection readers", () => {
     ]);
   });
 });
+
+describe("the connection is checked again after a confirmation dialog", () => {
+  /** A `status --json` that answers `all` until `drop()` removes dev_a1. */
+  function droppable() {
+    let dropped = false;
+    const answer = () => ({
+      lines: [
+        dropped ? { connections: [connectionJson("dev_a2")], unreadable: [] } : threeConnections(),
+      ],
+    });
+    return { handlers: { "status --json": answer }, drop: () => (dropped = true) };
+  }
+
+  test("resume: a connection gone while the dialog was open starts nothing", async () => {
+    const d = droppable();
+    const s = setup({}, { handlers: d.handlers });
+    s.dialogs.dialogs.confirmResume = async () => {
+      d.drop();
+      return true;
+    };
+    await expect(s.device.impl.resume(ctxFor(), A1)).rejects.toEqual({ code: "failed" });
+    expect(s.cli.writes()).toEqual([]);
+    expect(s.service.ensureService).not.toHaveBeenCalled();
+  });
+
+  test("a widening: a connection gone while the dialog was open widens nothing", async () => {
+    const d = droppable();
+    const s = setup({}, { handlers: d.handlers });
+    s.dialogs.dialogs.confirmWidenCeiling = async () => {
+      d.drop();
+      return true;
+    };
+    await expect(
+      s.device.impl.requestCeiling(ctxFor(), { ...A1, network: "open" }),
+    ).rejects.toEqual({ code: "failed" });
+    expect(s.cli.writes()).toEqual([]);
+  });
+
+  test("a keep-awake raise: a connection gone while the dialog was open raises nothing", async () => {
+    const d = droppable();
+    const s = setup({ keepAwake: "off" }, { handlers: d.handlers });
+    s.dialogs.dialogs.confirmRaiseKeepAwake = async () => {
+      d.drop();
+      return true;
+    };
+    await expect(
+      s.device.impl.setKeepAwake(ctxFor(), { ...A1, mode: "connected" }),
+    ).rejects.toEqual({ code: "failed" });
+    expect(s.cli.writes()).toEqual([]);
+  });
+});
+
+describe("the other-connections sentence counts unreadable connections too", () => {
+  const status = (unreadable: unknown[]) => ({
+    connections: [connectionJson("dev_a1")],
+    unreadable,
+  });
+
+  test("one readable connection and an unreadable one: the sentence is shown", async () => {
+    const s = setup({ status: status([{ deviceId: "dev_x", reason: "bad json" }]) });
+    await s.device.impl.requestCeiling(ctxFor(), { ...A1, outsideSandbox: true });
+    expect(s.dialogs.asked[0]?.args[2]).toEqual([
+      TEXTS.ceilingWidening,
+      TEXTS.otherConnections,
+      TEXTS.outsideSandboxRisk,
+    ]);
+  });
+
+  test("a single connection alone: no sentence", async () => {
+    const s = setup({ status: status([]) });
+    await s.device.impl.requestCeiling(ctxFor(), { ...A1, outsideSandbox: true });
+    expect(s.dialogs.asked[0]?.args[2]).toEqual([TEXTS.ceilingWidening, TEXTS.outsideSandboxRisk]);
+  });
+});
