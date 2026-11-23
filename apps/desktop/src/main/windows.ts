@@ -46,10 +46,18 @@ export interface WebContentsLike extends ContentsLike {
   getURL?(): string;
 }
 
+/** The `close` event's argument: preventing it keeps the window. */
+export interface CloseEventLike {
+  preventDefault(): void;
+}
+
 export interface WindowLike {
   webContents: WebContentsLike;
   on(event: string, listener: () => void): unknown;
   show(): void;
+  /** Hides the window, keeping its page (macOS: a closed main window is hidden). */
+  hide?(): void;
+  setFullScreen?(flag: boolean): void;
   focus(): void;
   close(): void;
   isDestroyed(): boolean;
@@ -214,6 +222,11 @@ export interface WindowManagerDeps {
   boundsScheduler?: BoundsScheduler;
   /** The app's name, the small window's title. */
   appName?: string;
+  /**
+   * macOS: closing a main window hides it, keeping its page, scroll and draft for the next Dock
+   * click; only a quit (`prepareQuit`) or a removal / sign-out closes it for real.
+   */
+  hideOnClose?: boolean;
   /** Errors that have nowhere else to go (a failed load). */
   log?: (message: string, err: unknown) => void;
 }
@@ -244,6 +257,10 @@ export function createWindowManager(deps: WindowManagerDeps) {
   };
   const permissionsInstalled = new Set<string>();
   let lastFocused: Entry | undefined;
+  /** Set once the app quits: a close is a close again. */
+  let quitting = false;
+  /** Full-screen windows closed by the person: hidden once they have left full screen. */
+  const hideAfterFullScreen = new Set<WindowLike>();
 
   const entries = () => [...byContents.values()];
   const profileEntries = (id: string) =>
@@ -283,9 +300,33 @@ export function createWindowManager(deps: WindowManagerDeps) {
   }
 
   function bringToFront(win: WindowLike): void {
+    hideAfterFullScreen.delete(win);
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
+  }
+
+  /**
+   * A main window's close while hiding applies: hidden instead (it stays tracked, so the menus
+   * still count it open). A full-screen window first leaves full screen: hiding it in place
+   * leaves a black space behind (an Electron quirk on macOS).
+   */
+  function hideOnClose(win: WindowLike, id: number): void {
+    // `close` passes its event; the window's other events pass nothing this module reads.
+    const onClose = (event: CloseEventLike) => {
+      if (quitting || !byContents.has(id)) return;
+      event.preventDefault();
+      if (win.isFullScreen() && win.setFullScreen) {
+        hideAfterFullScreen.add(win);
+        win.setFullScreen(false);
+        return;
+      }
+      win.hide?.();
+    };
+    win.on("close", onClose as unknown as () => void);
+    win.on("leave-full-screen", () => {
+      if (hideAfterFullScreen.delete(win)) win.hide?.();
+    });
   }
 
   function stateOf(entry: Extract<Entry, { kind: "profile" }>, fullscreen: boolean): ShellState {
@@ -363,6 +404,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     });
     const entry: Extract<Entry, { kind: "profile" }> = { kind: "profile", profile, window: win };
     track(entry);
+    if (deps.hideOnClose) hideOnClose(win, win.webContents.id);
     hardenProfileContents(win.webContents, {
       origin: profile.origin,
       openExternal: deps.openExternal,
@@ -508,6 +550,22 @@ export function createWindowManager(deps: WindowManagerDeps) {
         untrack(id);
         e.window.close();
       }
+    },
+
+    /**
+     * Closes a main window for real (a profile window that met /login while not signed in), even
+     * where a close hides it; any other window is just closed.
+     */
+    closeWindow(win: WindowLike): void {
+      for (const [id, e] of [...byContents]) {
+        if (e.window === win && e.kind === "profile") untrack(id);
+      }
+      if (!win.isDestroyed()) win.close();
+    },
+
+    /** The app is quitting (`before-quit`, an update's restart): closes are no longer hides. */
+    prepareQuit(): void {
+      quitting = true;
     },
 
     /**
