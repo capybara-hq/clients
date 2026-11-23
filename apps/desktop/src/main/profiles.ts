@@ -74,13 +74,18 @@ export interface ProfileStoreDeps {
 export interface ProfileStore {
   list(): Profile[];
   get(id: string): Profile | undefined;
-  /** Adds a profile; the same `base` again returns the existing one. */
+  /**
+   * Adds a profile; the same `base` again returns the existing one (throws while that one is
+   * being removed).
+   */
   add(input: NewProfile): Profile;
   /** Merges `patch` (undefined removes an optional field) and saves; undefined for an unknown id. */
   update(id: string, patch: ProfilePatch): Profile | undefined;
   /**
    * Clears the profile's partition, then forgets it. The caller asks first and closes the
-   * profile's windows (remove-profile.ts).
+   * profile's windows (remove-profile.ts). From the call on the profile reads as gone (`get`,
+   * `list`, `lastUsed`, `update`), so nothing opens a window on the partition being cleared; when
+   * the clearing fails it is back.
    */
   remove(id: string): Promise<void>;
   /** The last used profile, else the first one. */
@@ -267,6 +272,9 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   const { fs, file } = deps;
   const loaded = readStore(fs, file);
   let state = loaded.store;
+  /** Ids whose removal is clearing the partition: read as gone, never saved as gone yet. */
+  const removing = new Set<string>();
+  const visible = () => state.profiles.filter((p) => !removing.has(p.id));
 
   function save(): void {
     fs.mkdirSync(dirname(file), { recursive: true });
@@ -284,17 +292,19 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
   }
 
   return {
-    list: () => state.profiles.map((p) => ({ ...p })),
+    list: () => visible().map((p) => ({ ...p })),
     loadReport: () => ({
       loadedCleanly: loaded.clean,
       seenIds: [...new Set([...loaded.seenIds, ...state.profiles.map((p) => p.id)])],
     }),
     get: (id) => {
-      const p = state.profiles.find((q) => q.id === id);
+      const p = visible().find((q) => q.id === id);
       return p && { ...p };
     },
     add(input) {
       const existing = state.profiles.find((p) => p.base === input.base);
+      // Its partition is being cleared: it must not come back as this new one.
+      if (existing && removing.has(existing.id)) throw new Error("profile is being removed");
       if (existing) return { ...existing };
       const n = normalizeAddress(input.base);
       if (!n.ok || n.base !== input.base || n.origin !== input.origin) {
@@ -311,7 +321,7 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
     },
     update(id, patch) {
       const i = state.profiles.findIndex((p) => p.id === id);
-      if (i < 0) return undefined;
+      if (i < 0 || removing.has(id)) return undefined;
       const merged: Record<string, unknown> = { ...state.profiles[i] };
       for (const [k, v] of Object.entries(patch)) {
         if (v !== undefined) merged[k] = v;
@@ -326,10 +336,15 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
     },
     async remove(id) {
       const existing = state.profiles.find((p) => p.id === id);
-      if (!existing) return;
-      const session = deps.sessionFor(partitionFor(id));
-      await session.clearStorageData();
-      await session.clearCache?.();
+      if (!existing || removing.has(id)) return;
+      removing.add(id);
+      try {
+        const session = deps.sessionFor(partitionFor(id));
+        await session.clearStorageData();
+        await session.clearCache?.();
+      } finally {
+        removing.delete(id);
+      }
       state = {
         ...state,
         profiles: state.profiles.filter((p) => p.id !== id),
@@ -338,11 +353,12 @@ export function createProfileStore(deps: ProfileStoreDeps): ProfileStore {
       save();
     },
     lastUsed() {
-      const p = state.profiles.find((q) => q.id === state.lastUsedId) ?? state.profiles[0];
+      const shown = visible();
+      const p = shown.find((q) => q.id === state.lastUsedId) ?? shown[0];
       return p && { ...p };
     },
     setLastUsed(id) {
-      if (state.lastUsedId === id || !state.profiles.some((p) => p.id === id)) return;
+      if (state.lastUsedId === id || !visible().some((p) => p.id === id)) return;
       state = { ...state, lastUsedId: id };
       save();
     },

@@ -104,6 +104,50 @@ describe("profiles", () => {
     expect(store.list()).toEqual([]);
   });
 
+  test("a profile being removed reads as gone while its partition is cleared", async () => {
+    const { store, sessionFor, fs } = setup();
+    const a = store.add(example);
+    const b = store.add({
+      ...example,
+      base: "https://b.example.com",
+      origin: "https://b.example.com",
+    });
+    store.setLastUsed(a.id);
+    let finish = () => {};
+    vi.spyOn(sessionFor(partitionFor(a.id)), "clearStorageData").mockImplementation(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const removing = store.remove(a.id);
+    // Nothing finds it to open a window on the partition being cleared.
+    expect(store.get(a.id)).toBeUndefined();
+    expect(store.list().map((p) => p.id)).toEqual([b.id]);
+    expect(store.lastUsed()?.id).toBe(b.id);
+    expect(store.update(a.id, { name: "Again" })).toBeUndefined();
+    store.setLastUsed(a.id);
+    expect(store.lastUsed()?.id).toBe(b.id);
+    // Re-adding its address meanwhile is refused, not answered with the profile going away.
+    expect(() => store.add(example)).toThrow("profile is being removed");
+    // A second removal does not clear twice.
+    await store.remove(a.id);
+    // Still on disk until the clearing is done.
+    expect(JSON.parse(fs.files.get(FILE) as string).profiles).toHaveLength(2);
+    finish();
+    await removing;
+    expect(JSON.parse(fs.files.get(FILE) as string).profiles).toHaveLength(1);
+    expect(store.get(a.id)).toBeUndefined();
+  });
+
+  test("a removal whose clearing fails gives the profile back", async () => {
+    const { store, sessionFor } = setup();
+    const a = store.add(example);
+    vi.spyOn(sessionFor(partitionFor(a.id)), "clearStorageData").mockRejectedValue(
+      new Error("disk full"),
+    );
+    await expect(store.remove(a.id)).rejects.toThrow("disk full");
+    expect(store.get(a.id)?.id).toBe(a.id);
+    expect(store.update(a.id, { name: "Kept" })?.name).toBe("Kept");
+  });
+
   test("the last used profile is remembered and forgotten on remove", async () => {
     const { store, fs } = setup();
     const a = store.add(example);

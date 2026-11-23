@@ -144,3 +144,44 @@ describe("the removal dialog's language (spec 12)", () => {
     expect(boxes[0]?.options.buttons).toEqual(["Cancel", "Remove"]);
   });
 });
+
+describe("a quit while a platform is removed", () => {
+  test("waits until its partition is cleared, counted before the windows close", async () => {
+    let finish = () => {};
+    let idleWhenClosing: Promise<void> | undefined;
+    const settled: string[] = [];
+    const { removal } = setup({
+      // Closing the last window may ask the app to quit right there (Windows / Linux).
+      closeProfileWindows: () => {
+        idleWhenClosing = removal.whenIdle().then(() => {
+          settled.push("idle");
+        });
+      },
+      removeProfile: () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            settled.push("cleared");
+            resolve();
+          };
+        }),
+    });
+    const removing = removal.remove("p1");
+    await vi.waitFor(() => expect(idleWhenClosing).toBeDefined());
+    expect(settled).toEqual([]);
+    finish();
+    await removing;
+    await idleWhenClosing;
+    expect(settled).toEqual(["cleared", "idle"]);
+  });
+
+  test("idle at once when nothing is removed; a failed removal settles it too", async () => {
+    const { removal } = setup({
+      removeProfile: async () => {
+        throw new Error("disk full");
+      },
+    });
+    await removal.whenIdle();
+    await removal.remove("p1");
+    await removal.whenIdle();
+  });
+});

@@ -60,6 +60,8 @@ export interface WindowLike {
   setFullScreen?(flag: boolean): void;
   focus(): void;
   close(): void;
+  /** Closes at once: no `close` event, no `beforeunload` (a page cannot keep the window). */
+  destroy(): void;
   isDestroyed(): boolean;
   isMinimized(): boolean;
   restore(): void;
@@ -209,6 +211,11 @@ export interface WindowManagerDeps {
    * app menu mark which platforms are open.
    */
   onProfileWindowsChanged?: () => void;
+  /**
+   * Whether the profile is still stored (removed or being removed: false). A window is never
+   * opened for one that is not: it would fill the partition a removal clears. Absent: always.
+   */
+  profileExists?: (profileId: string) => boolean;
   /** A profile window was focused: the last-used profile. */
   onFocusProfile(profile: Profile): void;
   /** `Capybara Desktop/<version> (<machine>)`, sent only to each profile's own origin. */
@@ -376,7 +383,9 @@ export function createWindowManager(deps: WindowManagerDeps) {
     return partition;
   }
 
-  function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike {
+  /** Opens a profile window; undefined for a profile no longer stored (`profileExists`). */
+  function openProfileWindow(profile: Profile, url: string = profile.base): WindowLike | undefined {
+    if (deps.profileExists && !deps.profileExists(profile.id)) return undefined;
     const partition = preparePartition(profile);
     // The profile's first window opens at the remembered rectangle and keeps it up to date; a
     // further window cascades from the first one and is not remembered.
@@ -541,14 +550,16 @@ export function createWindowManager(deps: WindowManagerDeps) {
     },
 
     /**
-     * Closes every window of a profile and forgets them at once: a real close is asynchronous,
-     * and a profile being removed must not pass the IPC checks while its partition is cleared.
+     * Destroys every window of a profile and forgets them at once (a removal, a sign-out): a
+     * profile being removed must not pass the IPC checks while its partition is cleared, and a
+     * `close()` would be asynchronous and could be cancelled by the page's `beforeunload`,
+     * leaving a forgotten window on that partition.
      */
     closeProfileWindows(profileId: string): void {
       for (const [id, e] of [...byContents]) {
         if (e.kind !== "profile" || e.profile.id !== profileId) continue;
         untrack(id);
-        e.window.close();
+        if (!e.window.isDestroyed()) e.window.destroy();
       }
     },
 

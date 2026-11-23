@@ -73,6 +73,11 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
         destroyed = true;
         em.emit("closed");
       }),
+      // Electron: no `close` event, no beforeunload; `closed` follows.
+      destroy: vi.fn(() => {
+        destroyed = true;
+        em.emit("closed");
+      }),
       isDestroyed: () => destroyed,
       isMinimized: () => false,
       restore: vi.fn(),
@@ -301,15 +306,43 @@ describe("profile windows", () => {
     expect(windows.focusLast(() => false)).toBe(false);
   });
 
-  test("closeProfileWindows closes every window of a profile", () => {
+  test("closeProfileWindows destroys every window of a profile", () => {
     const { windows, created } = setup();
     windows.openProfileWindow(p1);
     windows.openProfileWindow(p1);
     windows.openProfileWindow(p2);
     windows.closeProfileWindows("p1");
-    expect(created[0]?.close).toHaveBeenCalled();
-    expect(created[1]?.close).toHaveBeenCalled();
-    expect(created[2]?.close).not.toHaveBeenCalled();
+    expect(created[0]?.destroy).toHaveBeenCalled();
+    expect(created[1]?.destroy).toHaveBeenCalled();
+    expect(created[2]?.destroy).not.toHaveBeenCalled();
+    expect(created[2]?.isDestroyed()).toBe(false);
+  });
+
+  test("closeProfileWindows: a page's beforeunload cannot keep a window (hidden on close too)", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openProfileWindow(p1);
+    // A page holding the close (beforeunload) or the hide on close: close() would keep it.
+    created[0]?.on("close", ((e: { preventDefault(): void }) => e.preventDefault()) as () => void);
+    windows.closeProfileWindows("p1");
+    expect(created[0]?.isDestroyed()).toBe(true);
+    expect(created[0]?.close).not.toHaveBeenCalled();
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+  });
+
+  test("no window opens for a profile no longer stored (removed, or being removed)", () => {
+    const stored = new Set(["p1", "p2"]);
+    const { windows, created } = setup({ profileExists: (id) => stored.has(id) });
+    windows.openProfileWindow(p1);
+    stored.delete("p1");
+    windows.closeProfileWindows("p1");
+    // A notification clicked later, a sign-in that finishes, a menu click meanwhile.
+    expect(windows.openProfileWindow(p1)).toBeUndefined();
+    windows.showProfile(p1, `${p1.base}/chat/1`);
+    windows.reloadProfile(p1);
+    expect(created).toHaveLength(1);
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+    windows.showProfile(p2);
+    expect(created).toHaveLength(2);
   });
 
   test("onProfileWindowsChanged: after a profile window opens or closes, not the small one", () => {
@@ -340,12 +373,12 @@ describe("profile windows", () => {
     const { windows, created } = setup({ onProfileClosed });
     windows.openProfileWindow(p1);
     windows.openProfileWindow(p2);
-    // A real close is asynchronous (beforeunload, then `closed`): nothing is emitted here.
-    created[0]?.close.mockImplementation(() => {});
+    // Even when `closed` comes later than the destroy call: nothing is emitted here.
+    created[0]?.destroy.mockImplementation(() => {});
     const sender = created[0]?.webContents;
     expect(windows.resolveSender(sender)?.profile.id).toBe("p1");
     windows.closeProfileWindows("p1");
-    expect(created[0]?.close).toHaveBeenCalledTimes(1);
+    expect(created[0]?.destroy).toHaveBeenCalledTimes(1);
     // No IPC resolves to the closing window while the removal clears its partition.
     expect(windows.resolveSender(sender)).toBeUndefined();
     expect(onProfileClosed).toHaveBeenCalledExactlyOnceWith(sender?.id);
@@ -579,6 +612,7 @@ describe("capability events", () => {
   test("an event goes only to a window still on the profile origin", () => {
     const { windows, created } = setup();
     const win = windows.openProfileWindow(p1);
+    if (!win) throw new Error("no window");
     expect(windows.sendEvent({ profile: p1, window: win }, { doc: "d", id: 1, payload: 1 })).toBe(
       true,
     );

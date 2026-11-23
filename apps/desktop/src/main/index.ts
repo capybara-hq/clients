@@ -270,6 +270,9 @@ function start(): void {
       saveBounds: (id, bounds) => {
         profiles.update(id, { bounds });
       },
+      // Removed, or being removed: no window reopens its partition (a notification clicked
+      // later, a sign-in finishing, a menu click while the partition is cleared).
+      profileExists: (id) => profiles.get(id) !== undefined,
       log: (message, err) => console.error(message, err),
     });
 
@@ -737,7 +740,8 @@ function start(): void {
     });
 
     app.on("window-all-closed", () => {
-      if (platform !== "macos") app.quit();
+      // A removal closed the last window: the quit waits until its partition is cleared.
+      if (platform !== "macos") void removal.whenIdle().then(() => app.quit());
     });
 
     // The local pages' theme and language toggles (spec §6.10): the page's profile, else the app
