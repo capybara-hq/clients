@@ -16,9 +16,7 @@ export interface Meta {
   icon: string | null;
   /** Absent on a kernel that does not send it yet. */
   icons?: MetaIcons;
-  protocols: { device: { min: number; max: number } };
   features: {
-    localDevices: boolean;
     appSignIn: boolean;
     /** The app ids and push channels the deployment covers; absent on older kernels. */
     push?: PushApp[];
@@ -68,18 +66,15 @@ function parseRedirectUris(v: unknown): string[] | undefined {
 
 /** A parsed meta; `appSignIn` is undefined when an older kernel leaves it out. */
 type ParsedMeta = Omit<Meta, "features"> & {
-  features: { localDevices: boolean; appSignIn: boolean | undefined; push?: PushApp[] };
+  features: { appSignIn: boolean | undefined; push?: PushApp[] };
 };
 
 function parseMeta(v: unknown): ParsedMeta | null {
   if (!isRecord(v)) return null;
-  const { name, icon, protocols, features } = v;
+  const { name, icon, features } = v;
   if (!nullableString(name) || !nullableString(icon)) return null;
   const icons = parseIcons(v.icons);
-  if (!isRecord(protocols) || !isRecord(protocols.device)) return null;
-  const { min, max } = protocols.device;
-  if (!Number.isInteger(min) || !Number.isInteger(max)) return null;
-  if (!isRecord(features) || typeof features.localDevices !== "boolean") return null;
+  if (!isRecord(features)) return null;
   const { appSignIn } = features;
   const appRedirectUris = parseRedirectUris(v.appRedirectUris);
   const push = parsePushApps(features.push);
@@ -88,8 +83,7 @@ function parseMeta(v: unknown): ParsedMeta | null {
     name,
     icon,
     ...(icons ? { icons } : {}),
-    protocols: { device: { min: min as number, max: max as number } },
-    features: { localDevices: features.localDevices, appSignIn, ...(push ? { push } : {}) },
+    features: { appSignIn, ...(push ? { push } : {}) },
     ...(appRedirectUris ? { appRedirectUris } : {}),
   };
 }

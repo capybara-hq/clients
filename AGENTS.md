@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Capybara clients: the official Capybara desktop app (Electron, macOS first) and the mobile app shell.
-Both are thin shells: they load a deployment's own web app, sign in through the system browser, and
-connect the machine as a local device. TypeScript, pnpm monorepo, Apache-2.0.
+Both are thin shells: they load a deployment's own web app and sign in through the system browser.
+They connect, show and manage no local devices (maintainer decision 2026-11-23: local devices are
+connected only with the `capybara-device` program). TypeScript, pnpm monorepo, Apache-2.0.
 
 The design lives in capybara-hq/core, not here: the plan is
 `docs/superpowers/plans/2026-11-19-desktop-client.md` and the spec
@@ -20,8 +21,8 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
 
 ## Rules
 
-- Depend on published npm packages only for Capybara core packages (`@capybara-hq/plugin-sdk`,
-  `@capybara-hq/device`, an exact version) and Electron: never the kernel, never
+- Depend on published npm packages only for Capybara core packages (`@capybara-hq/plugin-sdk`, an
+  exact version) and Electron: never the kernel, never
   `@capybara-hq/design`, never a `workspace:` / `file:` / `link:` reference or a path into a core
   checkout. Packages of this repository link to each other with `workspace:*`.
 - Main-process modules take their Electron objects as parameters, so they test without Electron.
@@ -56,7 +57,6 @@ pnpm --filter @capybara-hq/mobile test:ios       # native unit tests (also test:
 # The desktop app (from the root)
 node apps/desktop/node_modules/electron/install.js   # once: the Electron binary (installs skip it)
 pnpm --filter @capybara-hq/desktop dev           # build, then run Electron on the unpackaged app
-pnpm --filter @capybara-hq/desktop bundle-node   # fill build/node and build/device (the device)
 pnpm --filter @capybara-hq/desktop dist --mac --publish never   # an unsigned local package
 
 # The mobile app (Xcode, JDK 21 and the Android SDK; Gradle only through the wrapper)

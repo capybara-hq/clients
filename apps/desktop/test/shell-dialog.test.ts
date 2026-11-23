@@ -12,7 +12,9 @@ import {
   DIALOG_MIN_HEIGHT,
   type DialogWindow,
   type DialogWindowOptions,
+  dialogPlatformOf,
   PARENT_TOP_OFFSET,
+  platformLabel,
   SHOW_FALLBACK_MS,
   SHOW_TIMEOUT_MS,
   type ShellDialogOptions,
@@ -616,7 +618,7 @@ describe("options", () => {
     const platform = { name: "Meta1 智能体平台", host: "meta1.top" };
     expect(signOutDialogOptions("zh", platform)).toEqual({
       title: "退出 Meta1 智能体平台？",
-      detail: "这台电脑作为设备会继续保持连接，进行中的任务不受影响。要断开设备，请在设备页操作。",
+      detail: "退出后，需要重新登录才能再使用这个平台。",
       buttons: ["取消", "退出登录"],
       defaultId: 0,
       cancelId: 0,
@@ -748,5 +750,34 @@ describe("the dialog's appearance (spec 6.10)", () => {
         ?.title;
     expect(title(en)).toBe(signOutDialogOptions("en", { name: "Acme", host: "x" }).title);
     expect(title(zh)).toBe(signOutDialogOptions("zh", { name: "Acme", host: "x" }).title);
+  });
+});
+
+describe("the platform label", () => {
+  const named = { name: "Acme 平台", origin: "https://a.example.com" };
+  test("the discovery name and the host; only the host when there is no name", () => {
+    expect(platformLabel(named)).toEqual({ name: "Acme 平台", host: "a.example.com" });
+    expect(
+      platformLabel({ name: "b.example.com:8443", origin: "https://b.example.com:8443" }),
+    ).toEqual({ name: null, host: "b.example.com:8443" });
+    expect(platformLabel({ ...named, name: "  " })).toEqual({ name: null, host: "a.example.com" });
+    // Control and bidi characters never reach a confirmation.
+    expect(platformLabel({ ...named, name: "Ac\u202Eme" }).name).toBe("Acme");
+    expect(platformLabel({ ...named, name: "a.example.com" })).toEqual({
+      name: null,
+      host: "a.example.com",
+    });
+  });
+
+  test("a dialog's platform: the name, else the host, with the icon when given", () => {
+    expect(dialogPlatformOf(named, "data:image/png;base64,AA==")).toEqual({
+      name: "Acme 平台",
+      host: "a.example.com",
+      iconUrl: "data:image/png;base64,AA==",
+    });
+    expect(dialogPlatformOf({ ...named, name: "" })).toEqual({
+      name: "a.example.com",
+      host: "a.example.com",
+    });
   });
 });

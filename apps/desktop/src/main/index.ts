@@ -1,14 +1,14 @@
 // The main process entry: wiring only. Every module it calls takes its Electron objects as
 // parameters and is tested without Electron; the casts below adapt Electron's overloaded types to
 // those narrow interfaces.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir, hostname, userInfo } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { SHELL_CAPABILITY_KEYS } from "@capybara-hq/plugin-sdk";
-import { discover, fetchMeta } from "@capybara-hq/shell";
+import { discover } from "@capybara-hq/shell";
 import {
   app,
   BrowserWindow,
@@ -50,20 +50,6 @@ import {
   type DeepLinkApp,
   installDeepLinks,
 } from "./deep-links.ts";
-import { createDeviceAvailability } from "./device/availability.ts";
-import { createDeviceCapability } from "./device/capability.ts";
-import { createDeviceCli, type SpawnLike } from "./device/cli.ts";
-import { createConnectionControls, deviceStateDir } from "./device/control.ts";
-import { createDeviceDialogs, dialogPlatformOf } from "./device/dialogs.ts";
-import {
-  connectionsHere,
-  type MachineConnection,
-  readConnections,
-  readKeepAwake,
-} from "./device/machine.ts";
-import { createDeviceService } from "./device/service.ts";
-import { createDeviceTexts } from "./device/texts.ts";
-import { createTrayDevice } from "./device/tray-device.ts";
 import {
   createDockIcon,
   createDockIconCache,
@@ -100,7 +86,7 @@ import {
   localWebPreferences,
 } from "./security.ts";
 import { createSessionWatch, probeMeta, type SessionWindow } from "./session-watch.ts";
-import { createShellDialogs, type DialogWindow } from "./shell-dialog.ts";
+import { createShellDialogs, type DialogWindow, dialogPlatformOf } from "./shell-dialog.ts";
 import { createSignIn, type FetchLike, REDIRECT_URI } from "./sign-in.ts";
 import { type CompletedSession, createSignOut, isLoginUrl, watchLogout } from "./sign-out.ts";
 import { createTrayController, type TrayLike } from "./tray.ts";
@@ -176,37 +162,6 @@ function start(): void {
     // The local pages ask for no permission, ever.
     installDenyAllPermissions(localSession);
 
-    // The device login service (spec §5.2) runs the bundled Node and device from Resources (a
-    // development run: apps/desktop/build, filled by scripts/bundle-node.ts). Installing it is
-    // connecting (device@2 below); at start a packaged app only repairs an installed service whose
-    // app moved, then restarts it if an update replaced the bundled device it runs.
-    const resourcesPath = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "build");
-    const deviceCli = createDeviceCli({
-      resourcesPath,
-      spawn: spawn as unknown as SpawnLike,
-      env: process.env,
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-    // Quitting ends the UI only (spec §9.4): the service keeps running; a CLI command still
-    // running for the app is ended with it.
-    app.on("will-quit", () => deviceCli.dispose());
-    // Every connection of this machine (`status --json`) and each one's control socket. The last
-    // list read, by whoever read it, answers the signed-out page's device note.
-    let lastConnections: MachineConnection[] = [];
-    const connections = createConnectionControls({
-      readConnections: async () => {
-        lastConnections = await readConnections(deviceCli, deviceStateDir(process.env, homedir()));
-        return lastConnections;
-      },
-    });
-    // `env`: `service install` records a PATH that also finds docker (launchd's is short).
-    const deviceService = createDeviceService({
-      cli: deviceCli,
-      resourcesPath,
-      env: process.env,
-      connections: () => connections.read(),
-      log: (message, err) => console.error(message, err ?? ""),
-    });
     const profiles = createProfileStore({
       file: join(app.getPath("userData"), "profiles.json"),
       fs,
@@ -269,20 +224,6 @@ function start(): void {
       sendEvent: (target, message) => windows.sendEvent(target, message),
     });
 
-    // `managed` is read once at start (no re-read path exists yet); a re-read would have to call
-    // `evaluate` again for every profile so a changed `connectThisMachine` takes effect.
-    const deviceAvailability = createDeviceAvailability({
-      platform: process.platform,
-      managed,
-      fetchMeta: (base) => fetchMeta(base, net.fetch as typeof fetch),
-      onChange: (profileId) => {
-        // A capability no longer offered keeps no subscriptions.
-        bridge.pruneSubscriptions();
-        windows.broadcastChange(profileId);
-      },
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-
     const windows = createWindowManager({
       createWindow: (options) =>
         // `parent` is typed unknown in the window module: it is always a BrowserWindow here.
@@ -297,8 +238,6 @@ function start(): void {
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       describeEvents: (profile) => bridge.describeEvents(profile),
-      // Each load of a deployment window asks its discovery again whether device@2 is offered.
-      onProfileLoad: (profile) => void deviceAvailability.evaluate(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
       // The menus mark the platforms with an open window.
       onProfileWindowsChanged: () => ui.stateChanged(),
@@ -429,46 +368,11 @@ function start(): void {
       log: (message, err) => console.error(message, err ?? ""),
     });
     const showDialog = shellDialogs.show;
-    // device@2 (spec §8, §9): native confirmations attached to the calling window.
-    const device = createDeviceCapability({
-      cli: deviceCli,
-      controls: connections,
-      service: deviceService,
-      dialogs: createDeviceDialogs({
-        showDialog,
-        iconFor,
-        // Each dialog in the language of the profile it is about; none: the menus' language.
-        locale: (profileId) =>
-          profileId === undefined ? menuLocale() : localeOf({ id: profileId }),
-        platform: process.platform,
-      }),
-      texts: createDeviceTexts({
-        resourcesPath,
-        spawn: spawn as unknown as SpawnLike,
-        env: process.env,
-      }),
-      openVerification: (target, url) =>
-        windows.openChildWindow(target.profile, target.window, url),
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-    bridge.registerCapability(SHELL_CAPABILITY_KEYS.device, device.impl, {
-      confirming: device.confirming,
-      events: device.events,
-      available: (profile) => deviceAvailability.isAvailable(profile),
-    });
-
     bridge.install(ipcMain as unknown as IpcMainLike);
     // The small window (spec §6.1): connect, found, waiting and signed-out, and the sign-in from
     // there. A profile is saved only when its first sign-in completes (spec §6.3).
     // The provisional profile whose sign-in began last: its partition gets the app's choices.
     let begun: Profile | undefined;
-    /** This machine has a connection into the profile's deployment (the last list read). */
-    const deviceConnectedTo = (id: string): boolean => {
-      const profile = profiles.get(id);
-      return profile !== undefined && connectionsHere(lastConnections, profile).length > 0;
-    };
-    /** The device note the signed-out page last rendered (`<profileId>:<connected>`). */
-    let lastDeviceNote: string | undefined;
     const onboarding = createOnboarding({
       localPages,
       openWindow: (colors) => windows.openSmallWindow(colors).window as unknown as OnboardingWindow,
@@ -526,7 +430,6 @@ function start(): void {
         // Its pages were app level until now: the app's choices win in its partition.
         void prefs.seed(saved, { overwrite: true }).finally(() => prefs.watch(saved));
         ui.profilesChanged();
-        trayDevice.refresh();
         return saved;
       },
       markSignedIn: (id, account) => {
@@ -548,12 +451,6 @@ function start(): void {
       },
       removeProfile: (id) => void removal.remove(id),
       canRemove: () => managed.lockDeployments !== true,
-      deviceConnected: (id) => {
-        const connected = deviceConnectedTo(id);
-        // What the page shows now: the tray's onChange refreshes only when this changes.
-        lastDeviceNote = `${id}:${connected}`;
-        return connected;
-      },
       machineName: machineNameFrom(hostname()),
       log: (message, err) => console.error(message, err ?? ""),
     });
@@ -585,39 +482,6 @@ function start(): void {
       else onboarding.openConnect(managed.profiles?.[0]);
     };
 
-    // This machine's device connections in the tray (spec §9.6): a row per connection. The tray is
-    // the app's own UI, not a page, so it may show any deployment's connection; its actions name
-    // the device id of the row, and device@2 refuses unless that is a connection into the profile
-    // the action is for. Its actions are device@2's own functions.
-    const trayDevice = createTrayDevice({
-      // Managed 「连接本机」 off: no device in the tray, like device@2 is not offered.
-      enabled: managed.connectThisMachine !== false,
-      controls: connections,
-      readKeepAwake: (deviceId) => readKeepAwake(deviceCli, deviceId),
-      profiles: visibleProfiles,
-      impl: {
-        pause: (ctx, deviceId) => device.impl.pause(ctx, { deviceId }),
-        resume: (ctx, deviceId) => device.impl.resume(ctx, { deviceId }),
-        disconnect: (ctx, deviceId) => device.impl.disconnect(ctx, { deviceId }),
-        setKeepAwake: (ctx, deviceId, mode) => device.impl.setKeepAwake(ctx, { deviceId, mode }),
-      },
-      gate: confirmGate,
-      openDevicePage: (profile, path) => openProfile(profile, profile.base + path),
-      onChange: () => {
-        ui.stateChanged();
-        // The signed-out page's device note follows the device, when it shows and changed.
-        const shown = onboarding.current();
-        if (shown?.page !== "signedOut" || shown.profileId === undefined) return;
-        const note = `${shown.profileId}:${deviceConnectedTo(shown.profileId)}`;
-        if (note === lastDeviceNote) return;
-        lastDeviceNote = note;
-        onboarding.refresh();
-      },
-      log: (message, err) => console.error(message, err ?? ""),
-    });
-    // Quitting ends the UI only: the tray's subscription ends, the service keeps running.
-    app.on("will-quit", () => trayDevice.dispose());
-
     // Tray, app menu and Dock icon: one refresh after anything that changes the profiles.
     const startAtLogin = createStartAtLogin(app);
     // Spec §6.3: from the app menu or the tray; never under `lockDeployments` (the offered
@@ -631,7 +495,6 @@ function start(): void {
       iconFor,
       // The removal dialog speaks the language of the profile it removes (spec §12).
       locale: (profileId) => localeOf({ id: profileId }),
-      beforeRemoveDevice: (profile, parent) => device.beforeRemoveProfile(profile, parent),
       closeProfileWindows: (id) => {
         windows.closeProfileWindows(id);
         onboarding.profileRemoved(id);
@@ -649,11 +512,7 @@ function start(): void {
           throw err;
         }
       },
-      forgetAvailability: (id) => deviceAvailability.forget(id),
-      onRemoved: () => {
-        ui.profilesChanged();
-        trayDevice.refresh();
-      },
+      onRemoved: () => ui.profilesChanged(),
       log: (message, err) => console.error(message, err ?? ""),
     });
     // Sign-out (spec §6.9): the web's own 「退出登录」 (seen through the partition's logout and the
@@ -765,9 +624,7 @@ function start(): void {
       openWindow: () => {
         if (!windows.focusLast(isVisible)) openDefault();
       },
-      // Never asks and never stops the service (spec §9.4).
       quit: () => app.quit(),
-      device: trayDevice.actions,
       setStartAtLogin: (on: boolean) => {
         startAtLogin.set(on);
         ui.stateChanged();
@@ -823,7 +680,7 @@ function start(): void {
       };
     }
     function render(): void {
-      const state = { ...menuState(), devices: trayDevice.current() };
+      const state = menuState();
       tray.update(state);
       Menu.setApplicationMenu(
         Menu.buildFromTemplate(
@@ -891,7 +748,6 @@ function start(): void {
     for (const p of profiles.list()) void prefs.watch(p);
 
     ui.profilesChanged();
-    trayDevice.start();
     openDefault();
 
     // Managed profiles (spec §6.4) are ensured lazily and never block the start: each one that is
@@ -920,23 +776,11 @@ function start(): void {
         return added;
       },
     }).then((added) => {
-      if (added > 0) {
-        ui.profilesChanged();
-        trayDevice.refresh();
-      }
+      if (added > 0) ui.profilesChanged();
     });
 
-    // electron-updater works only in a packaged app. An update installs on quit, so the
-    // `afterUpdate` call at the next start is the one that finds the new device on disk and
-    // restarts the service on it.
+    // electron-updater works only in a packaged app; an update installs on quit.
     if (app.isPackaged) {
-      // One connection's failed repair must not skip the restart of the others.
-      const failedCheck = (err: unknown) => console.error("device service check failed", err);
-      void deviceService
-        .repairService()
-        .catch(failedCheck)
-        .then(() => deviceService.afterUpdate())
-        .catch(failedCheck);
       const updates = setupUpdates({
         autoUpdater,
         managed,

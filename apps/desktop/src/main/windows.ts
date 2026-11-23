@@ -19,7 +19,6 @@ import { type Profile, partitionFor } from "./profiles.ts";
 import { blockInWindowSignIn, type WebRequestSession } from "./request-guard.ts";
 import {
   type ContentsLike,
-  childWebPreferences,
   hardenLocalContents,
   hardenProfileContents,
   installPermissionHandlers,
@@ -90,12 +89,7 @@ export interface WindowOptions {
   resizable?: boolean;
   maximizable?: boolean;
   fullscreenable?: boolean;
-  /** A child window (the device verification page) stays above its parent and closes with it. */
-  parent?: unknown;
-  webPreferences:
-    | ReturnType<typeof profileWebPreferences>
-    | ReturnType<typeof localWebPreferences>
-    | ReturnType<typeof childWebPreferences>;
+  webPreferences: ReturnType<typeof profileWebPreferences> | ReturnType<typeof localWebPreferences>;
 }
 
 /** The small window (spec §6.1): fixed 480×600, its content a local page. */
@@ -186,7 +180,7 @@ export interface WindowManagerDeps {
   openExternal(url: string): unknown;
   /** The capability descriptors offered to a profile now. */
   describe(profile: Profile): CapabilityDescriptors;
-  /** The event names offered to a profile now (`device@2.onStatus`). */
+  /** The event names offered to a profile now (`name@major.event`). */
   describeEvents?: (profile: Profile) => CapabilityDescriptors;
   /** A profile window committed a main-frame navigation: what is offered may be decided again. */
   onProfileLoad?: (profile: Profile) => void;
@@ -476,50 +470,6 @@ export function createWindowManager(deps: WindowManagerDeps) {
       } catch {
         return false;
       }
-    },
-
-    /**
-     * A window of the profile's partition above `parent` for a page of the deployment (the device
-     * verification page): signed in, but untracked, so no IPC resolves to it, and no preload.
-     */
-    openChildWindow(
-      profile: Profile,
-      parent: unknown,
-      url: string,
-    ): { close(): void; onClosed(cb: () => void): void } {
-      const parentAlive =
-        typeof parent === "object" &&
-        parent !== null &&
-        !(parent as { isDestroyed?: () => boolean }).isDestroyed?.();
-      const win = deps.createWindow({
-        width: 560,
-        height: 720,
-        show: false,
-        // The default title bar: the page has no inset for traffic lights.
-        title: profile.name,
-        ...(parentAlive ? { parent } : {}),
-        ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
-        webPreferences: childWebPreferences({ partition: preparePartition(profile) }),
-      });
-      hardenProfileContents(win.webContents, {
-        origin: profile.origin,
-        openExternal: deps.openExternal,
-        openProfileWindow: (target) => openProfileWindow(profile, target),
-      });
-      win.on("ready-to-show", () => win.show());
-      const closedListeners: (() => void)[] = [];
-      win.on("closed", () => {
-        for (const cb of closedListeners.splice(0)) cb();
-      });
-      load(win, url);
-      return {
-        close: () => {
-          if (!win.isDestroyed()) win.close();
-        },
-        onClosed: (cb) => {
-          closedListeners.push(cb);
-        },
-      };
     },
 
     resolveSender(sender: unknown): ProfileTarget | undefined {

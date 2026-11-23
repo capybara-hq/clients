@@ -161,6 +161,30 @@ export function cleanPlatformName(name: string): string {
         .trimEnd()}…`;
 }
 
+/**
+ * The platform as the dialogs name it: the discovery name and the host, or only the host when the
+ * platform has no name (discovery then stored the host as the profile name).
+ */
+export function platformLabel(profile: { name: string; origin: string }): {
+  name: string | null;
+  host: string;
+} {
+  const url = new URL(profile.origin);
+  // Cleaned of control and bidi characters and capped: it is shown inside a confirmation.
+  const name = cleanPlatformName(profile.name);
+  const isHost = name === "" || name === url.host || name === url.hostname;
+  return { name: isHost ? null : name, host: url.host };
+}
+
+/** The platform a dialog names, with its icon as a data: URL when main has one cached. */
+export function dialogPlatformOf(
+  profile: { name: string; origin: string },
+  iconUrl?: string,
+): NonNullable<ShellDialogOptions["platform"]> {
+  const { name, host } = platformLabel(profile);
+  return { name: name ?? host, host, ...(iconUrl ? { iconUrl } : {}) };
+}
+
 /** The platform as the dialog shows it; an icon that is not a data: image URL is dropped. */
 export function dialogPlatform(o: {
   name: string;
@@ -435,7 +459,7 @@ export function createShellDialogs(deps: ShellDialogDeps) {
 
 export type ShellDialogs = ReturnType<typeof createShellDialogs>;
 
-/** Board `SignOut`: 「退出 <平台>？」, the device note, 取消 then 退出登录 (primary). */
+/** Board `SignOut`: 「退出 <平台>？」, a note, 取消 then 退出登录 (primary). */
 export function signOutDialogOptions(
   locale: Locale,
   platform: { name: string; host: string; iconUrl?: string },

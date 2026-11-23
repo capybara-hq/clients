@@ -1,13 +1,16 @@
 // Removing a platform (spec §6.3), from the app menu or the tray: a shell dialog (§7.4; cancel is
-// the default, the remove button is the danger one), the device question when this machine has
-// connections into that deployment, then the profile's windows close before its partition is
+// the default, the remove button is the danger one), then the profile's windows close before its partition is
 // cleared, so no window of a profile being removed passes the IPC checks while its data goes. Not
 // offered for managed profiles under `lockDeployments`. Electron objects come in as parameters.
 import { type Locale, t } from "@capybara-hq/shell";
-import { dialogPlatformOf, platformLabel } from "./device/dialogs.ts";
 import type { ConfirmGate } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
-import type { ShellDialogOptions, ShowShellDialog } from "./shell-dialog.ts";
+import {
+  dialogPlatformOf,
+  platformLabel,
+  type ShellDialogOptions,
+  type ShowShellDialog,
+} from "./shell-dialog.ts";
 
 export interface ProfileRemovalDeps {
   getProfile(id: string): Profile | undefined;
@@ -22,17 +25,10 @@ export interface ProfileRemovalDeps {
   locale: Locale | ((profileId: string) => Locale);
   /** The profile's platform icon as a data: URL (main's cache), else undefined: default icon. */
   iconFor?: (profile: Profile) => string | undefined;
-  /**
-   * device@2's `beforeRemoveProfile`: when this machine has connections into the deployment, asks
-   * once whether to disconnect them and log them out.
-   */
-  beforeRemoveDevice(profile: Profile, parent: unknown): Promise<void>;
   closeProfileWindows(profileId: string): void;
   /** `profiles.remove`: clears the partition, then forgets the profile. */
   removeProfile(profileId: string): Promise<void>;
-  /** `deviceAvailability.forget`. */
-  forgetAvailability(profileId: string): void;
-  /** The tray, the app menu and the Dock icon follow; the tray re-reads the device. */
+  /** The tray, the app menu and the Dock icon follow. */
   onRemoved(): void;
   log?: (message: string, err?: unknown) => void;
 }
@@ -72,15 +68,9 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
       let removed = false;
       try {
         if (!(await confirm(deps.dialogParent(profile.id), profile))) return;
-        try {
-          await deps.beforeRemoveDevice(profile, deps.dialogParent(profile.id));
-        } catch (err) {
-          deps.log?.("the device step of a platform removal failed", err);
-        }
         removed = true;
         deps.closeProfileWindows(profile.id);
         await deps.removeProfile(profile.id);
-        deps.forgetAvailability(profile.id);
       } catch (err) {
         deps.log?.("the platform could not be removed", err);
       } finally {

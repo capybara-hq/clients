@@ -53,7 +53,7 @@ export interface ShellState {
   controls: Controls | null;
   capabilities: CapabilityDescriptors;
   /**
-   * Key → event names (`device@2.onStatus`): each becomes a function that takes a listener and
+   * Key → event names (`name@major.event`): each becomes a function that takes a listener and
    * returns an unsubscribe. Absent when no capability offered has events.
    */
   events?: CapabilityDescriptors;

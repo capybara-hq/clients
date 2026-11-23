@@ -28,7 +28,6 @@ pnpm lint && pnpm typecheck && pnpm test
 
 ```bash
 node apps/desktop/node_modules/electron/install.js   # once: downloads the Electron binary
-pnpm --filter @capybara-hq/desktop bundle-node       # optional: the bundled device for 「连接本机」
 pnpm --filter @capybara-hq/desktop dev               # builds and starts the unpackaged app
 ```
 

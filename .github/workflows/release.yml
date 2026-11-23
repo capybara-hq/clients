@@ -54,9 +54,6 @@ jobs:
           fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      # The pinned universal Node and the exact device package (verified downloads, no secrets);
-      # `dist` runs it again from its cache, and afterPack fails the build if either is wrong.
-      - run: pnpm --filter @capybara-hq/desktop bundle-node
       # Secrets are visible to this step only (install and test run without them).
       - name: Build (signed and notarized when publishing, otherwise unsigned)
         env:

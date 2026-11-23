@@ -12,8 +12,7 @@ import { startFakeDeployment } from "./fixtures/fake-deployment.ts";
 const good = {
   name: "Acme",
   icon: "/icon.png",
-  protocols: { device: { min: 3, max: 3 } },
-  features: { localDevices: true, appSignIn: true },
+  features: { appSignIn: true },
 };
 
 function fake(res: () => Response | Promise<Response>) {
@@ -51,7 +50,7 @@ describe("fetchMeta", () => {
     expect(await fetchMeta("https://x", fake(() => new Response("<html>")).fn)).toEqual({
       error: "not_capybara",
     });
-    expect(await fetchMeta("https://x", fake(() => json({ ...good, protocols: {} })).fn)).toEqual({
+    expect(await fetchMeta("https://x", fake(() => json({ ...good, features: null })).fn)).toEqual({
       error: "not_capybara",
     });
     expect(await fetchMeta("https://x", fake(() => json(null)).fn)).toEqual({
@@ -59,15 +58,15 @@ describe("fetchMeta", () => {
     });
   });
   test("appSignIn false is sign_in_unavailable (no http.publicUrl on the deployment)", async () => {
-    const f = fake(() => json({ ...good, features: { localDevices: true, appSignIn: false } }));
+    const f = fake(() => json({ ...good, features: { appSignIn: false } }));
     expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "sign_in_unavailable" });
   });
   test("features without appSignIn (an older kernel) is too_old", async () => {
-    const f = fake(() => json({ ...good, features: { localDevices: true } }));
+    const f = fake(() => json({ ...good, features: {} }));
     expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "too_old" });
   });
   test("a non-boolean appSignIn is not_capybara", async () => {
-    const f = fake(() => json({ ...good, features: { localDevices: true, appSignIn: "yes" } }));
+    const f = fake(() => json({ ...good, features: { appSignIn: "yes" } }));
     expect(await fetchMeta("https://x", f.fn)).toEqual({ error: "not_capybara" });
   });
   test("exposes icons; each may be null; a meta without icons stays valid", async () => {
@@ -126,8 +125,8 @@ describe("fetchMeta", () => {
       error: "not_capybara",
     });
   });
-  test("non-integer protocol bounds are not_capybara", async () => {
-    const bad = { ...good, protocols: { device: { min: 1.5, max: 3 } } };
+  test("a meta without features is not_capybara", async () => {
+    const { features: _, ...bad } = good;
     expect(await fetchMeta("https://x", fake(() => json(bad)).fn)).toEqual({
       error: "not_capybara",
     });
@@ -224,12 +223,12 @@ describe("discover", () => {
     }
   });
   test("missing appSignIn is too_old; appSignIn false passes through", async () => {
-    const old = { ...good, features: { localDevices: true } };
+    const old = { ...good, features: {} };
     expect(await discover("x.example", fake(() => json(old)).fn)).toEqual({
       ok: false,
       error: "too_old",
     });
-    const off = { ...good, features: { localDevices: true, appSignIn: false } };
+    const off = { ...good, features: { appSignIn: false } };
     const r = await discover("x.example", fake(() => json(off)).fn);
     expect(r).toMatchObject({ ok: true });
     if (r.ok) expect(appSignInBlocked(r.meta, "capybara://auth/callback")).toBe("not_allowed");
@@ -267,15 +266,14 @@ describe("appSignInBlocked", () => {
   const meta = (extra: Partial<Meta> = {}): Meta => ({
     name: null,
     icon: null,
-    protocols: { device: { min: 1, max: 1 } },
-    features: { localDevices: true, appSignIn: true },
+    features: { appSignIn: true },
     ...extra,
   });
   test("go when appSignIn is on and no list is published", () => {
     expect(appSignInBlocked(meta(), "capybara://auth/callback")).toBeNull();
   });
   test("not_allowed when appSignIn is off", () => {
-    const m = meta({ features: { localDevices: true, appSignIn: false } });
+    const m = meta({ features: { appSignIn: false } });
     expect(appSignInBlocked(m, "capybara://auth/callback")).toBe("not_allowed");
   });
   test("a published list must contain the redirect uri", () => {

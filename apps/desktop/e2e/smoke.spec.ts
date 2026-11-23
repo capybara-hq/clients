@@ -142,13 +142,8 @@ test("the deployment page sees capybaraShell with its capabilities", async () =>
   expect(report.capabilities).toEqual(
     expect.arrayContaining(["signIn@1", "notify@1", "openExternal@1", "chrome@1"]),
   );
-  // device@2 is offered where the code says: macOS or Linux, the fake's meta says localDevices
-  // and a protocol range holding the bundled one (6). Discovery runs after the load and is
-  // announced with `change`, so the page's report gains it without a reload.
-  const deviceExpected = process.platform === "darwin" || process.platform === "linux";
-  await expect
-    .poll(async () => (await shellReport(page)).capabilities.includes("device@2"))
-    .toBe(deviceExpected);
+  // The desktop offers no device capability (maintainer decision 2026-11-23).
+  expect(report.capabilities.some((k: string) => k.startsWith("device@"))).toBe(false);
   expect(
     await page.evaluate(
       () => typeof (window as unknown as { capybaraShell: PageShell }).capybaraShell,
@@ -298,47 +293,6 @@ test("a replayed callback does nothing", async () => {
   await page.reload();
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
   expect(fake.accepted).toBe(2);
-});
-
-test("a contextBridge subscription returns a working unsubscribe", async () => {
-  test.skip(process.platform !== "darwin" && process.platform !== "linux", "no device@2");
-  const result = await page.evaluate(() => {
-    const device = (window as unknown as { capybaraShell: PageShell }).capybaraShell.capabilities[
-      "device@2"
-    ] as unknown as {
-      onStatus(listener: (status: unknown) => void): () => void;
-    };
-    const off = device.onStatus(() => {});
-    const type = typeof off;
-    off();
-    off();
-    return type;
-  });
-  expect(result).toBe("function");
-});
-
-test("device@2.requestCeiling refuses the old shape, an empty request and an unknown device across the bridge", async () => {
-  test.skip(process.platform !== "darwin" && process.platform !== "linux", "no device@2");
-  const codes = await page.evaluate(async () => {
-    const device = (window as unknown as { capybaraShell: PageShell }).capybaraShell.capabilities[
-      "device@2"
-    ] as unknown as { requestCeiling(input: unknown): Promise<unknown> };
-    const code = (input: unknown) =>
-      device.requestCeiling(input).then(
-        () => "resolved",
-        (e: unknown) => (e as { code?: unknown } | null)?.code,
-      );
-    return [
-      await code({ fullAccess: true, projectReach: "os-user" }),
-      await code({}),
-      await code({ network: "open", fullAccess: true }),
-      // No connection of this machine (the run's own empty device state) has this id.
-      await code({ deviceId: "dev_elsewhere", network: "allowlist" }),
-    ];
-  });
-  // The call crosses the bridge and is refused; the unit tests prove the shape check refuses
-  // these before any device command runs.
-  expect(codes).toEqual(["failed", "failed", "failed", "failed"]);
 });
 
 test("a redirect hop to another origin gets Chromium's user agent and no shell", async () => {

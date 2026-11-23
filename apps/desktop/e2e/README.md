@@ -53,8 +53,7 @@ What it covers:
   profile's `cb-theme` cookie (path `/`, `SameSite=Lax`, not HttpOnly) in its partition.
 - The deployment page sees `window.capybaraShell` (`kind: desktop`, `platform: macos`, `version: 1`,
   insets `{0,0,0,0}`, controls `{0,0,92,48}`) with `signIn@1`, `notify@1`, `openExternal@1`,
-  `chrome@1`; `device@2` appears after discovery (macOS or Linux, `localDevices`, protocol 6 in
-  range) without a reload. `executeInMainWorld` works.
+  `chrome@1`, and no device capability. `executeInMainWorld` works.
 - Same-origin and `/plugin-ui/...` iframes do not see `capybaraShell`.
 - A `signIn@1` call without a user activation is refused (`no_activation`); a real click opens
   the authorize URL (client, redirect URI, S256 challenge, state) in the (stubbed) system browser.
@@ -64,9 +63,6 @@ What it covers:
 - `POST /api/v1/auth/login` from the window is blocked and never reaches the server.
 - The desktop user agent goes to the profile's origin (page, fetch, exchange); a redirect hop to
   another origin gets Chromium's own user agent, and the Shell environment is absent there.
-- A `device@2` event subscription returns an unsubscribe function across `contextBridge`, and
-  calling it (twice) does not throw. `device@2.requestCeiling` refuses the old shape, an empty
-  request and a device id that is not a connection into the page's deployment.
 - The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
   the main window and shows the small window's signed-out page; the profile stays, signed out.
   When the logout completes only after the page navigated to `/login`, that `/login` is stopped
@@ -87,8 +83,8 @@ What it covers:
 ## Manual acceptance on a real Mac with a dev kernel
 
 Use a Mac with the unsigned or signed build (`pnpm --filter @capybara-hq/desktop dist`), a dev
-kernel whose `http.publicUrl` is set, `auth.appRedirectUris` containing `capybara://auth/callback`,
-and a version that offers local devices.
+kernel whose `http.publicUrl` is set and `auth.appRedirectUris` containing
+`capybara://auth/callback`.
 
 ### Sign-in and shell
 
@@ -103,33 +99,12 @@ and a version that offers local devices.
 - [ ] After sign-in the app window comes forward from behind the browser (macOS may not bring a
       background app forward without `app.focus({ steal: true })`).
 - [ ] A signed-in session survives quitting and relaunching. 「移除平台」 (app menu 平台 and the
-      tray) asks natively with the platform's name and host (取消 is the default), asks whether
-      to disconnect this computer too when it is connected there, closes the platform's windows
+      tray) asks natively with the platform's name and host (取消 is the default), closes the
+      platform's windows
       and clears its session; it is not offered under `lockDeployments`.
 
-### Connect this machine
+### Updates
 
-- [ ] 「连接本机」 shows the native confirmation 「允许 <平台名称>（<host>）在这台电脑上运行命令吗？」
-      with 「允许」/「取消」; Escape equals cancel (`cancelId` mapping on macOS); the dialog is
-      attached to the calling window.
-- [ ] After allowing, the device verification page opens in a child window above the main window,
-      signed in, and closes with it.
-- [ ] `launchctl print gui/$UID/top.capybara.device` shows the service running the bundled node
-      (`Contents/Resources/node/node`) and the bundled device, not a system node.
-- [ ] Close the window: the device stays online in the web (Devices page).
-- [ ] Quit the app (Cmd-Q): the device is still online; reopen the app and it shows connected.
-- [ ] Keep-awake: run a long command (`sleep 600`) on the device; in another terminal
-      `pmset -g assertions` lists a `PreventUserIdleSystemSleep` assertion from the device; it is
-      gone when the command ends (mode `while-busy`); mode `connected` holds it while online.
-- [ ] Lid closed on battery: the Mac sleeps (expected), the device goes offline, and after wake it
-      reconnects and the conversation shows the note 「电脑曾休眠」.
-- [ ] Lid closed on power with keep-awake `connected`: stays online (clamshell rules apply).
-- [ ] 断开 in the tray (menu bar icon) stops the service (`launchctl print` no longer finds it)
-      and logs the device out on this computer; the device stays registered on the platform until
-      someone deletes it. Pause/Resume (暂停 / 恢复) behave.
-- [ ] An app update that replaces the bundled device restarts the service at the next start
-      (`repairService().then(afterUpdate)`); an app moved to another folder repairs the service
-      at the next start.
 - [ ] A running app checks for updates every 6 hours; a downloaded update shows one notification,
       and clicking it restarts into the new version.
 
@@ -141,7 +116,7 @@ and a version that offers local devices.
 - [ ] With the system language set to Chinese, every app menu item (including the ones macOS adds,
       such as the window list and the Edit menu's extras) is Chinese; in English, English.
 - [ ] Managed preferences on a real MDM profile (`plutil` output): `lockDeployments`,
-      `connectThisMachine: false` (no 「连接本机」 and no device section in the tray), `profiles`,
+      `profiles`,
       `autoUpdate`, `updateFeed`.
 - [ ] A packaged build starts `electron-updater` (it works only packaged) and the bundle includes it.
 

@@ -91,11 +91,6 @@ export interface OnboardingDeps {
   removeProfile(profileId: string): void;
   /** Whether profiles may be removed (not under a managed lock). */
   canRemove(): boolean;
-  /**
-   * Whether this machine has any connection into the profile's deployment (the last `status
-   * --json` read), for the signed-out page's note. Absent: never.
-   */
-  deviceConnected?: (profileId: string) => boolean;
   /** This machine's name, as the authorize page shows it. */
   machineName: string;
   log?: (message: string, err?: unknown) => void;
@@ -152,7 +147,7 @@ export function createOnboarding(deps: OnboardingDeps) {
   const log = (message: string, err?: unknown) => deps.log?.(message, err);
 
   let page: OnboardingPage = "connect";
-  let fields: Omit<OnboardingFields, "page" | "machine" | "canRemove" | "deviceConnected"> = {
+  let fields: Omit<OnboardingFields, "page" | "machine" | "canRemove"> = {
     address: "",
     prefill: 0,
     error: null,
@@ -186,10 +181,6 @@ export function createOnboarding(deps: OnboardingDeps) {
       ...fields,
       machine: deps.machineName,
       canRemove: deps.canRemove(),
-      deviceConnected:
-        page === "signedOut" && target !== undefined && !target.provisional
-          ? (deps.deviceConnected?.(target.profile.id) ?? false)
-          : false,
     };
   }
 

@@ -14,8 +14,7 @@ const META = {
   name: "Acme",
   icon: "/api/v1/meta/icon.png?v=1",
   icons: { app: "/api/v1/meta/icon.png?v=1", maskable: null, favicon: null },
-  protocols: { device: { min: 1, max: 2 } },
-  features: { localDevices: true, appSignIn: true },
+  features: { appSignIn: true },
 };
 
 function fakeGet(answers: Record<string, HttpGetResult | Error>): HttpGetPort & { urls: string[] } {

@@ -29,18 +29,11 @@ test("afterPack flips the fuses on the .app path", async () => {
     ...(await orig<typeof import("@electron/fuses")>()),
     flipFuses,
   }));
-  const verifyPackedResources = vi.fn();
-  vi.doMock("../scripts/verify-resources.ts", () => ({ verifyPackedResources }));
   const { afterPack, fuseConfig: config } = await import("../scripts/fuses.ts");
   await afterPack({
     appOutDir: "/out/mac",
     packager: { appInfo: { productFilename: "Capybara" }, platform: { name: "mac" } },
   });
   expect(flipFuses).toHaveBeenCalledWith("/out/mac/Capybara.app", config);
-  expect(verifyPackedResources).toHaveBeenCalledWith(
-    "/out/mac/Capybara.app",
-    expect.objectContaining({ root: expect.any(String) }),
-  );
   vi.doUnmock("@electron/fuses");
-  vi.doUnmock("../scripts/verify-resources.ts");
 });

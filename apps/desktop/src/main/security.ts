@@ -23,14 +23,6 @@ export function profileWebPreferences(o: { partition: string; preload: string })
 }
 
 /**
- * A window of the profile's partition that is not a deployment window (the device verification
- * page, spec §9.2): the signed-in session, but no preload, so no Shell environment.
- */
-export function childWebPreferences(o: { partition: string }) {
-  return { ...BASE_PREFERENCES, partition: o.partition };
-}
-
-/**
  * The local pages (small window, error overlay, shell dialogs): the app's own partition, never a
  * profile's, so no deployment cookie or storage is ever in reach of a local page.
  */

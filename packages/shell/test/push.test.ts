@@ -150,8 +150,7 @@ describe("meta features.push", () => {
   const body = {
     name: "Acme",
     icon: null,
-    protocols: { device: { min: 3, max: 3 } },
-    features: { localDevices: true, appSignIn: true },
+    features: { appSignIn: true },
   };
   const answer = (v: unknown) => async () => new Response(JSON.stringify(v), { status: 200 });
 

@@ -22,12 +22,6 @@ export function createConfig(env, exists) {
     directories: { buildResources: "build", output: "release" },
     files: ["dist/**/*", "package.json"],
     asar: true,
-    // The bundled device program and Node runtime stay outside ASAR (spec §5.2);
-    // scripts/bundle-node.ts fills build/device and build/node. A missing directory is skipped.
-    extraResources: [
-      { from: "build/device", to: "device" },
-      { from: "build/node", to: "node" },
-    ],
     // The app's UI languages (spec §12): Electron's other locales are dropped, and macOS learns
     // them from CFBundleLocalizations below, so the items it injects into menus localize too.
     electronLanguages: ["zh_CN", "en"],
@@ -44,12 +38,8 @@ export function createConfig(env, exists) {
       hardenedRuntime: true,
       gatekeeperAssess: false,
       entitlements: "build/entitlements.mac.plist",
-      // electron-builder applies one inherit plist to the helpers and to the binaries below.
+      // electron-builder's inherit plist for the Electron helpers.
       entitlementsInherit: "build/entitlements.node.plist",
-      // Only once scripts/bundle-node.ts has filled build/node: signing a missing path would fail
-      // a signed run. That node is already one lipo'd universal binary, identical in the x64 and
-      // arm64 slices, which @electron/universal keeps as is (no x64ArchFiles entry needed).
-      ...(exists("build/node/node") ? { binaries: ["Contents/Resources/node/node"] } : {}),
       ...(exists(icon) ? { icon } : {}),
       // null: no identity lookup, so an unsigned build never touches the Keychain.
       ...(canSign ? {} : { identity: null }),

@@ -384,7 +384,6 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
     JSON.stringify({
       name: "Cap",
       icon: null,
-      protocols: { device: { min: 1, max: 1 } },
       features,
     });
   const port = (body: string): HttpGetPort => ({
@@ -394,7 +393,7 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
   test("gets the too-old state and signIn@1 is not offered", async () => {
     const tooOld = vi.fn();
     const support = createSignInSupport({
-      httpGet: port(meta({ localDevices: true })),
+      httpGet: port(meta({})),
       onTooOld: tooOld,
     });
     expect(support.available(profile)).toBe(true);
@@ -414,7 +413,7 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
   test("a current deployment keeps it; an unreachable one changes nothing", async () => {
     const tooOld = vi.fn();
     const ok = createSignInSupport({
-      httpGet: port(meta({ localDevices: true, appSignIn: true })),
+      httpGet: port(meta({ appSignIn: true })),
       onTooOld: tooOld,
     });
     expect(await ok.check(profile)).toBe("ok");
@@ -432,7 +431,7 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
     const onMeta = vi.fn();
     const push = [{ appId: "com.example.app", providers: ["push-apns"] }];
     const support = createSignInSupport({
-      httpGet: port(meta({ localDevices: true, appSignIn: true, push })),
+      httpGet: port(meta({ appSignIn: true, push })),
       onTooOld: () => {},
       onMeta,
     });
@@ -446,7 +445,7 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
   test("a too-old or unreadable meta hands onMeta null", async () => {
     const onMeta = vi.fn();
     const old = createSignInSupport({
-      httpGet: port(meta({ localDevices: true })),
+      httpGet: port(meta({})),
       onTooOld: () => {},
       onMeta,
     });
@@ -464,13 +463,13 @@ describe("too old: a deployment whose meta lacks appSignIn", () => {
   });
 
   test("an upgraded deployment is offered again", async () => {
-    let body = meta({ localDevices: true });
+    let body = meta({});
     const support = createSignInSupport({
       httpGet: { get: async () => ({ status: 200, body }) },
       onTooOld: () => {},
     });
     await support.check(profile);
-    body = meta({ localDevices: true, appSignIn: true });
+    body = meta({ appSignIn: true });
     await support.check(profile);
     expect(support.available(profile)).toBe(true);
   });
