@@ -1229,23 +1229,4 @@ describe("profile removal and the -c fallback", () => {
     await s.device.beforeRemoveProfile(profileA, null);
     expect(s.cli.writes()).toEqual(["logout -c dev_a2"]);
   });
-
-  test("an id that another connection's name or host also equals is refused", async () => {
-    const s = setup({
-      status: {
-        connections: [
-          connectionJson("dev_a1"),
-          connectionJson("dev_b1", {
-            deviceName: "dev_a1",
-            url: "https://b.example.com",
-            host: "b.example.com",
-          }),
-        ],
-        unreadable: [],
-      },
-    });
-    await expect(s.device.impl.running(ctxFor(), A1)).rejects.toEqual({ code: "failed" });
-    await expect(s.device.impl.disconnect(ctxFor(), A1)).rejects.toEqual({ code: "failed" });
-    expect(s.cli.writes()).toEqual([]);
-  });
 });

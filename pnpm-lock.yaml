@@ -44,11 +44,11 @@ importers:
   apps/desktop:
     devDependencies:
       '@capybara-hq/device':
-        specifier: 0.1.0-rc.29
-        version: 0.1.0-rc.29
+        specifier: 0.1.0-rc.30
+        version: 0.1.0-rc.30
       '@capybara-hq/plugin-sdk':
-        specifier: 0.1.0-rc.57
-        version: 0.1.0-rc.57
+        specifier: 0.1.0-rc.58
+        version: 0.1.0-rc.58
       '@capybara-hq/shell':
         specifier: workspace:*
         version: link:../../packages/shell
@@ -232,16 +232,16 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
-  '@capybara-hq/device@0.1.0-rc.29':
-    resolution: {integrity: sha512-WK4ntC+lz8l8xk70ipfDykboY5+HthzyOJ7ATtgdt4y8xFUGOncQ6lq331WK4a5NB1Kjmt3Jqn4sX9nxTLYLuQ==}
+  '@capybara-hq/device@0.1.0-rc.30':
+    resolution: {integrity: sha512-lAIJwoSiUHVyz8ZZvJcynSQS2SF1aPtfBvIEjLhk7gBZKGcIOdiG6q7QAgF6PoJ4IJMdzXT816XOJADN3iaPWw==}
     engines: {node: '>=22.12'}
     hasBin: true
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.53':
     resolution: {integrity: sha512-yPoLMtxdp/5a2Wc2UZYdMJt87bzXHnvZcck+kArmifKF2yuO8qkmJrFinnnFa4mSuG5vEzcUK3YKUDEeNUmYDA==}
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.57':
-    resolution: {integrity: sha512-gwJEcFjREaau++JlFij+BxaSz2ckmnPeJ7rfQioQmmlhWl/ESfFELqIoOU+DZis42kJoFzvnraCLJCzKV0KsPw==}
+  '@capybara-hq/plugin-sdk@0.1.0-rc.58':
+    resolution: {integrity: sha512-OdLJtwuZVkeJpKy6TB4VNi5dDoBy8uqsDkig4ApHuXFZgplxkiue7s+lnaOgb6Pl8/dsh5tWGaFEnE1W7vIYuQ==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -3126,7 +3126,7 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.6.2
 
-  '@capybara-hq/device@0.1.0-rc.29': {}
+  '@capybara-hq/device@0.1.0-rc.30': {}
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.53':
     dependencies:
@@ -3143,7 +3143,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@capybara-hq/plugin-sdk@0.1.0-rc.57':
+  '@capybara-hq/plugin-sdk@0.1.0-rc.58':
     dependencies:
       '@types/mdast': 4.0.4
       kysely: 0.29.9

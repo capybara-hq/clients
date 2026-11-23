@@ -125,13 +125,6 @@ export function createDeviceCapability(deps: DeviceCapabilityDeps) {
     const all = await controls.read();
     const c = connectionsHere(all, profile).find((x) => x.deviceId === deviceId);
     if (c === undefined) throw failed();
-    // Device rc.29 `-c` falls back from an id to a device name, then a host: refuse an id that
-    // another connection's name or host also equals, so the program can never pick that one.
-    if (
-      all.some((x) => x.deviceId !== deviceId && (x.deviceName === deviceId || x.host === deviceId))
-    ) {
-      throw failed();
-    }
     return c;
   }
 
