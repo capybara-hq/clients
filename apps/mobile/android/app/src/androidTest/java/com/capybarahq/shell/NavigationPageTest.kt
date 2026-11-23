@@ -99,7 +99,8 @@ class NavigationPageTest {
         )
         for ((fraction, url) in expected) {
             tap(h.view, fraction)
-            assertEquals(url, h.sheets.poll(30, TimeUnit.SECONDS))
+            val sheet = h.sheets.poll(30, TimeUnit.SECONDS)
+            assertEquals("the tap at $fraction; requests ${h.server.requests()}; events ${h.events.toList()}", url, sheet)
         }
         assertEquals("${h.server.originA}/nav.html", h.url())
         assertEquals("origin B was requested", emptyList<String>(), h.server.requests().filter { it.startsWith("localhost") })
@@ -119,7 +120,8 @@ class NavigationPageTest {
         )
         for ((fraction, url) in expected) {
             tap(h.view, fraction)
-            assertEquals(url, h.sheets.poll(30, TimeUnit.SECONDS))
+            val sheet = h.sheets.poll(30, TimeUnit.SECONDS)
+            assertEquals("the tap at $fraction; requests ${h.server.requests()}; events ${h.events.toList()}", url, sheet)
         }
         assertEquals("$a/popups.html", h.url())
         val requested = h.server.requests()

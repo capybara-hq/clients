@@ -45,6 +45,11 @@ enum DataStoreError: Error, CustomStringConvertible {
 /// removed fails with "Data store is in use", the next one succeeds). So `remove` records the id
 /// durably and returns; `drain` tries every recorded id with a short backoff, again on
 /// `webViewReleased()` and at the next launch. A recorded id is never handed out again.
+///
+/// A removal counts only once the store is no longer on disk: a store whose session was still
+/// closing can come back after `remove(forIdentifier:)` succeeded (its cookies written out late;
+/// CI, clients#41), and its data would stay behind unscheduled. Such an id stays recorded and
+/// is removed again.
 @MainActor
 final class DataStores {
     static let shared = DataStores(pending: DefaultsPendingDeletions(defaults: .standard))
@@ -140,7 +145,8 @@ final class DataStores {
             for uuid in left {
                 do {
                     try await removeStore(uuid)
-                    left.remove(uuid)
+                    // Back on disk already (written out by its closing session): try again.
+                    if !(await listIds()).contains(uuid) { left.remove(uuid) }
                 } catch {
                     // A store that never reached disk and was not opened in this process cannot be
                     // removed and needs no removal.

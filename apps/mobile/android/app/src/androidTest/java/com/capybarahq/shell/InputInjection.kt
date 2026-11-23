@@ -7,6 +7,11 @@
 // waits for focus and then until the app's window is the topmost one at the tap point (a closing
 // dialog keeps its window, and its touches, until it is gone). A window that stays on top fails
 // the test naming it.
+//
+// A WebView drops input aimed at a page that has not shown its first frame yet (Chromium drops
+// input before the first paint), and a test page reports "ready" from a script that runs before
+// that paint. On a loaded emulator the paint can lag by seconds, and the tap was lost (#57). So a
+// tap on a WebView first waits for its visual state: every change made before the wait is drawn.
 
 package com.capybarahq.shell
 
@@ -20,6 +25,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityEvent
+import android.webkit.WebView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -27,9 +33,14 @@ import java.util.concurrent.TimeUnit
 object InputInjection {
     private const val TAG = "InputInjection"
     private const val FOCUS_TIMEOUT_SECONDS = 60L
+    private const val DRAW_TIMEOUT_SECONDS = 60L
 
-    /** Taps `view` at (`xFraction`, `yFraction`) of its size once its window has focus. */
+    /**
+     * Taps `view` at (`xFraction`, `yFraction`) of its size once its window has focus (and, for a
+     * WebView, once what its page shows now has been drawn).
+     */
     fun tap(instrumentation: Instrumentation, view: View, xFraction: Float = 0.5f, yFraction: Float = 0.5f) {
+        if (view is WebView) awaitDrawn(instrumentation, view)
         val hadFocus = awaitWindowFocus(instrumentation, view)
         val location = IntArray(2)
         instrumentation.runOnMainSync { view.getLocationOnScreen(location) }
@@ -39,6 +50,37 @@ object InputInjection {
         val down = SystemClock.uptimeMillis()
         instrumentation.sendPointerSync(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
         instrumentation.sendPointerSync(MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0))
+    }
+
+    /**
+     * Returns once the WebView has drawn its page as it is now: the visual state callback (the
+     * next draw holds every DOM change made before the call), then that draw. Fails the test
+     * after a minute.
+     */
+    private fun awaitDrawn(instrumentation: Instrumentation, view: WebView) {
+        val drawn = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            view.postVisualStateCallback(
+                0,
+                object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        val observer = view.viewTreeObserver
+                        val listener = object : ViewTreeObserver.OnDrawListener {
+                            override fun onDraw() {
+                                drawn.countDown()
+                                // A draw listener cannot be removed while it is called.
+                                view.post { if (observer.isAlive) observer.removeOnDrawListener(this) }
+                            }
+                        }
+                        observer.addOnDrawListener(listener)
+                        view.postInvalidateOnAnimation()
+                    }
+                },
+            )
+        }
+        if (!drawn.await(DRAW_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            throw AssertionError("the WebView never drew its page, so a tap would be dropped")
+        }
     }
 
     /**

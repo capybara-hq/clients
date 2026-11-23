@@ -94,6 +94,43 @@ final class DataStoresTests: XCTestCase {
         XCTAssertEqual(pending.ids, [])
     }
 
+    func testAStoreBackOnDiskAfterItsRemovalIsRemovedAgain() async throws {
+        let pending = MemoryPendingDeletions()
+        let id = UUID()
+        // The store's closing session writes it out again right after the first removal.
+        var onDisk: Set<UUID> = [id]
+        var removals = 0
+        let stores = DataStores(
+            pending: pending,
+            retryDelays: [.zero],
+            listIds: { Array(onDisk) },
+            removeStore: { uuid in
+                removals += 1
+                if removals > 1 { onDisk.remove(uuid) }
+            }
+        )
+        pending.ids = [id]
+        let left = await stores.drain()
+        XCTAssertEqual(left, [])
+        XCTAssertEqual(removals, 2)
+        XCTAssertEqual(pending.ids, [])
+    }
+
+    func testAStoreThatStaysOnDiskStaysScheduled() async throws {
+        let pending = MemoryPendingDeletions()
+        let id = UUID()
+        let stores = DataStores(
+            pending: pending,
+            retryDelays: [.zero],
+            listIds: { [id] },
+            removeStore: { _ in }
+        )
+        pending.ids = [id]
+        let left = await stores.drain()
+        XCTAssertEqual(left, [id], "never counted removed while it is on disk")
+        XCTAssertEqual(pending.ids, [id])
+    }
+
     func testPendingDeletionsSurviveARestart() async throws {
         let pending = MemoryPendingDeletions()
         let id = UUID()

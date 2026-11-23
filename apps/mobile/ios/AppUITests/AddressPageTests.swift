@@ -51,6 +51,12 @@ final class AddressPageTests: XCTestCase {
         XCTAssertTrue(signIn.waitForExistence(timeout: 30))
         let signInHittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: signIn)
         wait(for: [signInHittable], timeout: 30)
+        // The field the address was typed into is gone with the checking view, and the keyboard
+        // slides away with it: while it moves the page under it shifts, and a tap computed before
+        // lands where the button was.
+        let keyboardGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                     object: app.keyboards.firstMatch)
+        wait(for: [keyboardGone], timeout: 30)
         signIn.tap()
         let result = XCTWaiter().wait(for: [opened], timeout: 60)
         XCTAssertEqual(result, .completed, "reports \(server.snapshot().reports) requests \(server.requestLog()) native \(server.snapshot().nativeLog)")
