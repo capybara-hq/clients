@@ -27,6 +27,8 @@ Skills in `.agents/skills/` (`onboarding`, `contributing`, `reviewing-prs`) are 
   checkout. Packages of this repository link to each other with `workspace:*`.
 - Main-process modules take their Electron objects as parameters, so they test without Electron.
 - Tests: `pnpm test` (vitest) from the root; no fixed sleeps, no per-test timeouts.
+- Before pushing, run `pnpm verify --fast` (`pnpm exec vitest run <path>` for a single test file);
+  CI on the PR is the merge gate, the full `pnpm verify` is optional.
 - English for code, comments, identifiers and commit messages. UI text goes through the shell i18n
   catalog; the zh copy says 平台 / 智能体 / 设备 / 本机, never 企业 or the Latin word `agent`.
 - Mobile: `apps/mobile/brand.ts` is the only brand file; native code namespaces are fixed (Swift
@@ -47,6 +49,9 @@ pnpm typecheck   # tsc -b plus the test files
 pnpm test        # vitest run
 pnpm check:i18n  # the zh and en catalogs have the same keys and placeholders
 pnpm e2e         # builds the desktop app and runs the Playwright smoke (apps/desktop/e2e)
+pnpm verify --fast   # the local check before pushing: lint, i18n, brand, typecheck, tests (--json);
+                     # CI on the PR (ci-ok) also runs the native iOS / Android tests and is the gate
+pnpm verify      # optional: --fast plus the desktop e2e smoke
 pnpm changeset   # a version note for an app or package
 
 # The mobile app (apps/mobile; a fork: docs/fork-guide.md)
