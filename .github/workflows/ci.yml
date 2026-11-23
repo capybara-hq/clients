@@ -16,9 +16,41 @@ concurrency:
 permissions: {}
 
 # Branch protection requires `ci-ok` (which aggregates every job below) and `issue-linked`
-# (set by community.yml, not part of this workflow). The repository is small: everything runs on
-# every PR and every push to main, with no diff-based planning.
+# (set by community.yml, not part of this workflow). lint, typecheck, the Linux tests and
+# commitlint run on every PR; the macOS tests, the desktop e2e smoke and the native suites run when
+# `plan` (scripts/ci-plan.ts, from the PR's changed files) says they are needed. Pushes to main run
+# everything.
 jobs:
+  plan:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      macos_test: ${{ steps.plan.outputs.macos_test }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      ios: ${{ steps.plan.outputs.ios }}
+      android: ${{ steps.plan.outputs.android }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            node scripts/ci-plan.ts "$BASE" "$HEAD"
+          else
+            printf 'macos_test=true\ne2e=true\nios=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     # Drafts run nothing (CONTRIBUTING.md of capybara-hq/.github); a draft cannot merge.
     if: ${{ !github.event.pull_request.draft }}
@@ -56,6 +88,7 @@ jobs:
 
   test:
     if: ${{ !github.event.pull_request.draft }}
+    needs: plan
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
@@ -64,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(needs.plan.outputs.macos_test == 'true' && '["macos-latest", "ubuntu-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -78,7 +111,8 @@ jobs:
   # The desktop app against a fake deployment (apps/desktop/e2e). Electron's postinstall stays off
   # for the install above (the unit-test jobs stay fast); `pnpm e2e` fetches the binary itself.
   e2e:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && needs.plan.outputs.e2e == 'true' }}
+    needs: plan
     runs-on: macos-latest
     permissions:
       contents: read
@@ -105,7 +139,8 @@ jobs:
   # The mobile app's native suites (apps/mobile): XCTest and XCUITest on an iPhone simulator.
   # scripts/ios-test.sh keeps the runner's Xcode unless it has no usable iPhone simulator.
   mobile-ios:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && needs.plan.outputs.ios == 'true' }}
+    needs: plan
     runs-on: macos-latest
     permissions:
       contents: read
@@ -136,7 +171,8 @@ jobs:
 
   # JVM unit tests, then the instrumented tests on an emulator (KVM on the Linux runner).
   mobile-android:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && needs.plan.outputs.android == 'true' }}
+    needs: plan
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -215,16 +251,21 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
 
-  # Aggregate: the only required check. Every job must succeed; commitlint is skipped (and so
-  # passes) outside pull requests. always(): report failure when an upstream job failed or was
-  # cancelled instead of being skipped (skipped = passed).
+  # Aggregate: the only required check. Every job must succeed, except that commitlint is skipped
+  # (and so passes) outside pull requests and a slow job the plan left out is skipped (and so
+  # passes). A slow job the plan asked for must succeed. always(): report failure when an upstream
+  # job failed or was cancelled instead of being skipped.
   ci-ok:
     if: ${{ always() && !github.event.pull_request.draft }}
-    needs: [lint, typecheck, test, e2e, mobile-ios, mobile-android, commitlint]
+    needs: [plan, lint, typecheck, test, e2e, mobile-ios, mobile-android, commitlint]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
       - env:
+          PLAN: ${{ needs.plan.result }}
+          WANT_E2E: ${{ needs.plan.outputs.e2e }}
+          WANT_IOS: ${{ needs.plan.outputs.ios }}
+          WANT_ANDROID: ${{ needs.plan.outputs.android }}
           LINT: ${{ needs.lint.result }}
           TYPECHECK: ${{ needs.typecheck.result }}
           TEST: ${{ needs.test.result }}
@@ -236,13 +277,17 @@ jobs:
         run: |
           echo "lint=$LINT typecheck=$TYPECHECK test=$TEST e2e=$E2E commitlint=$COMMITLINT"
           echo "mobile-ios=$MOBILE_IOS mobile-android=$MOBILE_ANDROID"
+          echo "plan=$PLAN wants e2e=$WANT_E2E ios=$WANT_IOS android=$WANT_ANDROID"
+          # A planned job must succeed; an unplanned one must have been skipped.
+          planned() { if [ "$1" = "true" ]; then [ "$2" = "success" ]; else [ "$2" = "skipped" ]; fi; }
           fail=0
+          [ "$PLAN" = "success" ] || fail=1
           [ "$LINT" = "success" ] || fail=1
           [ "$TYPECHECK" = "success" ] || fail=1
           [ "$TEST" = "success" ] || fail=1
-          [ "$E2E" = "success" ] || fail=1
-          [ "$MOBILE_IOS" = "success" ] || fail=1
-          [ "$MOBILE_ANDROID" = "success" ] || fail=1
+          planned "$WANT_E2E" "$E2E" || fail=1
+          planned "$WANT_IOS" "$MOBILE_IOS" || fail=1
+          planned "$WANT_ANDROID" "$MOBILE_ANDROID" || fail=1
           if [ "$EVENT" = "pull_request" ]; then
             [ "$COMMITLINT" = "success" ] || fail=1
           else
