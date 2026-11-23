@@ -1,9 +1,7 @@
 // Electron fuses, flipped in the electron-builder afterPack hook (before signing), so the signed
 // and notarized app carries them. Spec §7.2: the app binary never doubles as a Node interpreter.
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { FuseV1Options, FuseVersion, flipFuses } from "@electron/fuses";
-import { verifyPackedResources } from "./verify-resources.ts";
 
 export const fuseConfig = {
   version: FuseVersion.V1,
@@ -34,11 +32,5 @@ export function electronBinaryPath(context: AfterPackContext): string {
 }
 
 export async function afterPack(context: AfterPackContext): Promise<void> {
-  // macOS: the bundled Node and device must be exactly what bundle-node made (each arch slice).
-  if (context.packager.platform.name === "mac") {
-    verifyPackedResources(electronBinaryPath(context), {
-      root: fileURLToPath(new URL("..", import.meta.url)),
-    });
-  }
   await flipFuses(electronBinaryPath(context), fuseConfig);
 }

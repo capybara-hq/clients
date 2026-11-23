@@ -41,8 +41,7 @@ export interface SetupUpdatesDeps {
   logger?: UpdateLogger;
   /**
    * A new version was downloaded (called once per version): tell the person it installs on quit
-   * or with `restart()`. The bundled device's service is restarted by the next start's
-   * `repairService().then(afterUpdate)`, once the new app is on disk.
+   * or with `restart()`.
    */
   onDownloaded?: (info: { version: string }) => void;
   /** Runs `fn` every `ms`; returns a cancel function. Default: an unref'd `setInterval`. */

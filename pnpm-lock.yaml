@@ -43,9 +43,6 @@ importers:
 
   apps/desktop:
     devDependencies:
-      '@capybara-hq/device':
-        specifier: 0.1.0-rc.30
-        version: 0.1.0-rc.30
       '@capybara-hq/plugin-sdk':
         specifier: 0.1.0-rc.58
         version: 0.1.0-rc.58
@@ -231,11 +228,6 @@ packages:
     resolution: {integrity: sha512-0C6rYScr13WfAE9nPl4ScOQynmjFv9NT3Th+RZkD4ezYHmER6mcl1/lDYsv7jg3Rj3FOvLrlTlmNkUrr83kZzQ==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
-
-  '@capybara-hq/device@0.1.0-rc.30':
-    resolution: {integrity: sha512-lAIJwoSiUHVyz8ZZvJcynSQS2SF1aPtfBvIEjLhk7gBZKGcIOdiG6q7QAgF6PoJ4IJMdzXT816XOJADN3iaPWw==}
-    engines: {node: '>=22.12'}
-    hasBin: true
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.53':
     resolution: {integrity: sha512-yPoLMtxdp/5a2Wc2UZYdMJt87bzXHnvZcck+kArmifKF2yuO8qkmJrFinnnFa4mSuG5vEzcUK3YKUDEeNUmYDA==}
@@ -3125,8 +3117,6 @@ snapshots:
   '@capacitor/splash-screen@8.0.2(@capacitor/core@8.6.2)':
     dependencies:
       '@capacitor/core': 8.6.2
-
-  '@capybara-hq/device@0.1.0-rc.30': {}
 
   '@capybara-hq/plugin-sdk@0.1.0-rc.53':
     dependencies:

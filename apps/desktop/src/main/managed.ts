@@ -1,6 +1,6 @@
 // Managed configuration (spec §6.4): macOS managed preferences of `brand.appId`, written by an MDM
 // profile. They may list profiles, lock the app to them, turn automatic updates off or point them
-// at an internal feed, and turn 「连接本机」 off. The file reader is injected, so tests use fakes.
+// at an internal feed. The file reader is injected, so tests use fakes.
 //
 // Values come from outside the app: every field is validated on its own and a malformed one is
 // ignored (the others still apply); a missing or unreadable file reads as `{}`.
@@ -15,8 +15,6 @@ export interface ManagedConfig {
   autoUpdate?: boolean;
   /** An https base URL of an internal update feed. */
   updateFeed?: string;
-  /** false hides 「连接本机」. */
-  connectThisMachine?: boolean;
 }
 
 interface ParsedLevel {
@@ -52,7 +50,6 @@ function parseLevel(raw: unknown): ParsedLevel {
       feedInvalid = true;
     }
   }
-  if (typeof raw.connectThisMachine === "boolean") out.connectThisMachine = raw.connectThisMachine;
   // Ruling R9: a feed that was set but is unusable turns automatic updates off.
   if (feedInvalid) out.autoUpdate = false;
   return { config: out, feedInvalid };

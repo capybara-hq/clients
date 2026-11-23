@@ -33,17 +33,11 @@ function setup(over: Partial<ProfileRemovalDeps> = {}, answers: Answer[] = ["con
       return { response: a === "confirm" ? (options.confirmId ?? -1) : options.cancelId };
     },
     locale: "zh",
-    beforeRemoveDevice: vi.fn(async () => {
-      order.push("device");
-    }),
     closeProfileWindows: vi.fn(() => {
       order.push("close windows");
     }),
     removeProfile: vi.fn(async () => {
       order.push("remove");
-    }),
-    forgetAvailability: vi.fn(() => {
-      order.push("forget");
     }),
     onRemoved: vi.fn(() => {
       order.push("refresh");
@@ -55,14 +49,12 @@ function setup(over: Partial<ProfileRemovalDeps> = {}, answers: Answer[] = ["con
 }
 
 describe("removing a platform (spec 6.3)", () => {
-  test("asks, asks the device question, closes the windows before removing, then refreshes", async () => {
-    const { removal, deps, order, parent } = setup();
+  test("asks, closes the windows before removing, then refreshes", async () => {
+    const { removal, deps, order } = setup();
     await removal.remove("p1");
-    expect(order).toEqual(["confirm", "device", "close windows", "remove", "forget", "refresh"]);
-    expect(deps.beforeRemoveDevice).toHaveBeenCalledWith(p1, parent);
+    expect(order).toEqual(["confirm", "close windows", "remove", "refresh"]);
     expect(deps.closeProfileWindows).toHaveBeenCalledWith("p1");
     expect(deps.removeProfile).toHaveBeenCalledWith("p1");
-    expect(deps.forgetAvailability).toHaveBeenCalledWith("p1");
   });
 
   test("the confirmation names the platform and its host, attached to a live window", async () => {
@@ -94,7 +86,6 @@ describe("removing a platform (spec 6.3)", () => {
     const { removal, deps, order } = setup({}, ["cancel"]);
     await removal.remove("p1");
     expect(order).toEqual(["confirm"]);
-    expect(deps.beforeRemoveDevice).not.toHaveBeenCalled();
     expect(deps.closeProfileWindows).not.toHaveBeenCalled();
     expect(deps.removeProfile).not.toHaveBeenCalled();
     expect(deps.onRemoved).not.toHaveBeenCalled();
@@ -112,20 +103,6 @@ describe("removing a platform (spec 6.3)", () => {
     expect(order).toEqual([]);
   });
 
-  test("a failing device step is logged and the removal goes on", async () => {
-    const { removal, order, deps } = setup({
-      beforeRemoveDevice: async () => {
-        throw new Error("cli gone");
-      },
-    });
-    await removal.remove("p1");
-    expect(order).toEqual(["confirm", "close windows", "remove", "forget", "refresh"]);
-    expect(deps.log).toHaveBeenCalledWith(
-      "the device step of a platform removal failed",
-      expect.any(Error),
-    );
-  });
-
   test("one dialog at a time per platform: a second removal while one asks is dropped", async () => {
     let confirm: () => void = () => {};
     const { removal, deps, gate } = setup({
@@ -136,7 +113,7 @@ describe("removing a platform (spec 6.3)", () => {
     });
     const first = removal.remove("p1");
     await removal.remove("p1");
-    // A device dialog from the tray for the same platform is refused while this one is open.
+    // Another confirming call for the same platform is refused while this one is open.
     expect(gate.isConfirmingCallAllowed("p1", true)).toBe("busy");
     confirm();
     await first;

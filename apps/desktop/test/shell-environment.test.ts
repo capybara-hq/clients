@@ -131,12 +131,12 @@ describe("the Shell environment object", () => {
 
   test("a capability can appear after load", () => {
     const { shell, bridge } = install();
-    expect(shell.capabilities["device@2"]).toBeUndefined();
+    expect(shell.capabilities["example@1"]).toBeUndefined();
     bridge.fire({
       ...chromeState("macos", false),
-      capabilities: { ...init.capabilities, "device@2": ["status"] },
+      capabilities: { ...init.capabilities, "example@1": ["status"] },
     });
-    expect(typeof (shell.capabilities["device@2"] as Record<string, unknown>).status).toBe(
+    expect(typeof (shell.capabilities["example@1"] as Record<string, unknown>).status).toBe(
       "function",
     );
   });
@@ -148,20 +148,20 @@ describe("the Shell environment object", () => {
       {
         ...init,
         kind: "desktop",
-        capabilities: { ...init.capabilities, "device@2": ["status"] },
-        events: { "device@2": ["onStatus"] },
+        capabilities: { ...init.capabilities, "example@1": ["status"] },
+        events: { "example@1": ["onStatus"] },
       },
       bridge,
       target,
     );
-    const device = target.capybaraShell?.capabilities["device@2"] as {
+    const device = target.capybaraShell?.capabilities["example@1"] as {
       status: unknown;
       onStatus(l: (s: unknown) => void): () => void;
     };
     expect(typeof device.status).toBe("function");
     const listener = vi.fn();
     const off = device.onStatus(listener);
-    expect(bridge.subscribe).toHaveBeenCalledWith("device@2", "onStatus", expect.any(Function));
+    expect(bridge.subscribe).toHaveBeenCalledWith("example@1", "onStatus", expect.any(Function));
     // The page's listener is wrapped: a throw in it is logged, not raised into the shell.
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const forward = vi.mocked(bridge.subscribe).mock.calls[0]?.[2] as (p: unknown) => void;
@@ -183,10 +183,10 @@ describe("the Shell environment object", () => {
     const { shell, bridge } = install();
     bridge.fire({
       ...chromeState("macos", false),
-      capabilities: { "device@2": ["status"] },
-      events: { "device@2": ["onStatus"] },
+      capabilities: { "example@1": ["status"] },
+      events: { "example@1": ["onStatus"] },
     });
-    expect(typeof (shell.capabilities["device@2"] as Record<string, unknown>).onStatus).toBe(
+    expect(typeof (shell.capabilities["example@1"] as Record<string, unknown>).onStatus).toBe(
       "function",
     );
   });
@@ -343,9 +343,9 @@ describe("the preload's event subscriptions", () => {
     const { deps, bridge } = booted();
     deps.ipcRenderer.invoke.mockResolvedValueOnce(true);
     const listener = vi.fn();
-    bridge.subscribe("device@2", "onStatus", listener);
+    bridge.subscribe("example@1", "onStatus", listener);
     expect(deps.ipcRenderer.invoke).toHaveBeenCalledWith(SHELL_CHANNELS.subscribe, {
-      key: "device@2",
+      key: "example@1",
       event: "onStatus",
       id: 1,
       doc: "doc-11111111",
@@ -367,15 +367,15 @@ describe("the preload's event subscriptions", () => {
 
   test("one IPC listener for every subscription", () => {
     const { deps, bridge } = booted();
-    bridge.subscribe("device@2", "onStatus", vi.fn());
-    bridge.subscribe("device@2", "onStatus", vi.fn());
+    bridge.subscribe("example@1", "onStatus", vi.fn());
+    bridge.subscribe("example@1", "onStatus", vi.fn());
     expect(deps.eventListeners).toHaveLength(1);
   });
 
   test("unsubscribe tells main once and stops delivery", () => {
     const { deps, bridge } = booted();
     const listener = vi.fn();
-    const off = bridge.subscribe("device@2", "onStatus", listener);
+    const off = bridge.subscribe("example@1", "onStatus", listener);
     deps.ipcRenderer.send.mockClear();
     off();
     off();
@@ -392,7 +392,7 @@ describe("the preload's event subscriptions", () => {
     const { deps, bridge } = booted();
     deps.ipcRenderer.invoke.mockResolvedValueOnce(false);
     const listener = vi.fn();
-    bridge.subscribe("device@2", "onStatus", listener);
+    bridge.subscribe("example@1", "onStatus", listener);
     await vi.waitFor(() => expect(deps.ipcRenderer.invoke).toHaveBeenCalled());
     await Promise.resolve();
     await Promise.resolve();

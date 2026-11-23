@@ -172,11 +172,16 @@ describe("capability calls", () => {
         }),
     );
     b.registerCapability(
-      "device@2",
+      "example@1",
       { connect, status: async () => "s" },
       { confirming: ["connect"] },
     );
-    const req = (activation: boolean) => ({ key: "device@2", fn: "connect", args: [], activation });
+    const req = (activation: boolean) => ({
+      key: "example@1",
+      fn: "connect",
+      args: [],
+      activation,
+    });
 
     expect(await b.handleCall(topEvent(), req(false))).toEqual({
       ok: false,
@@ -202,8 +207,8 @@ describe("capability calls", () => {
     const gate = createConfirmGate();
     const b = bridgeFor({ profile }, undefined, gate);
     const connect = vi.fn(async () => "connected");
-    b.registerCapability("device@2", { connect }, { confirming: ["connect"] });
-    const req = { key: "device@2", fn: "connect", args: [], activation: true };
+    b.registerCapability("example@1", { connect }, { confirming: ["connect"] });
+    const req = { key: "example@1", fn: "connect", args: [], activation: true };
     expect(gate.isConfirmingCallAllowed(profile.id, true)).toBe("ok");
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: false, code: "busy" });
     expect(connect).not.toHaveBeenCalled();
@@ -246,7 +251,7 @@ describe("capability calls", () => {
   test("the busy flag is cleared when a confirming call rejects", async () => {
     const b = bridgeFor();
     b.registerCapability(
-      "device@2",
+      "example@1",
       {
         connect: async () => {
           throw new Error("x");
@@ -254,7 +259,7 @@ describe("capability calls", () => {
       },
       { confirming: ["connect"] },
     );
-    const req = { key: "device@2", fn: "connect", args: [], activation: true };
+    const req = { key: "example@1", fn: "connect", args: [], activation: true };
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: false, code: "failed" });
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: false, code: "failed" });
   });
@@ -288,12 +293,12 @@ describe("descriptors and availability", () => {
     let available = false;
     const status = vi.fn(async () => "s");
     const b = bridgeFor();
-    b.registerCapability("device@2", { status }, { available: () => available });
+    b.registerCapability("example@1", { status }, { available: () => available });
     expect(b.describe(profile)).toEqual({});
-    const req = { key: "device@2", fn: "status", args: [], activation: false };
+    const req = { key: "example@1", fn: "status", args: [], activation: false };
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: false, code: "failed" });
     available = true;
-    expect(b.describe(profile)).toEqual({ "device@2": ["status"] });
+    expect(b.describe(profile)).toEqual({ "example@1": ["status"] });
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "s" });
   });
 });
@@ -326,7 +331,7 @@ describe("confirming only when it turns out to need it", () => {
   test("ctx.confirm takes the slot: activation needed, busy while held, released after", async () => {
     const b = bridgeFor();
     let answer: (v: string) => void = () => {};
-    b.registerCapability("device@2", {
+    b.registerCapability("example@1", {
       requestCeiling: (ctx: { confirm<T>(run: () => Promise<T>): Promise<T> }, widen: boolean) =>
         widen
           ? ctx.confirm(
@@ -338,7 +343,7 @@ describe("confirming only when it turns out to need it", () => {
           : Promise.resolve("applied"),
     });
     const req = (widen: boolean, activation: boolean) => ({
-      key: "device@2",
+      key: "example@1",
       fn: "requestCeiling",
       args: [widen],
       activation,
@@ -366,20 +371,20 @@ describe("confirming only when it turns out to need it", () => {
   test("ctx.confirm inside a statically confirming call reuses its slot", async () => {
     const b = bridgeFor();
     b.registerCapability(
-      "device@2",
+      "example@1",
       {
         resume: (ctx: { confirm<T>(run: () => Promise<T>): Promise<T> }) =>
           ctx.confirm(async () => "resumed"),
       },
       { confirming: ["resume"] },
     );
-    const req = { key: "device@2", fn: "resume", args: [], activation: true };
+    const req = { key: "example@1", fn: "resume", args: [], activation: true };
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "resumed" });
     expect(await b.handleCall(topEvent(), req)).toEqual({ ok: true, value: "resumed" });
   });
 });
 
-describe("events (device@2.onStatus)", () => {
+describe("events (example@1.onStatus)", () => {
   function eventBridge() {
     const sent: { message: unknown }[] = [];
     const offs: string[] = [];
@@ -387,7 +392,7 @@ describe("events (device@2.onStatus)", () => {
     let available = true;
     const b = bridgeFor({ profile }, (_t, message) => sent.push({ message }));
     b.registerCapability(
-      "device@2",
+      "example@1",
       { status: async () => "s" },
       {
         available: () => available,
@@ -414,7 +419,7 @@ describe("events (device@2.onStatus)", () => {
     };
   }
   const sub = (id: number, doc = "doc-aaaaaaaa", event = "onStatus") => ({
-    key: "device@2",
+    key: "example@1",
     event,
     id,
     doc,
@@ -422,9 +427,9 @@ describe("events (device@2.onStatus)", () => {
 
   test("events are described apart from functions", () => {
     const { b } = eventBridge();
-    expect(b.describe(profile)).toEqual({ "device@2": ["status"] });
-    expect(b.describeEvents(profile)).toEqual({ "device@2": ["onStatus"] });
-    expect(b.handleInit(topEvent())).toMatchObject({ events: { "device@2": ["onStatus"] } });
+    expect(b.describe(profile)).toEqual({ "example@1": ["status"] });
+    expect(b.describeEvents(profile)).toEqual({ "example@1": ["onStatus"] });
+    expect(b.handleInit(topEvent())).toMatchObject({ events: { "example@1": ["onStatus"] } });
   });
 
   test("a subscription delivers to the calling document; unsubscribe ends it", () => {

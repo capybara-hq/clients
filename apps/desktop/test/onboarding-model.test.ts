@@ -51,9 +51,7 @@ describe("the onboarding page model", () => {
   test("the signed-out account line", () => {
     const account = { name: "Grant", login: "grant@meta1.top" };
     expect(accountLine(account, zh)).toBe("grant@meta1.top");
-    expect(accountLine(account, zh, true)).toBe("grant@meta1.top · 这台电脑仍作为设备连接着");
     expect(accountLine({ name: "Grant", login: "" }, zh)).toBe("Grant");
     expect(accountLine(null, zh)).toBe("");
-    expect(accountLine(null, zh, true)).toBe("这台电脑仍作为设备连接着");
   });
 });

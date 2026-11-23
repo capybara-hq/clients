@@ -63,8 +63,6 @@ export type OnboardingFields = {
   machine: string;
   /** The signed-out page's account (display name and login). */
   account: { name: string; login: string } | null;
-  /** The signed-out page: this machine has a connection into that deployment. */
-  deviceConnected: boolean;
   /** Whether 「移除这个平台」 is offered (never under a managed lock). */
   canRemove: boolean;
 };
@@ -103,14 +101,11 @@ export function platformLabel(platform: { name?: string; host?: string } | undef
   return platform?.name?.trim() || platform?.host || "";
 }
 
-/** The signed-out page's account line: the login (else the name), with the device note. */
+/** The signed-out page's account line: the login (else the name). */
 export function accountLine(
   account: { name: string; login: string } | null,
   t: (key: string, vars?: Record<string, string>) => string,
-  deviceConnected = false,
 ): string {
   const who = account ? account.login || account.name : "";
-  if (who && deviceConnected) return t("onboarding.signedOut.accountDevice", { account: who });
-  if (who) return t("onboarding.signedOut.account", { account: who });
-  return deviceConnected ? t("onboarding.signedOut.device") : "";
+  return who ? t("onboarding.signedOut.account", { account: who }) : "";
 }

@@ -38,8 +38,8 @@ export interface Harness {
 export async function launchApp(o: { userData?: string } = {}): Promise<Harness> {
   const fresh = o.userData === undefined;
   const userData = o.userData ?? mkdtempSync(join(tmpdir(), "capybara-e2e-"));
-  // The app under test never sees the developer's real device: its state directory and control
-  // socket (`$XDG_CONFIG_HOME/capybara-device`) live in the temp dir.
+  // The app under test never sees the developer's real config: `$XDG_CONFIG_HOME` is in the temp
+  // dir.
   const configHome = join(userData, "config");
   mkdirSync(configHome, { recursive: true });
   // Electron started as Node would not open windows: ELECTRON_RUN_AS_NODE stays out.

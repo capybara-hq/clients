@@ -258,8 +258,7 @@ export async function startFakeDeployment(
           name: "Fake Deployment",
           icon: "/icon.png?v=abc123",
           icons: { app: "/icon.png?v=abc123", maskable: null, favicon: null },
-          protocols: { device: { min: 6, max: 6 } },
-          features: merge({ localDevices: true, appSignIn: true }, options.features),
+          features: merge({ appSignIn: true }, options.features),
         },
         options.meta,
       );

@@ -525,7 +525,7 @@ describe("the main window's rectangle", () => {
   });
 });
 
-describe("device@2 support", () => {
+describe("capability events", () => {
   test("a main-frame navigation of a profile window reports the profile load", () => {
     const onProfileLoad = vi.fn();
     const { windows, created } = setup({ onProfileLoad });
@@ -545,14 +545,14 @@ describe("device@2 support", () => {
 
   test("change carries the event names when there are any", () => {
     const { windows, created } = setup({
-      describe: () => ({ "device@2": ["status"] }),
-      describeEvents: () => ({ "device@2": ["onStatus"] }),
+      describe: () => ({ "example@1": ["status"] }),
+      describeEvents: () => ({ "example@1": ["onStatus"] }),
     });
     windows.openProfileWindow(p1);
     windows.broadcastChange(p1.id);
     expect(created[0]?.webContents.send).toHaveBeenLastCalledWith(
       SHELL_CHANNELS.change,
-      expect.objectContaining({ events: { "device@2": ["onStatus"] } }),
+      expect.objectContaining({ events: { "example@1": ["onStatus"] } }),
     );
   });
 
@@ -572,38 +572,5 @@ describe("device@2 support", () => {
       false,
     );
     expect(created[0]?.webContents.send).toHaveBeenCalledTimes(1);
-  });
-
-  test("the verification window: a child of the profile window, its partition, no preload", () => {
-    const { windows, options, created } = setup();
-    const parent = windows.openProfileWindow(p1);
-    const child = windows.openChildWindow(
-      p1,
-      parent,
-      "https://a.example.com/team/devices/link?code=X&org=o",
-    );
-    expect(options[1]).toMatchObject({
-      parent,
-      webPreferences: { partition: "persist:profile-p1", contextIsolation: true, sandbox: true },
-    });
-    expect(options[1]?.webPreferences).not.toHaveProperty("preload");
-    // An ordinary window: the default title bar, no inset traffic lights.
-    expect(options[1]).not.toHaveProperty("titleBarStyle");
-    expect(options[1]).not.toHaveProperty("trafficLightPosition");
-    expect(created[1]?.loadURL).toHaveBeenCalledWith(
-      "https://a.example.com/team/devices/link?code=X&org=o",
-    );
-    // It is not a profile window: no IPC resolves to it.
-    expect(windows.resolveSender(created[1]?.webContents)).toBeUndefined();
-    const closed = vi.fn();
-    child.onClosed(closed);
-    child.close();
-    expect(closed).toHaveBeenCalledOnce();
-  });
-
-  test("a parent that is gone opens the verification window on its own", () => {
-    const { windows, options } = setup();
-    windows.openChildWindow(p1, { isDestroyed: () => true }, "https://a.example.com/team/x");
-    expect(options[0]?.parent).toBeUndefined();
   });
 });

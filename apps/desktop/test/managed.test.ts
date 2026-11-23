@@ -19,6 +19,7 @@ describe("parseManagedConfig", () => {
         lockDeployments: true,
         autoUpdate: false,
         updateFeed: "https://updates.example.com/capybara",
+        // a key the app no longer reads (the removed 「连接本机」 switch) is ignored
         connectThisMachine: false,
       }),
     ).toEqual({
@@ -30,7 +31,6 @@ describe("parseManagedConfig", () => {
       lockDeployments: true,
       autoUpdate: false,
       updateFeed: "https://updates.example.com/capybara",
-      connectThisMachine: false,
     });
   });
 
@@ -41,12 +41,10 @@ describe("parseManagedConfig", () => {
         lockDeployments: "yes",
         autoUpdate: 0,
         updateFeed: "http://updates.example.com",
-        connectThisMachine: true,
       }),
     ).toEqual({
       profiles: ["https://ok.example.com"],
       autoUpdate: false,
-      connectThisMachine: true,
     });
     expect(parseManagedConfig({ profiles: "a.example.com" })).toEqual({});
   });
