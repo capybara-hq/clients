@@ -294,6 +294,8 @@ function start(): void {
       localPreloadPath: join(dist, "preload", "local.cjs"),
       platform,
       appName: brand.productName,
+      // macOS: closing a main window hides it; the Dock click shows it again as it was.
+      hideOnClose: platform === "macos",
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       describeEvents: (profile) => bridge.describeEvents(profile),
@@ -719,7 +721,7 @@ function start(): void {
       // The small window first (closing the last window quits on Windows / Linux), then the window.
       notSignedIn: (id, win) => {
         if (profiles.get(id)) openProfile({ id });
-        if (!win.isDestroyed()) (win as unknown as BrowserWindow).close();
+        windows.closeWindow(win as unknown as WindowLike);
       },
       popupPlatformMenu: (win) =>
         Menu.buildFromTemplate(
@@ -867,8 +869,14 @@ function start(): void {
       if (!windows.focusLast(isVisible)) openDefault();
     });
 
-    app.on("activate", () => {
-      if (!windows.hasWindows()) openDefault();
+    // Any quit (⌘Q, the menus' Quit, the system's shutdown) closes the hidden windows for real.
+    app.on("before-quit", () => windows.prepareQuit());
+
+    // The Dock click with no window in sight: the last focused window (hidden by its close, or
+    // minimized) comes back as it was; with none, the default window opens.
+    app.on("activate", (_event, hasVisibleWindows) => {
+      if (hasVisibleWindows) return;
+      if (!windows.focusLast(isVisible)) openDefault();
     });
 
     app.on("window-all-closed", () => {
@@ -949,7 +957,11 @@ function start(): void {
         get locale() {
           return menuLocale();
         },
-        restart: () => updates.restart(),
+        // The updater closes every window before `before-quit`: no close may be a hide then.
+        restart: () => {
+          windows.prepareQuit();
+          updates.restart();
+        },
       });
       app.on("will-quit", () => updates.dispose());
       void updates.check();

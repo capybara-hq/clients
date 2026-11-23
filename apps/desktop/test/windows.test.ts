@@ -42,14 +42,34 @@ function setup(extra: Partial<WindowManagerDeps> = {}) {
   function fakeWindow(origin: string) {
     const em = fakeEmitter();
     let destroyed = false;
+    let fullScreen = false;
     return {
       ...em,
       on: em.on,
       webContents: fakeWebContents(origin),
-      isFullScreen: () => false,
-      show: vi.fn(),
+      isFullScreen: () => fullScreen,
+      // Electron leaves full screen asynchronously: `leave-full-screen` comes later.
+      setFullScreen: vi.fn((flag: boolean) => {
+        if (!flag) return;
+        fullScreen = true;
+      }),
+      leaveFullScreen() {
+        fullScreen = false;
+        em.emit("leave-full-screen");
+      },
+      visible: true,
+      show: vi.fn(function (this: { visible: boolean }) {
+        this.visible = true;
+      }),
+      hide: vi.fn(function (this: { visible: boolean }) {
+        this.visible = false;
+      }),
       focus: vi.fn(),
+      // Electron: `close` (preventable), then `closed` unless prevented.
       close: vi.fn(() => {
+        let prevented = false;
+        em.emit("close", { preventDefault: () => (prevented = true) });
+        if (prevented) return;
         destroyed = true;
         em.emit("closed");
       }),
@@ -605,5 +625,119 @@ describe("device@2 support", () => {
     const { windows, options } = setup();
     windows.openChildWindow(p1, { isDestroyed: () => true }, "https://a.example.com/team/x");
     expect(options[0]?.parent).toBeUndefined();
+  });
+});
+
+describe("hide on close (macOS)", () => {
+  test("closing a main window hides it: still tracked, still counted open, not reloaded", () => {
+    const onProfileClosed = vi.fn();
+    const { windows, created } = setup({ hideOnClose: true, onProfileClosed });
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.close();
+    expect(win.hide).toHaveBeenCalledTimes(1);
+    expect(win.isDestroyed()).toBe(false);
+    expect(windows.hasProfileWindows("p1")).toBe(true);
+    expect(windows.resolveSender(win.webContents)?.profile.id).toBe("p1");
+    expect(onProfileClosed).not.toHaveBeenCalled();
+    expect(win.loadURL).toHaveBeenCalledTimes(1);
+  });
+
+  test("the Dock click (focusLast) shows the same hidden window, not a new one", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    created[0]?.emit("focus");
+    created[0]?.close();
+    created[1]?.emit("focus");
+    created[1]?.close();
+    expect(created.every((w) => !w.visible)).toBe(true);
+    expect(windows.focusLast()).toBe(true);
+    // The most recently focused one comes back; nothing new is created or loaded.
+    expect(created[1]?.visible).toBe(true);
+    expect(created[1]?.focus).toHaveBeenCalled();
+    expect(created[0]?.visible).toBe(false);
+    expect(created).toHaveLength(2);
+    expect(created[1]?.loadURL).toHaveBeenCalledTimes(1);
+    // The menus' entry for a platform shows its hidden window too.
+    windows.showProfile(p1);
+    expect(created[0]?.visible).toBe(true);
+    expect(created).toHaveLength(2);
+  });
+
+  test("a full-screen window leaves full screen first, then hides", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.setFullScreen(true);
+    win.setFullScreen.mockClear();
+    win.close();
+    expect(win.setFullScreen).toHaveBeenCalledExactlyOnceWith(false);
+    expect(win.hide).not.toHaveBeenCalled();
+    win.leaveFullScreen();
+    expect(win.hide).toHaveBeenCalledTimes(1);
+    // A later, ordinary leave hides nothing more.
+    win.leaveFullScreen();
+    expect(win.hide).toHaveBeenCalledTimes(1);
+  });
+
+  test("a window shown again before it left full screen is not hidden", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.setFullScreen(true);
+    win.close();
+    windows.showProfile(p1);
+    win.leaveFullScreen();
+    expect(win.hide).not.toHaveBeenCalled();
+  });
+
+  test("after prepareQuit (before-quit, an update's restart) a close closes for real", () => {
+    const onProfileClosed = vi.fn();
+    const { windows, created } = setup({ hideOnClose: true, onProfileClosed });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    created[0]?.close();
+    windows.prepareQuit();
+    // The hidden window and the visible one both close.
+    for (const w of created) w.close();
+    expect(created.every((w) => w.isDestroyed())).toBe(true);
+    expect(onProfileClosed).toHaveBeenCalledTimes(2);
+    expect(windows.hasWindows()).toBe(false);
+  });
+
+  test("removal, sign-out and closeWindow close for real", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openProfileWindow(p1);
+    windows.openProfileWindow(p2);
+    windows.closeProfileWindows("p1");
+    expect(created[0]?.isDestroyed()).toBe(true);
+    expect(created[0]?.hide).not.toHaveBeenCalled();
+    const second = created[1];
+    if (!second) throw new Error("no window");
+    windows.closeWindow(second);
+    expect(second.isDestroyed()).toBe(true);
+    expect(second.hide).not.toHaveBeenCalled();
+    expect(windows.hasWindows()).toBe(false);
+  });
+
+  test("without hideOnClose (Windows, Linux) a close destroys the window", () => {
+    const { windows, created } = setup();
+    windows.openProfileWindow(p1);
+    created[0]?.close();
+    expect(created[0]?.isDestroyed()).toBe(true);
+    expect(created[0]?.hide).not.toHaveBeenCalled();
+    expect(windows.hasProfileWindows("p1")).toBe(false);
+  });
+
+  test("the small window is never hidden", () => {
+    const { windows, created } = setup({ hideOnClose: true });
+    windows.openSmallWindow(COLORS);
+    created[0]?.close();
+    expect(created[0]?.isDestroyed()).toBe(true);
+    expect(windows.smallWindow()).toBeUndefined();
   });
 });
