@@ -56,7 +56,19 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
     return response === options.confirmId;
   }
 
+  /** Removals clearing a partition now: a quit waits for them (`whenIdle`). */
+  const running = new Set<Promise<void>>();
+
   return {
+    /**
+     * Settles once no removal is clearing a partition. Closing a platform's last window quits the
+     * app on Windows / Linux; the quit waits here, so the partition is cleared and the profile
+     * forgotten, not left behind half cleared and back at the next start.
+     */
+    async whenIdle(): Promise<void> {
+      while (running.size > 0) await Promise.all([...running]);
+    },
+
     async remove(profileId: string): Promise<void> {
       const profile = deps.getProfile(profileId);
       if (!profile || !deps.isRemovable(profile)) return;
@@ -69,8 +81,21 @@ export function createProfileRemoval(deps: ProfileRemovalDeps) {
       try {
         if (!(await confirm(deps.dialogParent(profile.id), profile))) return;
         removed = true;
-        deps.closeProfileWindows(profile.id);
-        await deps.removeProfile(profile.id);
+        // Counted before the windows go: closing the last one may ask the app to quit at once.
+        let settle = () => {};
+        const marker = new Promise<void>((resolve) => {
+          settle = resolve;
+        });
+        running.add(marker);
+        try {
+          // `removeProfile` is called before anything else runs: from then on the store reads
+          // the profile as gone, so nothing reopens a window between the close and the clearing.
+          deps.closeProfileWindows(profile.id);
+          await deps.removeProfile(profile.id);
+        } finally {
+          running.delete(marker);
+          settle();
+        }
       } catch (err) {
         deps.log?.("the platform could not be removed", err);
       } finally {

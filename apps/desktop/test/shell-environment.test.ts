@@ -418,6 +418,7 @@ describe("the main side announces fullscreen", () => {
       show: vi.fn(),
       focus: vi.fn(),
       close: vi.fn(),
+      destroy: vi.fn(),
       isDestroyed: () => false,
       isMinimized: () => false,
       restore: vi.fn(),
