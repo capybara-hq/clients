@@ -50,7 +50,7 @@ pnpm test        # vitest run
 pnpm check:i18n  # the zh and en catalogs have the same keys and placeholders
 pnpm e2e         # builds the desktop app and runs the Playwright smoke (apps/desktop/e2e)
 pnpm verify --fast   # the local check before pushing: lint, i18n, brand, typecheck, tests (--json);
-                     # CI on the PR (ci-ok) also runs the native iOS / Android tests and is the gate
+                     # CI on the PR (ci-ok) also runs the macOS / native tests it needs and is the gate
 pnpm verify      # optional: --fast plus the desktop e2e smoke
 pnpm changeset   # a version note for an app or package
 
@@ -78,6 +78,10 @@ apps/mobile/scripts/android-device-test.sh           # the same as CI runs it (d
 
 - Changes reach `main` only through pull requests; the required status is `ci-ok`. Open a PR as a
   draft while it is still changing: drafts run no CI, and marking the PR ready starts it.
+- CI on a PR runs lint, typecheck, the Linux tests and commitlint always; the macOS tests, the
+  desktop e2e smoke and the native iOS / Android suites only when `scripts/ci-plan.ts` finds a
+  changed file they cover (an unknown path, a root config file or `ci.yml` runs them all). A new
+  directory or file kind gets a rule there, with a test. Pushes to `main` run everything.
 - Work in a worktree under `.worktrees/<branch>`; the main checkout stays on `main`.
 - Conventional Commits (checked by commitlint), body lines at most 100 characters. Apps are versioned
   by changesets (private packages are versioned, never published to npm).
