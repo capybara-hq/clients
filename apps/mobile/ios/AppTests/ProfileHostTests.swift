@@ -20,6 +20,7 @@ final class ProfileHostTests: XCTestCase {
         let listener: NWListener
         private let lock = NSLock()
         private var counts: [String: Int] = [:]
+        private var lastArrival = Date.distantPast
         let page: String
         /// Called after each counted request, off the main thread.
         var onRequest: (@Sendable (CountingServer) -> Void)?
@@ -35,6 +36,13 @@ final class ProfileHostTests: XCTestCase {
             return counts[path] ?? 0
         }
 
+        /// Seconds since the last counted request (of any path).
+        var quietFor: TimeInterval {
+            lock.lock()
+            defer { lock.unlock() }
+            return Date().timeIntervalSince(lastArrival)
+        }
+
         func start() async {
             listener.newConnectionHandler = { [weak self] connection in
                 connection.start(queue: .global())
@@ -44,6 +52,7 @@ final class ProfileHostTests: XCTestCase {
                     let path = String(target.split(separator: "?").first ?? "")
                     self.lock.lock()
                     self.counts[path, default: 0] += 1
+                    self.lastArrival = Date()
                     self.lock.unlock()
                     self.onRequest?(self)
                     let body = path == "/" ? self.page : "ok"
@@ -148,12 +157,17 @@ final class ProfileHostTests: XCTestCase {
         let released = try await waitFor(5) { view == nil }
         XCTAssertTrue(released, "the closed WebView is still retained")
 
-        // Requests in flight at close may still land; after that nothing new may arrive. The page
-        // asks every 50-100 ms, so one second without a request shows both loops stopped.
+        // Requests the page sent before close may still be counted after it: how many depends on
+        // how far the server (in this loaded test host) lags, not on the page (clients#41: two
+        // late timer requests failed a "+1 in flight" allowance). So the event is the stream
+        // ending: the page asks every 50-100 ms while it runs, so a second with no request shows
+        // both loops stopped, and nothing may arrive after that.
+        let quiet = try await waitFor(15) { server.quietFor >= 1 }
+        XCTAssertTrue(quiet, "the page kept fetching after close: timer \(server.count("/timer")) loop \(server.count("/loop"))")
         let settledTimer = server.count("/timer"), settledLoop = server.count("/loop")
-        _ = try await waitFor(1) { server.count("/timer") > settledTimer + 1 || server.count("/loop") > settledLoop + 1 }
-        XCTAssertLessThanOrEqual(server.count("/timer"), settledTimer + 1, "the timer kept fetching after close")
-        XCTAssertLessThanOrEqual(server.count("/loop"), settledLoop + 1, "the fetch loop kept going after close")
+        _ = try await waitFor(2) { server.count("/timer") > settledTimer || server.count("/loop") > settledLoop }
+        XCTAssertEqual(server.count("/timer"), settledTimer, "the timer kept fetching after close")
+        XCTAssertEqual(server.count("/loop"), settledLoop, "the fetch loop kept going after close")
         try? await WKWebsiteDataStore.remove(forIdentifier: id)
     }
 
