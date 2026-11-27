@@ -44,6 +44,14 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         main.post { host?.sink = this }
     }
 
+    /**
+     * A link of the brand's scheme (MainActivity, AppLinks): `appUrlOpen`, held until the runtime
+     * listens, which decides where it leads (src/runtime/open-link.ts).
+     */
+    fun appUrlOpened(url: String) {
+        notifyListeners("appUrlOpen", JSObject().put("url", url), true)
+    }
+
     @PluginMethod
     fun open(call: PluginCall) {
         val profileId = call.getString("profileId")

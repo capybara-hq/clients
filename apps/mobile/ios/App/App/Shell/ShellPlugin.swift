@@ -51,8 +51,14 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
     #endif
     @MainActor private var auth: AuthSession?
 
-    #if DEBUG
     override public func load() {
+        // `<scheme>://open?url=` and any other link of the brand's scheme the scene receives (a
+        // cold start's link arrives once plugins are loaded, CAPSceneDelegateProxy): forwarded as
+        // `appUrlOpen` and held until the runtime listens (src/runtime/open-link.ts decides).
+        // Sign-in callbacks never come this way: ASWebAuthenticationSession hands them back itself.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(openedURL(_:)), name: .capacitorOpenURL, object: nil)
+        #if DEBUG
         // From the start, not with the first profile: the address page is up before any profile
         // WebView, and its UI test waits for touches too. Changes only: the launch splash (shown
         // after every plugin's load) turns touches off, then on again once it is gone.
@@ -60,8 +66,15 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         touchable = view.observe(\.isUserInteractionEnabled, options: [.new]) { view, _ in
             log.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
         }
+        #endif
     }
-    #endif
+
+    @objc private func openedURL(_ notification: Notification) {
+        guard let object = notification.object as? [String: Any], let url = object["url"] as? URL,
+              let scheme = ShellPlugin.brandScheme, url.scheme?.lowercased() == scheme
+        else { return }
+        notifyListeners("appUrlOpen", data: ["url": url.absoluteString], retainUntilConsumed: true)
+    }
 
     @MainActor private func profileHost() -> ProfileHost? {
         if let host { return host }

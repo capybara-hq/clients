@@ -73,6 +73,7 @@ import {
   type ManagedPolicy,
   managedSourceFrom,
 } from "../runtime/managed.ts";
+import { type AppUrlPlugin, connectOpenLinks, createOpenLinkRouter } from "../runtime/open-link.ts";
 import { createProfileAccess, type ProfileAccess } from "../runtime/profile-access.ts";
 import {
   createProfileStore,
@@ -111,6 +112,7 @@ type HostPlugin = CapybaraHostPlugin &
   HttpGetNative &
   SignInNative &
   StripHostPlugin &
+  AppUrlPlugin &
   PushHostNative & {
     removeBlockRules(options: { profileId: string }): Promise<void>;
     launchOptions(): Promise<LaunchOptions>;
@@ -301,6 +303,7 @@ async function main(): Promise<void> {
     share: Share,
     menu: menuHostPortFrom(registerPlugin<MenuHostPlugin>(MENU_HOST_PLUGIN_NAME), locale),
     openExternal: openExternalPortFrom(plugin),
+    returnScheme: brand.scheme,
     platform,
     nav,
   });
@@ -476,6 +479,23 @@ async function main(): Promise<void> {
           const url = await currentUrlFrom(plugin, profile.id);
           return url === null ? null : { origin: profile.origin, url };
         },
+        open: async (id, path) => {
+          const next = await gate.switchTo(id);
+          if (next) await shownLoader.open(next, { path });
+        },
+      }),
+    );
+  }
+  if (access) {
+    // After the first screen: `<scheme>://open?url=` (the browser's way back after a connector
+    // OAuth or a login linking) opens its page on the visible profile of exactly that origin.
+    // Native holds a link that launched the app until this listener attaches.
+    const [gate, shownLoader] = [access, loader];
+    connectOpenLinks(
+      plugin,
+      createOpenLinkRouter({
+        scheme: brand.scheme,
+        profiles: () => gate.list(),
         open: async (id, path) => {
           const next = await gate.switchTo(id);
           if (next) await shownLoader.open(next, { path });
