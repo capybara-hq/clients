@@ -29,6 +29,7 @@ describe("the capabilities the runtime offers a profile", () => {
       share: { share: vi.fn(async () => {}) },
       menu: { show: vi.fn(async () => null), cancel: vi.fn(() => {}) },
       openExternal: { open: vi.fn(async () => {}) },
+      returnScheme: "capybara",
     });
     expect(registry.descriptors(profile).capabilities).toEqual({
       "signIn@1": ["start"],
@@ -37,6 +38,9 @@ describe("the capabilities the runtime offers a profile", () => {
       "share@1": ["share"],
       "menu@1": ["show"],
       "openExternal@1": ["open"],
+    });
+    expect(registry.descriptors(profile).fields).toEqual({
+      "openExternal@1": { returnScheme: "capybara" },
     });
     // A deployment too old for app sign-in is not offered signIn@1.
     expect(Object.keys(registry.descriptors(old).capabilities)).not.toContain("signIn@1");

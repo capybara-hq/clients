@@ -43,12 +43,16 @@ class MainActivity : BridgeActivity() {
         )
         // A tapped push that launched the app (not a recreated activity, not a launch from the
         // recents list, which re-sends the old intent).
-        if (savedInstanceState == null) handlePushIntent(intent)
+        if (savedInstanceState == null) {
+            handlePushIntent(intent)
+            handleAppLink(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handlePushIntent(intent)
+        handleAppLink(intent)
     }
 
     override fun onStart() {
@@ -70,6 +74,14 @@ class MainActivity : BridgeActivity() {
         intent.removeExtra(PushIntents.EXTRA_PUSH)
         intent.removeExtra(PushIntents.EXTRA_JPUSH)
         PushHub.tap(tap.data)
+    }
+
+    /** An `open` link of the brand's scheme goes to the runtime through `CapybaraHost`. */
+    private fun handleAppLink(intent: Intent?) {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val link = intent.dataString ?: return
+        if (!AppLinks.isOpenLink(intent.action, link, BuildConfig.BRAND_SCHEME)) return
+        (bridge?.getPlugin("CapybaraHost")?.instance as? ShellPlugin)?.appUrlOpened(link)
     }
 
     /**

@@ -61,8 +61,11 @@ What it covers:
   the cookie lands in the profile's partition and not in the default session; the window reloads
   signed in; a replayed callback sends nothing. `ses.fetch` honours the partition's cookies.
 - `POST /api/v1/auth/login` from the window is blocked and never reaches the server.
-- The desktop user agent goes to the profile's origin (page, fetch, exchange); a redirect hop to
-  another origin gets Chromium's own user agent, and the Shell environment is absent there.
+- The desktop user agent goes to the profile's origin (page, fetch, exchange); a request that hops
+  to another origin gets Chromium's own user agent there.
+- The main window never leaves the profile's origin on a navigation the page starts: one that
+  redirects to another origin is stopped and its target opens in the (stubbed) system browser. A
+  load the page did not start still follows such a redirect (an identity-aware proxy).
 - The web's own sign-out (`POST /api/v1/auth/logout` seen on the partition, then `/login`) closes
   the main window and shows the small window's signed-out page; the profile stays, signed out.
   When the logout completes only after the page navigated to `/login`, that `/login` is stopped

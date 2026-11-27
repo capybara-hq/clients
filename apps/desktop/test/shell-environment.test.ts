@@ -264,6 +264,36 @@ describe("the preload", () => {
     expect(script?.args[0]).toEqual({ ...init, kind: "desktop" });
   });
 
+  test("data fields reach the page's capability object", () => {
+    const withFields = {
+      ...init,
+      capabilities: { "openExternal@1": ["open"] },
+      fields: { "openExternal@1": { returnScheme: "capybara" } },
+    };
+    const deps = fakePreloadDeps({ init: withFields });
+    expect(bootShellPreload(deps)).toBe(true);
+    const script = deps.contextBridge.executeInMainWorld.mock.calls[0]?.[0];
+    expect(script?.args[0]).toEqual({ ...withFields, kind: "desktop" });
+    const page = {} as {
+      capybaraShell?: { capabilities: Record<string, Record<string, unknown>> };
+    };
+    installShellEnvironment(
+      { ...withFields, kind: "desktop" },
+      {
+        call: async () => ({ ok: true, value: null }),
+        onChange: () => {},
+        subscribe: () => () => {},
+      },
+      page,
+    );
+    expect(page.capybaraShell?.capabilities["openExternal@1"]?.returnScheme).toBe("capybara");
+  });
+
+  test("malformed fields refuse the init", () => {
+    const deps = fakePreloadDeps({ init: { ...init, fields: { "openExternal@1": { x: {} } } } });
+    expect(bootShellPreload(deps)).toBe(false);
+  });
+
   test("does nothing in a sub-frame (no IPC at all)", () => {
     const deps = fakePreloadDeps({ top: false });
     expect(bootShellPreload(deps)).toBe(false);

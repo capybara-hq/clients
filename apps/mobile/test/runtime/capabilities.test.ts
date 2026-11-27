@@ -375,6 +375,17 @@ describe("openExternal@1", () => {
     expect(createOpenExternalCapability({ open: async () => {} }).confirming ?? []).toEqual([]);
   });
 
+  test("openExternal@1 exposes returnScheme", () => {
+    const profile = { id: "p1", origin: "https://a.example" };
+    const cap = createOpenExternalCapability(
+      { open: async () => {} },
+      { returnScheme: "capybara" },
+    );
+    expect(cap.fields?.(profile)).toEqual({ returnScheme: "capybara" });
+    // Without a scheme there is no field.
+    expect(createOpenExternalCapability({ open: async () => {} }).fields).toBeUndefined();
+  });
+
   test("ftp, javascript and a foreign http url fail; https opens", async () => {
     const port = { open: vi.fn(async (_url: string) => {}) };
     const { call } = setup("openExternal@1", createOpenExternalCapability(port));

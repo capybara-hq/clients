@@ -4,6 +4,7 @@
 // as parameters.
 import {
   type CapabilityDescriptors,
+  type CapabilityFields,
   type Controls,
   chromeState,
   localPageUrl,
@@ -192,6 +193,8 @@ export interface WindowManagerDeps {
   describe(profile: Profile): CapabilityDescriptors;
   /** The event names offered to a profile now (`name@major.event`). */
   describeEvents?: (profile: Profile) => CapabilityDescriptors;
+  /** The data fields of the capabilities offered to a profile now. */
+  describeFields?: (profile: Profile) => CapabilityFields;
   /** A profile window committed a main-frame navigation: what is offered may be decided again. */
   onProfileLoad?: (profile: Profile) => void;
   /**
@@ -338,10 +341,12 @@ export function createWindowManager(deps: WindowManagerDeps) {
 
   function stateOf(entry: Extract<Entry, { kind: "profile" }>, fullscreen: boolean): ShellState {
     const events = deps.describeEvents?.(entry.profile) ?? {};
+    const fields = deps.describeFields?.(entry.profile) ?? {};
     return {
       ...chromeState(deps.platform, fullscreen),
       capabilities: deps.describe(entry.profile),
       ...(Object.keys(events).length > 0 ? { events } : {}),
+      ...(Object.keys(fields).length > 0 ? { fields } : {}),
     };
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  decideTopNavigation,
   decideWindowOpen,
   GRANTED_PERMISSIONS,
   hardenLocalContents,
@@ -80,7 +81,7 @@ describe("the local partition's permissions", () => {
 });
 
 describe("navigation", () => {
-  test("top-level navigation may leave the origin over http(s) only", () => {
+  test("a subframe may navigate over http(s) only", () => {
     expect(isNavigationAllowed("https://github.com/login/oauth/authorize")).toBe(true);
     expect(isNavigationAllowed("http://localhost:3000/")).toBe(true);
     for (const url of [
@@ -95,19 +96,148 @@ describe("navigation", () => {
     }
   });
 
-  test("will-navigate to a non-http(s) scheme is prevented", () => {
-    const wc = fakeWebContents();
-    hardenProfileContents(wc, {
-      origin: ORIGIN,
-      openExternal: vi.fn(),
-      openProfileWindow: vi.fn(),
+  test("top-frame decisions", () => {
+    expect(decideTopNavigation(`${ORIGIN}/connectors`, ORIGIN)).toEqual({ kind: "stay" });
+    expect(decideTopNavigation("https://github.com/login/oauth/authorize?x=1", ORIGIN)).toEqual({
+      kind: "external",
+      url: "https://github.com/login/oauth/authorize?x=1",
     });
-    const blocked = { url: "file:///etc/passwd", preventDefault: vi.fn() };
-    wc.emit("will-navigate", blocked, blocked.url);
-    expect(blocked.preventDefault).toHaveBeenCalled();
-    const allowed = { url: "https://idp.example.com/sso", preventDefault: vi.fn() };
-    wc.emit("will-navigate", allowed, allowed.url);
-    expect(allowed.preventDefault).not.toHaveBeenCalled();
+    // Another scheme or port is another origin.
+    expect(decideTopNavigation("http://capybara.example.com/", ORIGIN).kind).toBe("external");
+    expect(decideTopNavigation("https://capybara.example.com:8443/", ORIGIN).kind).toBe("external");
+    for (const url of ["javascript:alert(1)", "file:///etc/passwd", "capybara://open", ""]) {
+      expect(decideTopNavigation(url, ORIGIN)).toEqual({ kind: "refuse" });
+    }
+  });
+
+  function hardened() {
+    const wc = fakeWebContents();
+    const openExternal = vi.fn();
+    const openProfileWindow = vi.fn();
+    hardenProfileContents(wc, { origin: ORIGIN, openExternal, openProfileWindow });
+    return { wc, openExternal, openProfileWindow };
+  }
+
+  test("will-navigate to another origin is prevented and opened externally", () => {
+    const { wc, openExternal } = hardened();
+    const e = { url: "https://idp.example.com/sso", preventDefault: vi.fn() };
+    wc.emit("will-navigate", e, e.url);
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith("https://idp.example.com/sso");
+  });
+
+  /** A page navigation to `url`: `did-start-navigation`, then `will-navigate` (Electron's order). */
+  function pageNavigates(wc: ReturnType<typeof fakeWebContents>, url: string) {
+    wc.emit("did-start-navigation", { url, isMainFrame: true, isSameDocument: false }, url);
+    wc.emit("will-navigate", { url, preventDefault: vi.fn() }, url);
+  }
+
+  /** A shell load (`loadURL`, `reload`): `did-start-navigation` without `will-navigate`. */
+  function shellLoads(wc: ReturnType<typeof fakeWebContents>, url: string) {
+    wc.emit("did-start-navigation", { url, isMainFrame: true, isSameDocument: false }, url);
+  }
+
+  function redirect(wc: ReturnType<typeof fakeWebContents>, url: string, isMainFrame = true) {
+    const e = { url, isMainFrame, preventDefault: vi.fn() };
+    wc.emit("will-redirect", e, url, false, isMainFrame);
+    return e;
+  }
+
+  test("will-redirect likewise", () => {
+    const { wc, openExternal } = hardened();
+    pageNavigates(wc, `${ORIGIN}/api/v1/connectors/c1/oauth/start`);
+    const e = redirect(wc, "https://github.com/login/oauth/authorize?state=s");
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=s");
+  });
+
+  test("a shell load keeps following redirects to another origin (an identity-aware proxy)", () => {
+    const { wc, openExternal } = hardened();
+    shellLoads(wc, `${ORIGIN}/`);
+    const e = redirect(wc, "https://sso.example.com/login?next=x");
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+    // Still over http(s) only.
+    expect(redirect(wc, "file:///etc/passwd").preventDefault).toHaveBeenCalled();
+  });
+
+  test("the shell load after a page navigation is the shell's again", () => {
+    const { wc, openExternal } = hardened();
+    pageNavigates(wc, `${ORIGIN}/connectors`);
+    shellLoads(wc, `${ORIGIN}/`);
+    expect(redirect(wc, "https://sso.example.com/").preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("a page navigation stopped by another listener does not mark the next shell load", () => {
+    const { wc, openExternal } = hardened();
+    // The page's /login navigation, stopped (the session watch), then the shell loads a page.
+    pageNavigates(wc, `${ORIGIN}/login`);
+    shellLoads(wc, `${ORIGIN}/`);
+    expect(redirect(wc, "https://sso.example.com/").preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("a will-navigate that is not the navigation just started marks nothing", () => {
+    const { wc, openExternal } = hardened();
+    shellLoads(wc, `${ORIGIN}/`);
+    wc.emit("will-navigate", { url: `${ORIGIN}/x`, preventDefault: vi.fn() }, `${ORIGIN}/x`);
+    expect(redirect(wc, "https://sso.example.com/").preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("a same-document or subframe start does not change who started the navigation", () => {
+    const { wc, openExternal } = hardened();
+    pageNavigates(wc, `${ORIGIN}/oauth/start`);
+    wc.emit(
+      "did-start-navigation",
+      { url: `${ORIGIN}/oauth/start#x`, isMainFrame: true, isSameDocument: true },
+      `${ORIGIN}/oauth/start#x`,
+    );
+    wc.emit(
+      "did-start-navigation",
+      { url: "https://cdn.example.net/x", isMainFrame: false, isSameDocument: false },
+      "https://cdn.example.net/x",
+    );
+    expect(redirect(wc, "https://github.com/x").preventDefault).toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith("https://github.com/x");
+  });
+
+  test("same-origin navigation stays", () => {
+    const { wc, openExternal } = hardened();
+    const nav = { url: `${ORIGIN}/login?returnTo=%2F`, preventDefault: vi.fn() };
+    wc.emit(
+      "did-start-navigation",
+      { url: nav.url, isMainFrame: true, isSameDocument: false },
+      nav.url,
+    );
+    wc.emit("will-navigate", nav, nav.url);
+    // A server redirect within the origin (sign-out, the session's own pages).
+    const hop = redirect(wc, `${ORIGIN}/`);
+    expect(nav.preventDefault).not.toHaveBeenCalled();
+    expect(hop.preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("javascript: is prevented and not opened", () => {
+    const { wc, openExternal } = hardened();
+    for (const url of ["javascript:alert(1)", "file:///etc/passwd", "capybara://auth/callback"]) {
+      const e = { url, preventDefault: vi.fn() };
+      wc.emit("will-navigate", e, url);
+      expect(e.preventDefault).toHaveBeenCalled();
+    }
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test("a subframe's redirect to another origin stays in the frame, over http(s) only", () => {
+    const { wc, openExternal } = hardened();
+    const embed = { url: "https://cdn.example.net/x", isMainFrame: false, preventDefault: vi.fn() };
+    wc.emit("will-redirect", embed, embed.url, false, false);
+    expect(embed.preventDefault).not.toHaveBeenCalled();
+    const bad = { url: "file:///etc/passwd", isMainFrame: false, preventDefault: vi.fn() };
+    wc.emit("will-redirect", bad, bad.url, false, false);
+    expect(bad.preventDefault).toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   test("<webview> is never attached", () => {

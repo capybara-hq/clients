@@ -317,6 +317,27 @@ describe("init", () => {
     });
   });
 
+  test("data fields of an offered capability reach the init; a hidden one's do not", () => {
+    let available = true;
+    const b = bridgeFor();
+    b.registerCapability(
+      "example@1",
+      { run: async () => undefined },
+      { fields: { side: "left" }, available: () => available },
+    );
+    expect(b.handleInit(topEvent())).toMatchObject({ fields: { "example@1": { side: "left" } } });
+    available = false;
+    expect(b.handleInit(topEvent())).not.toHaveProperty("fields");
+    expect(b.describeFields(profile)).toEqual({});
+  });
+
+  test("a field named like a function is refused at registration", () => {
+    const b = bridgeFor();
+    expect(() =>
+      b.registerCapability("example@1", { run: async () => undefined }, { fields: { run: "x" } }),
+    ).toThrow(/both a field/);
+  });
+
   test("a sub-frame, another origin or an unknown window gets null", () => {
     const b = bridgeFor();
     expect(

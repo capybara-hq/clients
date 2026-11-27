@@ -183,6 +183,12 @@ describe("applyBrand --check", () => {
       'android:scheme="capybara"',
     ],
     [
+      "a literal scheme in the open links' filter",
+      "android/app/src/main/AndroidManifest.xml",
+      /android:scheme="\$\{brandScheme\}" android:host="open"/,
+      'android:scheme="capybara" android:host="open"',
+    ],
+    [
       "a literal application id",
       "android/app/build.gradle",
       /applicationId brandProperties\.getProperty\("applicationId"\)/,

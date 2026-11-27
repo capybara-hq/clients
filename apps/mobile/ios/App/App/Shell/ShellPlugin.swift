@@ -39,6 +39,7 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "navSet", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pushDeleteRegistration", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "currentUrl", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeAppUrl", returnType: CAPPluginReturnPromise),
     ]
 
     private let http = HttpGetter()
@@ -50,9 +51,17 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
     private var touchable: NSKeyValueObservation?
     #endif
     @MainActor private var auth: AuthSession?
+    /// The last `open` link received and not yet taken (src/runtime/open-link.ts); main queue only.
+    private var pendingAppUrl: String?
 
-    #if DEBUG
     override public func load() {
+        // `<scheme>://open?url=` links the scene receives (a cold start's link arrives once plugins
+        // are loaded, CAPSceneDelegateProxy): the last one is kept for `takeAppUrl` and announced
+        // as `appUrlOpen` (src/runtime/open-link.ts decides where it leads). Sign-in callbacks
+        // never come this way: ASWebAuthenticationSession hands them back itself.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(openedURL(_:)), name: .capacitorOpenURL, object: nil)
+        #if DEBUG
         // From the start, not with the first profile: the address page is up before any profile
         // WebView, and its UI test waits for touches too. Changes only: the launch splash (shown
         // after every plugin's load) turns touches off, then on again once it is gone.
@@ -60,8 +69,29 @@ public class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         touchable = view.observe(\.isUserInteractionEnabled, options: [.new]) { view, _ in
             log.log(["event": "touchable", "enabled": view.isUserInteractionEnabled])
         }
+        #endif
     }
-    #endif
+
+    @objc private func openedURL(_ notification: Notification) {
+        guard let object = notification.object as? [String: Any], let url = object["url"] as? URL,
+              let scheme = ShellPlugin.brandScheme, url.scheme?.lowercased() == scheme,
+              url.host?.lowercased() == "open"
+        else { return }
+        let link = url.absoluteString
+        DispatchQueue.main.async {
+            self.pendingAppUrl = link
+            self.notifyListeners("appUrlOpen", data: [:])
+        }
+    }
+
+    /// `{ url }` of the last `open` link not yet taken, then forgets it; `{}` when there is none.
+    @objc func takeAppUrl(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let link = self.pendingAppUrl
+            self.pendingAppUrl = nil
+            call.resolve(link.map { ["url": $0] } ?? [:])
+        }
+    }
 
     @MainActor private func profileHost() -> ProfileHost? {
         if let host { return host }

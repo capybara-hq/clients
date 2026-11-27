@@ -66,6 +66,8 @@ async function readOrNull(path: string): Promise<string | null> {
 const PBXPROJ = "ios/App/App.xcodeproj/project.pbxproj";
 const INFO_PLIST = "ios/App/App/Info.plist";
 const MANIFEST = "android/app/src/main/AndroidManifest.xml";
+/** The manifest placeholder Gradle fills from brand.properties (build.gradle). */
+const MANIFEST_SCHEME = /^\$\{brandScheme\}$/;
 const GRADLE = "android/app/build.gradle";
 const PUSH_ENTITLEMENTS_NAME = "Push.entitlements";
 const PUSH_ENTITLEMENTS = `ios/App/${PUSH_ENTITLEMENTS_NAME}`;
@@ -101,7 +103,13 @@ async function consumptionDrift(root: string, b: Brand): Promise<string[]> {
   }
 
   const manifest = await text(MANIFEST);
-  if (!manifest.includes(`android:scheme="\${brandScheme}"`) || literals(manifest)) {
+  // Every scheme of the manifest's intent filters reads the generated value.
+  const schemes = [...manifest.matchAll(/android:scheme="([^"]*)"/g)].map((m) => m[1]);
+  if (
+    schemes.length === 0 ||
+    schemes.some((s) => !MANIFEST_SCHEME.test(s ?? "")) ||
+    literals(manifest)
+  ) {
     drift.push(MANIFEST);
   }
 

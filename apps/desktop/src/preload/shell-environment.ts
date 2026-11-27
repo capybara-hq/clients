@@ -25,7 +25,21 @@ function isShellInit(v: unknown): v is ShellInit {
     r.insets !== null &&
     (r.controls === null || typeof r.controls === "object") &&
     isDescriptors(caps) &&
-    (r.events === undefined || isDescriptors(r.events))
+    (r.events === undefined || isDescriptors(r.events)) &&
+    (r.fields === undefined || isFields(r.fields))
+  );
+}
+
+/** Key -> data fields whose values are primitives (the installer drops anything else, too). */
+function isFields(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  return Object.values(v).every(
+    (fields) =>
+      typeof fields === "object" &&
+      fields !== null &&
+      Object.values(fields).every(
+        (x) => x === null || ["string", "number", "boolean"].includes(typeof x),
+      ),
   );
 }
 
@@ -75,7 +89,7 @@ export interface ShellPreloadDeps {
 /**
  * Installs the Shell environment when this document is the top frame and main answers for the
  * same origin the document is on. Returns whether it installed. Runs again for every document,
- * so an OAuth round trip off the origin and back is re-checked on each load.
+ * so each load is re-checked (the top frame never leaves the origin, security.ts).
  */
 export function bootShellPreload(deps: ShellPreloadDeps): boolean {
   if (!deps.isTopFrame) return false;

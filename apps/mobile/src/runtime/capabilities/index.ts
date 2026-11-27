@@ -27,6 +27,8 @@ export interface MobileCapabilityPorts<P extends ProfileRef> {
   share: SharePort;
   menu: MenuHostPort;
   openExternal: OpenExternalPort;
+  /** The brand's URL scheme: openExternal@1's `returnScheme`. */
+  returnScheme?: string;
   /** The platform the runtime runs on: nav@1 exists only on iOS. */
   platform?: "ios" | "android";
   /** `createNav(...)`: offered on iOS while the window has a strip. */
@@ -44,6 +46,11 @@ export function registerMobileCapabilities<P extends ProfileRef>(
   registry.register(HAPTICS_KEY, createHapticsCapability(ports.haptics));
   registry.register(SHARE_KEY, createShareCapability(ports.share));
   registry.register(MENU_KEY, createMenuCapability(ports.menu));
-  registry.register(OPEN_EXTERNAL_KEY, createOpenExternalCapability(ports.openExternal));
+  registry.register(
+    OPEN_EXTERNAL_KEY,
+    createOpenExternalCapability(ports.openExternal, {
+      ...(ports.returnScheme !== undefined ? { returnScheme: ports.returnScheme } : {}),
+    }),
+  );
   if (ports.nav && ports.platform) registerNav(registry, ports.platform, ports.nav);
 }
