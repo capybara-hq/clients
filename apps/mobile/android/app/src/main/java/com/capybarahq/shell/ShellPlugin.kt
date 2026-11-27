@@ -44,12 +44,23 @@ class ShellPlugin : Plugin(), ProfileWebView.Sink {
         main.post { host?.sink = this }
     }
 
+    /** The last `open` link received and not yet taken (src/runtime/open-link.ts). */
+    @Volatile private var pendingAppUrl: String? = null
+
     /**
-     * A link of the brand's scheme (MainActivity, AppLinks): `appUrlOpen`, held until the runtime
-     * listens, which decides where it leads (src/runtime/open-link.ts).
+     * An `open` link of the brand's scheme (MainActivity, AppLinks): kept as the only pending one
+     * and announced as `appUrlOpen`; the runtime takes it and decides where it leads.
      */
     fun appUrlOpened(url: String) {
-        notifyListeners("appUrlOpen", JSObject().put("url", url), true)
+        synchronized(this) { pendingAppUrl = url }
+        notifyListeners("appUrlOpen", JSObject())
+    }
+
+    /** `{ url }` of the last `open` link not yet taken, then forgets it; `{}` when there is none. */
+    @PluginMethod
+    fun takeAppUrl(call: PluginCall) {
+        val link = synchronized(this) { pendingAppUrl.also { pendingAppUrl = null } }
+        call.resolve(if (link == null) JSObject() else JSObject().put("url", link))
     }
 
     @PluginMethod
