@@ -317,6 +317,12 @@ test("a redirect hop to another origin goes to the system browser; the window st
   const hop = peer.requests.find((r) => r.path === "/ua");
   expect(hop?.userAgent).not.toMatch(/Capybara Desktop/);
   expect(hop?.userAgent).toMatch(/Chrome\//);
+  // A load the page did not start (here CDP's, like the shell's own loadURL) still follows a
+  // redirect to another origin: a deployment behind an identity-aware proxy keeps loading.
+  const opened = (await openedUrls()).length;
+  await page.goto(`${fake.base}/hop?to=${encodeURIComponent(peer.base)}`);
+  await expect(page).toHaveURL(`${peer.base}/ua`);
+  expect(await openedUrls()).toHaveLength(opened);
 });
 
 /** The window on `url`, polled (a re-shown small window raises no `window` event). */
