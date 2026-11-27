@@ -6,6 +6,8 @@
 import type { ShellCallError } from "@capybara-hq/plugin-sdk";
 import {
   type CapabilityDescriptors,
+  type CapabilityFields,
+  type CapabilityFieldValue,
   type Controls,
   DOC_ID_PATTERN,
   type Insets,
@@ -106,6 +108,11 @@ export interface CapabilityOptions<C = CallContext> {
   available?: (profile: Profile) => boolean;
   /** Event names and their sources; the page gets a subscribe function for each. */
   events?: Record<string, EventSource<C>>;
+  /**
+   * Data fields of the capability object (`openExternal@1`'s `returnScheme`): primitives the shell
+   * decides. A field named like a function or an event is refused at registration.
+   */
+  fields?: Record<string, CapabilityFieldValue>;
 }
 
 interface Registered<C> {
@@ -114,6 +121,7 @@ interface Registered<C> {
   confirming: Set<string>;
   activation: Set<string>;
   available: (profile: Profile) => boolean;
+  fields: Record<string, CapabilityFieldValue>;
 }
 
 export interface ShellBridgeDeps<C extends CallContext> {
@@ -222,6 +230,15 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
     return out;
   }
 
+  function describeFields(profile: Profile): CapabilityFields {
+    const out: CapabilityFields = {};
+    for (const [key, reg] of registry) {
+      if (Object.keys(reg.fields).length > 0 && reg.available(profile))
+        out[key] = { ...reg.fields };
+    }
+    return out;
+  }
+
   function describeEvents(profile: Profile): CapabilityDescriptors {
     const out: CapabilityDescriptors = {};
     for (const [key, reg] of registry) {
@@ -253,17 +270,25 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
       for (const name of [...confirming, ...activation]) {
         if (!fns.has(name)) throw new Error(`${key}.${name} is not a function of the capability`);
       }
+      const fields = { ...(opts.fields ?? {}) };
+      for (const name of Object.keys(fields)) {
+        if (fns.has(name) || events.has(name)) {
+          throw new Error(`${key}.${name} is both a field and a function or event`);
+        }
+      }
       registry.set(key, {
         fns,
         events,
         confirming,
         activation,
         available: opts.available ?? (() => true),
+        fields,
       });
     },
 
     describe,
     describeEvents,
+    describeFields,
     dropSubscriptions,
     pruneSubscriptions,
 
@@ -272,6 +297,7 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
       const t = target(event);
       if (!t) return null;
       const events = describeEvents(t.profile);
+      const fields = describeFields(t.profile);
       return {
         origin: t.profile.origin,
         platform: deps.platform,
@@ -279,6 +305,7 @@ export function createShellBridge<C extends CallContext>(deps: ShellBridgeDeps<C
         ...deps.stateFor(t),
         capabilities: describe(t.profile),
         ...(Object.keys(events).length > 0 ? { events } : {}),
+        ...(Object.keys(fields).length > 0 ? { fields } : {}),
       };
     },
 

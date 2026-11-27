@@ -12,7 +12,7 @@ import {
   type Tokens,
   validTokens,
 } from "./appearance.ts";
-import type { CallContext } from "./ipc.ts";
+import type { CallContext, CapabilityOptions } from "./ipc.ts";
 import type { Profile } from "./profiles.ts";
 
 const failed = () => ({ code: "failed" as const });
@@ -78,6 +78,15 @@ export function createOpenExternalCapability(deps: { openExternal(url: string): 
       await deps.openExternal(u.href);
     },
   };
+}
+
+/**
+ * openExternal@1's registration options: `returnScheme`, the app's own scheme (the one in its
+ * `<scheme>://auth/callback`), so the web can ask for a handoff that comes back to the app (shell
+ * external authorization spec §5).
+ */
+export function openExternalOptions(returnScheme: string): CapabilityOptions {
+  return { fields: { returnScheme } };
 }
 
 export interface ChromeContext extends CallContext {

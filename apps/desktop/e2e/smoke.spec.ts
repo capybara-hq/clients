@@ -295,19 +295,28 @@ test("a replayed callback does nothing", async () => {
   expect(fake.accepted).toBe(2);
 });
 
-test("a redirect hop to another origin gets Chromium's user agent and no shell", async () => {
+test("a redirect hop to another origin goes to the system browser; the window stays", async () => {
+  const before = page.url();
   await page.locator("#hop").click();
-  await expect(page).toHaveURL(`${peer.base}/ua`);
-  await expect.poll(() => peer.requests.some((r) => r.path === "/ua")).toBe(true);
-  const hop = peer.requests.find((r) => r.path === "/ua");
-  expect(hop?.userAgent).not.toMatch(/Capybara Desktop/);
-  expect(hop?.userAgent).toMatch(/Chrome\//);
-  // Off the profile's origin: the Shell environment is not installed.
+  // The main frame never leaves the profile's origin: the hop's target opens in the browser.
+  await expect.poll(openedUrls).toContain(`${peer.base}/ua`);
+  expect(page.url()).toBe(before);
+  expect(peer.requests.some((r) => r.path === "/ua")).toBe(false);
   expect(
     await page.evaluate(
       () => typeof (window as unknown as { capybaraShell: PageShell }).capybaraShell,
     ),
-  ).toBe("undefined");
+  ).toBe("object");
+  // A request of the page that hops to another origin gets Chromium's own user agent there.
+  await page.evaluate(
+    (peerBase) =>
+      fetch(`/hop?to=${encodeURIComponent(peerBase)}`, { mode: "no-cors" }).then(() => undefined),
+    peer.base,
+  );
+  await expect.poll(() => peer.requests.some((r) => r.path === "/ua")).toBe(true);
+  const hop = peer.requests.find((r) => r.path === "/ua");
+  expect(hop?.userAgent).not.toMatch(/Capybara Desktop/);
+  expect(hop?.userAgent).toMatch(/Chrome\//);
 });
 
 /** The window on `url`, polled (a re-shown small window raises no `window` event). */
@@ -341,7 +350,6 @@ async function expectSignedOut(): Promise<Page> {
 }
 
 test("the web's own sign-out ends in the small window's signed-out page", async () => {
-  // Back on the deployment (the previous test hopped to the peer).
   await page.goto(`${fake.base}/`);
   await expect(page.locator("#auth")).toHaveText("signed-in:Fake Person");
   // The web's 「退出登录」: POST /api/v1/auth/logout (seen on the partition), then /login.

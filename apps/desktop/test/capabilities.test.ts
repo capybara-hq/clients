@@ -4,7 +4,9 @@ import {
   createChromeCapability,
   createNotifyCapability,
   createOpenExternalCapability,
+  openExternalOptions,
 } from "../src/main/capabilities.ts";
+import { createShellBridge } from "../src/main/ipc.ts";
 import type { Profile } from "../src/main/profiles.ts";
 import type { Appearance } from "../src/shared/appearance.ts";
 
@@ -132,6 +134,26 @@ describe("openExternal@1", () => {
       await expect(cap.open(ctx(), url)).rejects.toEqual({ code: "failed" });
     }
     expect(openExternal).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("openExternal@1 returnScheme", () => {
+  test("openExternal@1 exposes returnScheme", () => {
+    const bridge = createShellBridge({
+      resolveSender: () => ({ profile }),
+      stateFor: () => ({ insets: { top: 0, right: 0, bottom: 0, left: 0 }, controls: null }),
+      platform: "macos",
+      shellVersion: "1.2.3",
+    });
+    bridge.registerCapability(
+      "openExternal@1",
+      createOpenExternalCapability({ openExternal: async () => undefined }),
+      openExternalOptions("capybara"),
+    );
+    expect(bridge.describe(profile)).toEqual({ "openExternal@1": ["open"] });
+    expect(bridge.describeFields(profile)).toEqual({
+      "openExternal@1": { returnScheme: "capybara" },
+    });
   });
 });
 

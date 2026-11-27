@@ -125,10 +125,27 @@ function parse(url: string): URL | null {
   }
 }
 
-/** Top-level navigation may leave the origin (connector OAuth), over http(s) only. */
+/** A subframe may navigate over http(s) only (an embed of another origin keeps working). */
 export function isNavigationAllowed(url: string): boolean {
   const u = parse(url);
   return u !== null && isHttp(u);
+}
+
+export type NavigationDecision =
+  | { kind: "stay" }
+  | { kind: "external"; url: string }
+  | { kind: "refuse" };
+
+/**
+ * The top frame of a profile window never leaves its origin (shell external authorization spec
+ * §5): the same origin stays; another http(s) origin is stopped and goes to the system browser
+ * (connector OAuth and login linking finish there); everything else is stopped and opens nothing.
+ */
+export function decideTopNavigation(url: string, profileOrigin: string): NavigationDecision {
+  const u = parse(url);
+  if (!u || !isHttp(u)) return { kind: "refuse" };
+  if (u.origin === profileOrigin) return { kind: "stay" };
+  return { kind: "external", url: u.href };
 }
 
 export type WindowOpenDecision =
@@ -147,7 +164,7 @@ export function decideWindowOpen(url: string, profileOrigin: string): WindowOpen
   return { kind: "external", url: u.href };
 }
 
-type Prevented = { preventDefault(): void; url?: string };
+type Prevented = { preventDefault(): void; url?: string; isMainFrame?: boolean };
 
 export interface ContentsLike {
   // biome-ignore lint/suspicious/noExplicitAny: Electron's event listeners are overloaded per event.
@@ -174,11 +191,22 @@ export function hardenProfileContents(
   },
 ): void {
   hardenAnyContents(wc);
-  const httpOnly = (e: Prevented, url: unknown) => {
-    if (!isNavigationAllowed(navigationUrl(e, url))) e.preventDefault();
+  const topFrame = (e: Prevented, target: string) => {
+    const d = decideTopNavigation(target, o.origin);
+    if (d.kind === "stay") return;
+    e.preventDefault();
+    if (d.kind === "external") o.openExternal(d.url);
   };
-  wc.on("will-navigate", httpOnly);
-  wc.on("will-redirect", httpOnly);
+  // `will-navigate` is the main frame's only.
+  wc.on("will-navigate", (e: Prevented, url: unknown) => topFrame(e, navigationUrl(e, url)));
+  // `will-redirect` fires for subframes too (`isMainFrame`, also the deprecated fourth argument):
+  // an embed's redirect keeps the http(s) rule; the main frame's is held to the origin.
+  wc.on("will-redirect", (e: Prevented, url: unknown, _inPlace: unknown, mainFrame: unknown) => {
+    const target = navigationUrl(e, url);
+    const isMain = typeof e.isMainFrame === "boolean" ? e.isMainFrame : mainFrame !== false;
+    if (isMain) topFrame(e, target);
+    else if (!isNavigationAllowed(target)) e.preventDefault();
+  });
   wc.setWindowOpenHandler(({ url }) => {
     const d = decideWindowOpen(url, o.origin);
     if (d.kind === "profile") o.openProfileWindow(d.url);

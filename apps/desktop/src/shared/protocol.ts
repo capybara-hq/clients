@@ -1,6 +1,7 @@
 // The IPC protocol between the main process and the preloads, plus the desktop's Shell
 // environment values. Shared by main and preload code; no Electron imports.
 import type { CapybaraShell, ShellCallError } from "@capybara-hq/plugin-sdk";
+import type { CapabilityFields, CapabilityFieldValue } from "@capybara-hq/shell/install-shell";
 
 /** Channels of the deployment window's preload (the Shell environment). */
 export const SHELL_CHANNELS = {
@@ -48,6 +49,9 @@ export type ShellPlatform = "macos" | "windows" | "linux";
 /** Key → function names; the preload builds callers from this list and nothing else. */
 export type CapabilityDescriptors = Record<string, string[]>;
 
+/** Key → data fields set on a capability's object (`openExternal@1`'s `returnScheme`). */
+export type { CapabilityFields, CapabilityFieldValue };
+
 export interface ShellState {
   insets: Insets;
   controls: Controls | null;
@@ -57,6 +61,8 @@ export interface ShellState {
    * returns an unsubscribe. Absent when no capability offered has events.
    */
   events?: CapabilityDescriptors;
+  /** Key → data fields of an offered capability. Absent when no offered capability has any. */
+  fields?: CapabilityFields;
 }
 
 export interface ShellInit extends ShellState {

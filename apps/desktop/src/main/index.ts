@@ -43,6 +43,7 @@ import {
   createNotifyCapability,
   createOpenExternalCapability,
   type NotificationClass,
+  openExternalOptions,
 } from "./capabilities.ts";
 import {
   createDeepLinkHandlers,
@@ -240,6 +241,7 @@ function start(): void {
       openExternal: (url) => shell.openExternal(url),
       describe: (profile) => bridge.describe(profile),
       describeEvents: (profile) => bridge.describeEvents(profile),
+      describeFields: (profile) => bridge.describeFields(profile),
       onProfileClosed: (id) => bridge.dropSubscriptions(id),
       // The menus mark the platforms with an open window.
       onProfileWindowsChanged: () => ui.stateChanged(),
@@ -288,6 +290,7 @@ function start(): void {
     bridge.registerCapability(
       SHELL_CAPABILITY_KEYS.openExternal,
       createOpenExternalCapability({ openExternal: (url) => shell.openExternal(url) }),
+      openExternalOptions(brand.scheme),
     );
     bridge.registerCapability(
       CHROME_CAPABILITY_KEY,

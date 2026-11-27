@@ -609,6 +609,19 @@ describe("capability events", () => {
     );
   });
 
+  test("change carries the data fields when there are any", () => {
+    const { windows, created } = setup({
+      describe: () => ({ "openExternal@1": ["open"] }),
+      describeFields: () => ({ "openExternal@1": { returnScheme: "capybara" } }),
+    });
+    windows.openProfileWindow(p1);
+    windows.broadcastChange(p1.id);
+    expect(created[0]?.webContents.send).toHaveBeenLastCalledWith(
+      SHELL_CHANNELS.change,
+      expect.objectContaining({ fields: { "openExternal@1": { returnScheme: "capybara" } } }),
+    );
+  });
+
   test("an event goes only to a window still on the profile origin", () => {
     const { windows, created } = setup();
     const win = windows.openProfileWindow(p1);
