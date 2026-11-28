@@ -84,6 +84,7 @@ export interface TrayLike {
   setToolTip(text: string): void;
   setContextMenu(menu: unknown): void;
   setTitle?(title: string): void;
+  setImage?(image: unknown): void;
   on(event: "click", listener: () => void): unknown;
   destroy(): void;
 }
@@ -111,6 +112,10 @@ export function createTrayController(deps: TrayDeps) {
       tray.setToolTip(deps.tooltip);
       tray.setTitle?.(deps.fallbackTitle ?? "");
       tray.setContextMenu(deps.buildMenu(trayMenuModel(state, deps.actions)));
+    },
+    /** Swaps the icon of a tray that exists (a theme change); a later tray takes it from createTray. */
+    setImage(image: unknown): void {
+      tray?.setImage?.(image);
     },
     destroy(): void {
       tray?.destroy();

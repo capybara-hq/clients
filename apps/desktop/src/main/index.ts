@@ -154,9 +154,11 @@ function start(): void {
     const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
     // Windows and Linux take the taskbar icon from the window: without it an unpackaged run shows
     // electron.exe's icon. macOS uses the bundle's (or, unpackaged, the Dock icon set below).
+    // The flat glyph, no tile: Windows and Linux draw app icons without the macOS backplate. The
+    // .ico carries pixel-exact sizes from 16 to 256.
     const windowIcon = (() => {
       if (platform === "macos") return undefined;
-      const file = iconFile("icon.png");
+      const file = iconFile(platform === "windows" ? "icon.ico" : "icon-flat.png");
       return fs.existsSync(file) ? nativeImage.createFromPath(file) : undefined;
     })();
     const withIcon = <T extends object>(options: T): T =>
@@ -655,29 +657,32 @@ function start(): void {
     };
     // trayTemplate.png (22 px) and trayTemplate@2x.png (44 px): macOS picks the @2x by itself and
     // shows either at 22 pt (the @1x size), the menu bar height; no resize.
-    const trayIcon = (() => {
-      // The black template image is a macOS menu-bar glyph; elsewhere the tray shows the app icon
-      // (16 px logical, 32 px for high-DPI scaling).
-      if (platform !== "macos" && windowIcon) {
-        return {
-          image: windowIcon.resize({ width: 32, height: 32, quality: "best" }),
-          found: true,
-        };
-      }
-      const file = iconFile("trayTemplate.png");
+    // macOS: the template glyph the menu bar tints. Elsewhere: the same glyph in one color against
+    // the taskbar (black on a light one, white on a dark one), swapped when the theme changes.
+    // name.png is 16 px, name@2x.png 32 px; Electron picks by the display scale.
+    const trayImage = (): { image: Electron.NativeImage; found: boolean } => {
+      const dark =
+        platform === "windows"
+          ? nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
+          : nativeTheme.shouldUseDarkColors;
+      const name =
+        platform === "macos" ? "trayTemplate.png" : dark ? "trayDark.png" : "trayLight.png";
+      const file = iconFile(name);
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
       const image = nativeImage.createFromPath(file);
-      image.setTemplateImage(true);
+      if (platform === "macos") image.setTemplateImage(true);
       return { image, found: true };
-    })();
+    };
+    const trayIcon = trayImage();
     const tray = createTrayController({
-      createTray: () => new Tray(trayIcon.image) as unknown as TrayLike,
+      createTray: () => new Tray(trayImage().image) as unknown as TrayLike,
       buildMenu: (template) => Menu.buildFromTemplate(template as unknown as never),
       tooltip: brand.productName,
       // Without the tray icon file the tray shows the name instead of an invisible image.
       ...(trayIcon.found ? {} : { fallbackTitle: brand.productName }),
       actions: uiActions,
     });
+    if (platform !== "macos") nativeTheme.on("updated", () => tray.setImage(trayImage().image));
     const dockIcon = createDockIcon({
       fetch: net.fetch as typeof fetch,
       setIcon: (png) => {
