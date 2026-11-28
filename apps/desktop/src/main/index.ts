@@ -126,6 +126,9 @@ function start(): void {
   const dist = join(__dirname, "..");
   const platform = platformFrom(process.platform);
   const shellVersion = app.getVersion();
+  // Windows groups taskbar buttons (and attributes notifications) by this id; unpackaged it would
+  // be Electron's own.
+  if (process.platform === "win32") app.setAppUserModelId(brand.appId);
 
   // Before `ready`: a macOS `open-url` that launched the app must not be lost; links wait in a
   // queue until the router exists. A development run registers the interpreter and the app path.
@@ -148,6 +151,16 @@ function start(): void {
   });
 
   app.whenReady().then(() => {
+    const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
+    // Windows and Linux take the taskbar icon from the window: without it an unpackaged run shows
+    // electron.exe's icon. macOS uses the bundle's (or, unpackaged, the Dock icon set below).
+    const windowIcon = (() => {
+      if (platform === "macos") return undefined;
+      const file = iconFile("icon.png");
+      return fs.existsSync(file) ? nativeImage.createFromPath(file) : undefined;
+    })();
+    const withIcon = <T extends object>(options: T): T =>
+      windowIcon ? { ...options, icon: windowIcon } : options;
     // Managed preferences (MDM): read once at start; a missing or malformed file is `{}`.
     const managed = readManagedConfig({
       appId: brand.appId,
@@ -230,7 +243,7 @@ function start(): void {
       createWindow: (options) =>
         // `parent` is typed unknown in the window module: it is always a BrowserWindow here.
         new BrowserWindow(
-          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+          withIcon(options) as unknown as ConstructorParameters<typeof BrowserWindow>[0],
         ) as unknown as WindowLike,
       sessionFor: (partition) => session.fromPartition(partition) as unknown as ProfileSession,
       preloadPath: join(dist, "preload", "index.cjs"),
@@ -360,7 +373,7 @@ function start(): void {
     const shellDialogs = createShellDialogs({
       createWindow: (options) =>
         new BrowserWindow(
-          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+          withIcon(options) as unknown as ConstructorParameters<typeof BrowserWindow>[0],
         ) as unknown as DialogWindow,
       localPages,
       preloadPath: join(dist, "preload", "local.cjs"),
@@ -640,10 +653,17 @@ function start(): void {
         ui.stateChanged();
       },
     };
-    const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
     // trayTemplate.png (22 px) and trayTemplate@2x.png (44 px): macOS picks the @2x by itself and
     // shows either at 22 pt (the @1x size), the menu bar height; no resize.
     const trayIcon = (() => {
+      // The black template image is a macOS menu-bar glyph; elsewhere the tray shows the app icon
+      // (16 px logical, 32 px for high-DPI scaling).
+      if (platform !== "macos" && windowIcon) {
+        return {
+          image: windowIcon.resize({ width: 32, height: 32, quality: "best" }),
+          found: true,
+        };
+      }
       const file = iconFile("trayTemplate.png");
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
       const image = nativeImage.createFromPath(file);
