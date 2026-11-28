@@ -29,7 +29,7 @@ import {
 import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
-import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
+import { APP_SCHEME, platformFrom } from "../shared/protocol.ts";
 import {
   appMenuTemplate,
   createStartAtLogin,
@@ -37,7 +37,7 @@ import {
   platformMenuTemplate,
 } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
-import { backgroundOf, overlayColors, resolveAppearance } from "./appearance.ts";
+import { backgroundOf, mainOverlayColors, overlayColors, resolveAppearance } from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -100,6 +100,7 @@ import {
   type ProfileTarget,
   smallWindowControls,
   type WindowLike,
+  windowChromeState,
 } from "./windows.ts";
 
 // Before `ready`: app:// is a standard, secure scheme so the local pages have a real origin.
@@ -125,6 +126,9 @@ function start(): void {
   const dist = join(__dirname, "..");
   const platform = platformFrom(process.platform);
   const shellVersion = app.getVersion();
+  // Windows groups taskbar buttons (and attributes notifications) by this id; unpackaged it would
+  // be Electron's own.
+  if (process.platform === "win32") app.setAppUserModelId(brand.appId);
 
   // Before `ready`: a macOS `open-url` that launched the app must not be lost; links wait in a
   // queue until the router exists. A development run registers the interpreter and the app path.
@@ -147,6 +151,18 @@ function start(): void {
   });
 
   app.whenReady().then(() => {
+    const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
+    // Windows and Linux take the taskbar icon from the window: without it an unpackaged run shows
+    // electron.exe's icon. macOS uses the bundle's (or, unpackaged, the Dock icon set below).
+    // The flat glyph, no tile: Windows and Linux draw app icons without the macOS backplate. The
+    // .ico carries pixel-exact sizes from 16 to 256.
+    const windowIcon = (() => {
+      if (platform === "macos") return undefined;
+      const file = iconFile(platform === "windows" ? "icon.ico" : "icon-flat.png");
+      return fs.existsSync(file) ? nativeImage.createFromPath(file) : undefined;
+    })();
+    const withIcon = <T extends object>(options: T): T =>
+      windowIcon ? { ...options, icon: windowIcon } : options;
     // Managed preferences (MDM): read once at start; a missing or malformed file is `{}`.
     const managed = readManagedConfig({
       appId: brand.appId,
@@ -219,7 +235,7 @@ function start(): void {
     const bridge = createShellBridge<ProfileTarget>({
       gate: confirmGate,
       resolveSender: (sender) => windows.resolveSender(sender),
-      stateFor: (target) => chromeState(platform, target.window.isFullScreen()),
+      stateFor: (target) => windowChromeState(platform, target.window),
       platform,
       shellVersion,
       sendEvent: (target, message) => windows.sendEvent(target, message),
@@ -229,7 +245,7 @@ function start(): void {
       createWindow: (options) =>
         // `parent` is typed unknown in the window module: it is always a BrowserWindow here.
         new BrowserWindow(
-          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+          withIcon(options) as unknown as ConstructorParameters<typeof BrowserWindow>[0],
         ) as unknown as WindowLike,
       sessionFor: (partition) => session.fromPartition(partition) as unknown as ProfileSession,
       preloadPath: join(dist, "preload", "index.cjs"),
@@ -262,6 +278,7 @@ function start(): void {
       // Only to each profile's own origin; the token exchange sets the same value itself.
       userAgent: desktopUserAgent(shellVersion, hostname()),
       backgroundColor: (profile) => backgroundOf(appearanceOf(profile)),
+      overlayColors: (profile) => mainOverlayColors(appearanceOf(profile)),
       // Spec §6.7: the main window opens where it was, else 1280×800 centered.
       displays: () => {
         const primary = screen.getPrimaryDisplay().id;
@@ -358,7 +375,7 @@ function start(): void {
     const shellDialogs = createShellDialogs({
       createWindow: (options) =>
         new BrowserWindow(
-          options as unknown as ConstructorParameters<typeof BrowserWindow>[0],
+          withIcon(options) as unknown as ConstructorParameters<typeof BrowserWindow>[0],
         ) as unknown as DialogWindow,
       localPages,
       preloadPath: join(dist, "preload", "local.cjs"),
@@ -613,7 +630,7 @@ function start(): void {
           ...(iconUrl ? { iconUrl } : {}),
         };
       },
-      controls: (win) => chromeState(platform, win.isFullScreen?.() ?? false).controls,
+      controls: (win) => windowChromeState(platform, win).controls,
       background: (profile) => backgroundOf(appearanceOf(profile)),
       log: (message, err) => console.error(message, err ?? ""),
     });
@@ -638,16 +655,19 @@ function start(): void {
         ui.stateChanged();
       },
     };
-    const iconFile = (name: string) => join(app.getAppPath(), brand.icons, name);
     // trayTemplate.png (22 px) and trayTemplate@2x.png (44 px): macOS picks the @2x by itself and
     // shows either at 22 pt (the @1x size), the menu bar height; no resize.
-    const trayIcon = (() => {
-      const file = iconFile("trayTemplate.png");
+    // macOS: the template glyph the menu bar tints. Elsewhere: the same glyph in the brand orange,
+    // which reads on light and dark taskbars alike. name.png is 16 px, name@2x.png 32 px; Electron
+    // picks by the display scale.
+    const trayImage = (): { image: Electron.NativeImage; found: boolean } => {
+      const file = iconFile(platform === "macos" ? "trayTemplate.png" : "tray.png");
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
       const image = nativeImage.createFromPath(file);
-      image.setTemplateImage(true);
+      if (platform === "macos") image.setTemplateImage(true);
       return { image, found: true };
-    })();
+    };
+    const trayIcon = trayImage();
     const tray = createTrayController({
       createTray: () => new Tray(trayIcon.image) as unknown as TrayLike,
       buildMenu: (template) => Menu.buildFromTemplate(template as unknown as never),

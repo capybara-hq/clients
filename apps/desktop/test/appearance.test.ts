@@ -6,6 +6,7 @@ import {
   electronColor,
   isColor,
   isOpaque,
+  mainOverlayColors,
   overlayColors,
   resolveAppearance,
   type Tokens,
@@ -148,6 +149,15 @@ describe("electronColor", () => {
     expect(overlayColors(rgb)).toEqual({ color: "#010203", symbolColor: "#ffffff" });
     expect(overlayColors({ scheme: "light" })).toEqual({
       color: BUILTIN_TOKENS.light.bg,
+      symbolColor: BUILTIN_TOKENS.light.muted,
+    });
+  });
+
+  test("the main window's overlay is see-through, its symbols the muted color", () => {
+    const rgb: Appearance = { scheme: "dark", tokens: { ...TOKENS, bg: "rgb(1, 2, 3)" } };
+    expect(mainOverlayColors(rgb)).toEqual({ color: "rgba(0, 0, 0, 0)", symbolColor: "#ffffff" });
+    expect(mainOverlayColors({ scheme: "light" })).toEqual({
+      color: "rgba(0, 0, 0, 0)",
       symbolColor: BUILTIN_TOKENS.light.muted,
     });
   });

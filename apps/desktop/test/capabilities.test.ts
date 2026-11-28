@@ -246,8 +246,9 @@ describe("chrome@1", () => {
       singleScheme: true,
     });
     expect(c.window.setBackgroundColor).toHaveBeenCalledWith("#101418");
+    // The main window's overlay stays see-through: the web shows under the caption buttons.
     expect(c.window.setTitleBarOverlay).toHaveBeenCalledWith({
-      color: "#101418",
+      color: "rgba(0, 0, 0, 0)",
       symbolColor: "#8e8e89",
     });
     expect(onReport).toHaveBeenCalledWith(profile, {
