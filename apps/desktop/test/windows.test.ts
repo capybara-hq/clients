@@ -505,7 +505,7 @@ describe("the small window", () => {
 });
 
 describe("the main window's title bar", () => {
-  const colors = { color: "#FAF9F6", symbolColor: "#5E5E5A" };
+  const colors = { color: "rgba(0, 0, 0, 0)", symbolColor: "#5E5E5A" };
   test("macOS hides it with the lights in the top row; Windows and Linux draw a caption overlay", () => {
     expect(mainWindowChrome("macos", colors)).toEqual({
       titleBarStyle: "hidden",

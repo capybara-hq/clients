@@ -37,7 +37,7 @@ import {
   platformMenuTemplate,
 } from "./app-menu.ts";
 import { createAppProtocolHandler } from "./app-protocol.ts";
-import { backgroundOf, overlayColors, resolveAppearance } from "./appearance.ts";
+import { backgroundOf, mainOverlayColors, overlayColors, resolveAppearance } from "./appearance.ts";
 import {
   createChromeCapability,
   createNotifyCapability,
@@ -263,7 +263,7 @@ function start(): void {
       // Only to each profile's own origin; the token exchange sets the same value itself.
       userAgent: desktopUserAgent(shellVersion, hostname()),
       backgroundColor: (profile) => backgroundOf(appearanceOf(profile)),
-      overlayColors: (profile) => overlayColors(appearanceOf(profile)),
+      overlayColors: (profile) => mainOverlayColors(appearanceOf(profile)),
       // Spec §6.7: the main window opens where it was, else 1280×800 centered.
       displays: () => {
         const primary = screen.getPrimaryDisplay().id;

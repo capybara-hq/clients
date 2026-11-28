@@ -7,7 +7,7 @@ import {
   electronColor,
   isColor,
   isOpaque,
-  overlayColors,
+  mainOverlayColors,
   sameAppearance,
   type Tokens,
   validTokens,
@@ -140,7 +140,7 @@ export function createChromeCapability(deps: ChromeDeps = {}) {
       const bg = isOpaque(ground) ? electronColor(ground) : undefined;
       if (bg) ctx.window.setBackgroundColor(bg);
       try {
-        ctx.window.setTitleBarOverlay?.(overlayColors(appearance));
+        ctx.window.setTitleBarOverlay?.(mainOverlayColors(appearance));
       } catch {
         // No overlay on this window (macOS, or a window opened without one).
       }

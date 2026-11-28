@@ -113,9 +113,9 @@ export interface WindowOptions {
 export const SMALL_WINDOW_SIZE = { width: 480, height: 600 } as const;
 /** Windows / Linux: the small window's caption overlay height. */
 export const CAPTION_OVERLAY_HEIGHT = 32;
-/** The caption overlay's colors when no appearance is known: the light scheme's ground and muted. */
+/** The caption overlay's colors when no appearance is known: see-through, the light scheme's muted. */
 export const DEFAULT_OVERLAY_COLORS = {
-  color: BUILTIN_TOKENS.light.bg,
+  color: "rgba(0, 0, 0, 0)",
   symbolColor: BUILTIN_TOKENS.light.muted,
 } as const;
 /** A further window of a profile opens this far right and down of its first window. */
@@ -258,7 +258,7 @@ export interface WindowManagerDeps {
   userAgent: string;
   /** A window's ground before its page paints: the profile's appearance (desktop spec §6.10). */
   backgroundColor?: (profile: Profile) => string;
-  /** Windows / Linux: the caption overlay's colors for the profile's appearance. */
+  /** Windows / Linux: the caption overlay's colors for the profile's appearance (see-through). */
   overlayColors?: (profile: Profile) => { color: string; symbolColor: string };
   /** The displays' work areas, for the main window's first rectangle (`screen.getAllDisplays`). */
   displays?: () => DisplayInfo[];

@@ -73,6 +73,16 @@ export function overlayColors(appearance: Appearance): { color: string; symbolCo
   };
 }
 
+/**
+ * The main window's caption overlay on Windows / Linux: no ground of its own, so the web shows
+ * through it (the shell's ground, a paper's corner, a dialog's scrim), only the symbols in the
+ * appearance's muted color.
+ */
+export const TRANSPARENT_OVERLAY = "rgba(0, 0, 0, 0)";
+export function mainOverlayColors(appearance: Appearance): { color: string; symbolColor: string } {
+  return { color: TRANSPARENT_OVERLAY, symbolColor: overlayColors(appearance).symbolColor };
+}
+
 /** A color with no transparency: hex, `rgb()`, or `rgba()` whose alpha is 1. */
 export function isOpaque(color: string): boolean {
   if (!color.startsWith("rgba(")) return isColorValue(color);
