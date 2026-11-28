@@ -136,6 +136,8 @@ export const MAIN_TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
  * the top row and as wide as the lights (60) with their left margin repeated on the right.
  */
 export const MAIN_CONTROLS: Controls = { x: 0, y: 0, width: 92, height: MAIN_TOP_ROW };
+/** Windows / Linux: the width of the three caption buttons a title bar overlay draws. */
+export const CAPTION_BUTTONS_WIDTH = 138;
 /** The main window reports no inset: no title bar band (desktop spec §7.3). */
 export const MAIN_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
@@ -145,15 +147,28 @@ export const SMALL_TRAFFIC_LIGHT_POSITION = { x: 12, y: 8 } as const;
 export const SMALL_CONTROLS: Controls = { x: 0, y: 0, width: 80, height: 28 };
 
 /**
- * Insets and controls for a main window: macOS reports the traffic lights in the top row,
- * fullscreen hides them; Windows and Linux keep the system title bar for now (nothing to report).
+ * Insets and controls for a main window: macOS reports the traffic lights at the top row's start,
+ * Windows and Linux the title bar overlay's caption buttons at its end (`contentWidth` places
+ * them, so a width change is re-announced); fullscreen hides either.
  */
 export function chromeState(
   platform: ShellPlatform,
   fullscreen: boolean,
+  contentWidth: number,
 ): { insets: Insets; controls: Controls | null } {
-  if (platform !== "macos" || fullscreen) return { insets: { ...MAIN_INSETS }, controls: null };
-  return { insets: { ...MAIN_INSETS }, controls: { ...MAIN_CONTROLS } };
+  if (fullscreen) return { insets: { ...MAIN_INSETS }, controls: null };
+  if (platform === "macos") return { insets: { ...MAIN_INSETS }, controls: { ...MAIN_CONTROLS } };
+  return { insets: { ...MAIN_INSETS }, controls: mainCaptionControls(contentWidth) };
+}
+
+/**
+ * Windows / Linux: the caption buttons' rectangle in the main window, at the window's top right,
+ * as wide as the three buttons and as high as the top row (the overlay is the row's height).
+ */
+export function mainCaptionControls(contentWidth: number): Controls {
+  const width = Math.max(0, Math.round(contentWidth));
+  const w = Math.min(CAPTION_BUTTONS_WIDTH, width);
+  return { x: width - w, y: 0, width: w, height: MAIN_TOP_ROW };
 }
 
 export function platformFrom(nodePlatform: string): ShellPlatform {

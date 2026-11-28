@@ -2,12 +2,16 @@
 // window) and the small window of the local onboarding pages (spec §6.1). Knows which webContents
 // belongs to which profile, which is what the IPC checks resolve against. Electron objects come in
 // as parameters.
+
+import { BUILTIN_TOKENS } from "../shared/appearance.ts";
 import {
+  CAPTION_BUTTONS_WIDTH,
   type CapabilityDescriptors,
   type CapabilityFields,
   type Controls,
   chromeState,
   localPageUrl,
+  MAIN_TOP_ROW,
   MAIN_TRAFFIC_LIGHT_POSITION,
   SHELL_CHANNELS,
   type ShellEventMessage,
@@ -69,6 +73,8 @@ export interface WindowLike {
   isFullScreen(): boolean;
   isMaximized?(): boolean;
   getBounds(): Rect;
+  /** The page area's size, `[width, height]` (Windows / Linux place the caption buttons by it). */
+  getContentSize?(): number[];
   /** The rectangle a maximized or full-screen window restores to. */
   getNormalBounds?(): Rect;
   setBackgroundColor(color: string): void;
@@ -105,9 +111,13 @@ export interface WindowOptions {
 
 /** The small window (spec §6.1): fixed 480×600, its content a local page. */
 export const SMALL_WINDOW_SIZE = { width: 480, height: 600 } as const;
-/** Windows / Linux: the caption buttons' overlay height and the width of the three buttons. */
+/** Windows / Linux: the small window's caption overlay height. */
 export const CAPTION_OVERLAY_HEIGHT = 32;
-export const CAPTION_BUTTONS_WIDTH = 138;
+/** The caption overlay's colors when no appearance is known: the light scheme's ground and muted. */
+export const DEFAULT_OVERLAY_COLORS = {
+  color: BUILTIN_TOKENS.light.bg,
+  symbolColor: BUILTIN_TOKENS.light.muted,
+} as const;
 /** A further window of a profile opens this far right and down of its first window. */
 export const CASCADE_OFFSET = 24;
 /** The main window's smallest size (spec §6.7). */
@@ -163,16 +173,39 @@ export function smallWindowOptions(
 }
 
 /**
- * The main window's title bar (desktop spec §7.3): on macOS hidden, the web running to the top
- * edge and the traffic lights centred in its top row (`chromeState` reports their rectangle);
- * Windows and Linux keep the system title bar until they report a caption overlay.
+ * The main window's title bar (desktop spec §7.3): hidden, the web running to the top edge. macOS
+ * centres the traffic lights in its top row; Windows and Linux draw the caption buttons as a title
+ * bar overlay as high as the row, in the profile's colors (`chromeState` reports either
+ * rectangle). Without a frame the app menu bar is not drawn; its accelerators stay.
  */
 export function mainWindowChrome(
   platform: ShellPlatform,
-): Pick<WindowOptions, "titleBarStyle" | "trafficLightPosition"> {
+  colors: { color: string; symbolColor: string },
+): Pick<WindowOptions, "titleBarStyle" | "trafficLightPosition" | "titleBarOverlay"> {
   return platform === "macos"
     ? { titleBarStyle: "hidden", trafficLightPosition: { ...MAIN_TRAFFIC_LIGHT_POSITION } }
-    : {};
+    : { titleBarStyle: "hidden", titleBarOverlay: { ...colors, height: MAIN_TOP_ROW } };
+}
+
+/** A window as far as its chrome state needs it: its sizes and whether it is full screen. */
+export interface ChromeWindow {
+  getContentSize?(): number[];
+  getBounds?(): Rect;
+  isFullScreen?(): boolean;
+}
+
+/** The width of a window's page area: the caption buttons sit at its right edge. */
+export function contentWidth(win: ChromeWindow): number {
+  return win.getContentSize?.()[0] ?? win.getBounds?.().width ?? 0;
+}
+
+/** A main window's insets and controls now (`chromeState` for the window as it is). */
+export function windowChromeState(
+  platform: ShellPlatform,
+  win: ChromeWindow,
+  fullscreen: boolean = win.isFullScreen?.() ?? false,
+): ReturnType<typeof chromeState> {
+  return chromeState(platform, fullscreen, contentWidth(win));
 }
 
 /** A partition as the window manager configures it. */
@@ -225,6 +258,8 @@ export interface WindowManagerDeps {
   userAgent: string;
   /** A window's ground before its page paints: the profile's appearance (desktop spec §6.10). */
   backgroundColor?: (profile: Profile) => string;
+  /** Windows / Linux: the caption overlay's colors for the profile's appearance. */
+  overlayColors?: (profile: Profile) => { color: string; symbolColor: string };
   /** The displays' work areas, for the main window's first rectangle (`screen.getAllDisplays`). */
   displays?: () => DisplayInfo[];
   /** Remembers a main window's rectangle for its profile (spec §6.7). */
@@ -343,7 +378,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
     const events = deps.describeEvents?.(entry.profile) ?? {};
     const fields = deps.describeFields?.(entry.profile) ?? {};
     return {
-      ...chromeState(deps.platform, fullscreen),
+      ...windowChromeState(deps.platform, entry.window, fullscreen),
       capabilities: deps.describe(entry.profile),
       ...(Object.keys(events).length > 0 ? { events } : {}),
       ...(Object.keys(fields).length > 0 ? { fields } : {}),
@@ -412,7 +447,7 @@ export function createWindowManager(deps: WindowManagerDeps) {
       minHeight: MAIN_MIN_SIZE.height,
       show: false,
       title: profile.name,
-      ...mainWindowChrome(deps.platform),
+      ...mainWindowChrome(deps.platform, deps.overlayColors?.(profile) ?? DEFAULT_OVERLAY_COLORS),
       ...(deps.backgroundColor ? { backgroundColor: deps.backgroundColor(profile) } : {}),
       webPreferences: profileWebPreferences({ partition, preload: deps.preloadPath }),
     });
@@ -429,6 +464,17 @@ export function createWindowManager(deps: WindowManagerDeps) {
     deps.onProfileWindowsChanged?.();
     win.on("enter-full-screen", () => sendState(entry, true));
     win.on("leave-full-screen", () => sendState(entry, false));
+    if (deps.platform !== "macos") {
+      // The caption buttons sit at the right edge: a new width moves their rectangle.
+      let width = contentWidth(win);
+      win.on("resize", () => {
+        if (win.isDestroyed()) return;
+        const now = contentWidth(win);
+        if (now === width) return;
+        width = now;
+        sendState(entry, win.isFullScreen());
+      });
+    }
     const save = deps.saveBounds;
     if (save && !first) trackBounds(win, (b) => save(profile.id, b), deps.boundsScheduler);
     load(win, url);

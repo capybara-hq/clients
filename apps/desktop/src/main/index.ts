@@ -29,7 +29,7 @@ import {
 import { autoUpdater } from "electron-updater";
 import { brand } from "../../brand.ts";
 import { CHROME_CAPABILITY_KEY } from "../shared/chrome-capability.ts";
-import { APP_SCHEME, chromeState, platformFrom } from "../shared/protocol.ts";
+import { APP_SCHEME, platformFrom } from "../shared/protocol.ts";
 import {
   appMenuTemplate,
   createStartAtLogin,
@@ -100,6 +100,7 @@ import {
   type ProfileTarget,
   smallWindowControls,
   type WindowLike,
+  windowChromeState,
 } from "./windows.ts";
 
 // Before `ready`: app:// is a standard, secure scheme so the local pages have a real origin.
@@ -219,7 +220,7 @@ function start(): void {
     const bridge = createShellBridge<ProfileTarget>({
       gate: confirmGate,
       resolveSender: (sender) => windows.resolveSender(sender),
-      stateFor: (target) => chromeState(platform, target.window.isFullScreen()),
+      stateFor: (target) => windowChromeState(platform, target.window),
       platform,
       shellVersion,
       sendEvent: (target, message) => windows.sendEvent(target, message),
@@ -262,6 +263,7 @@ function start(): void {
       // Only to each profile's own origin; the token exchange sets the same value itself.
       userAgent: desktopUserAgent(shellVersion, hostname()),
       backgroundColor: (profile) => backgroundOf(appearanceOf(profile)),
+      overlayColors: (profile) => overlayColors(appearanceOf(profile)),
       // Spec §6.7: the main window opens where it was, else 1280×800 centered.
       displays: () => {
         const primary = screen.getPrimaryDisplay().id;
@@ -613,7 +615,7 @@ function start(): void {
           ...(iconUrl ? { iconUrl } : {}),
         };
       },
-      controls: (win) => chromeState(platform, win.isFullScreen?.() ?? false).controls,
+      controls: (win) => windowChromeState(platform, win).controls,
       background: (profile) => backgroundOf(appearanceOf(profile)),
       log: (message, err) => console.error(message, err ?? ""),
     });

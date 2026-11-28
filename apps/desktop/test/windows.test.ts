@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { Profile } from "../src/main/profiles.ts";
 import {
   createWindowManager,
+  DEFAULT_OVERLAY_COLORS,
   mainWindowChrome,
   smallWindowControls,
   smallWindowOptions,
@@ -504,13 +505,56 @@ describe("the small window", () => {
 });
 
 describe("the main window's title bar", () => {
-  test("macOS hides it with the lights in the top row; Windows and Linux keep the system's", () => {
-    expect(mainWindowChrome("macos")).toEqual({
+  const colors = { color: "#FAF9F6", symbolColor: "#5E5E5A" };
+  test("macOS hides it with the lights in the top row; Windows and Linux draw a caption overlay", () => {
+    expect(mainWindowChrome("macos", colors)).toEqual({
       titleBarStyle: "hidden",
       trafficLightPosition: MAIN_TRAFFIC_LIGHT_POSITION,
     });
-    expect(mainWindowChrome("windows")).toEqual({});
-    expect(mainWindowChrome("linux")).toEqual({});
+    for (const platform of ["windows", "linux"] as const) {
+      expect(mainWindowChrome(platform, colors)).toEqual({
+        titleBarStyle: "hidden",
+        titleBarOverlay: { ...colors, height: 48 },
+      });
+    }
+  });
+
+  test("Windows: the overlay takes the profile's colors, the light scheme's without them", () => {
+    const { windows, options } = setup({ platform: "windows" });
+    windows.openProfileWindow(p1);
+    expect(options[0]).toMatchObject({
+      titleBarStyle: "hidden",
+      titleBarOverlay: { ...DEFAULT_OVERLAY_COLORS, height: 48 },
+    });
+    const themed = setup({ platform: "windows", overlayColors: () => colors });
+    themed.windows.openProfileWindow(p1);
+    expect(themed.options[0]).toMatchObject({ titleBarOverlay: { ...colors, height: 48 } });
+  });
+
+  test("Windows: a new width re-announces the caption buttons' rectangle; the same width does not", () => {
+    const { windows, created } = setup({ platform: "windows" });
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.bounds = { ...win.bounds, width: 1000 };
+    win.emit("resize");
+    expect(win.webContents.send).toHaveBeenLastCalledWith(
+      SHELL_CHANNELS.change,
+      expect.objectContaining({ controls: { x: 862, y: 0, width: 138, height: 48 } }),
+    );
+    const calls = vi.mocked(win.webContents.send).mock.calls.length;
+    win.emit("resize");
+    expect(vi.mocked(win.webContents.send).mock.calls.length).toBe(calls);
+  });
+
+  test("macOS: a resize sends nothing (the lights do not move)", () => {
+    const { windows, created } = setup();
+    windows.openProfileWindow(p1);
+    const win = created[0];
+    if (!win) throw new Error("no window");
+    win.bounds = { ...win.bounds, width: 1000 };
+    win.emit("resize");
+    expect(win.webContents.send).not.toHaveBeenCalled();
   });
 });
 

@@ -51,17 +51,31 @@ function install(fn: typeof installShellEnvironment = installShellEnvironment) {
 describe("desktop values", () => {
   test("windowed and fullscreen", () => {
     // no title bar band: the lights' rectangle is as high as the web's top row
-    expect(chromeState("macos", false)).toEqual({
+    expect(chromeState("macos", false, 1280)).toEqual({
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       controls: { x: 0, y: 0, width: 92, height: 48 },
     });
-    expect(chromeState("macos", true)).toEqual({
+    expect(chromeState("macos", true, 1280)).toEqual({
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       controls: null,
     });
-    expect(chromeState("windows", false)).toEqual({
-      insets: { top: 0, right: 0, bottom: 0, left: 0 },
-      controls: null,
+    // Windows / Linux: the caption buttons at the top row's end, placed by the content width
+    for (const platform of ["windows", "linux"] as const) {
+      expect(chromeState(platform, false, 1280)).toEqual({
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        controls: { x: 1142, y: 0, width: 138, height: 48 },
+      });
+      expect(chromeState(platform, true, 1280)).toEqual({
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        controls: null,
+      });
+    }
+    // never past the window's start edge
+    expect(chromeState("windows", false, 100).controls).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 48,
     });
   });
 
@@ -116,16 +130,16 @@ describe("the Shell environment object", () => {
     const { shell, bridge } = install();
     const listener = vi.fn();
     const off = shell.on("change", listener);
-    bridge.fire({ ...chromeState("macos", true), capabilities: init.capabilities });
+    bridge.fire({ ...chromeState("macos", true, 1280), capabilities: init.capabilities });
     expect(listener).toHaveBeenCalledTimes(1);
     expect(shell.insets.top).toBe(0);
     expect(shell.controls).toBeNull();
-    bridge.fire({ ...chromeState("macos", false), capabilities: init.capabilities });
+    bridge.fire({ ...chromeState("macos", false, 1280), capabilities: init.capabilities });
     expect(shell.insets.top).toBe(0);
     expect(shell.controls).toEqual({ x: 0, y: 0, width: 92, height: 48 });
     expect(listener).toHaveBeenCalledTimes(2);
     off();
-    bridge.fire({ ...chromeState("macos", true), capabilities: init.capabilities });
+    bridge.fire({ ...chromeState("macos", true, 1280), capabilities: init.capabilities });
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
@@ -133,7 +147,7 @@ describe("the Shell environment object", () => {
     const { shell, bridge } = install();
     expect(shell.capabilities["example@1"]).toBeUndefined();
     bridge.fire({
-      ...chromeState("macos", false),
+      ...chromeState("macos", false, 1280),
       capabilities: { ...init.capabilities, "example@1": ["status"] },
     });
     expect(typeof (shell.capabilities["example@1"] as Record<string, unknown>).status).toBe(
@@ -182,7 +196,7 @@ describe("the Shell environment object", () => {
   test("events appear with a change, like functions", () => {
     const { shell, bridge } = install();
     bridge.fire({
-      ...chromeState("macos", false),
+      ...chromeState("macos", false, 1280),
       capabilities: { "example@1": ["status"] },
       events: { "example@1": ["onStatus"] },
     });
@@ -199,7 +213,7 @@ describe("the Shell environment object", () => {
       throw new Error("x");
     });
     shell.on("change", second);
-    bridge.fire({ ...chromeState("macos", true), capabilities: {} });
+    bridge.fire({ ...chromeState("macos", true, 1280), capabilities: {} });
     expect(second).toHaveBeenCalled();
     error.mockRestore();
   });
@@ -355,7 +369,7 @@ describe("the preload", () => {
     const listener = vi.fn();
     bridge.onChange(listener);
     expect(deps.ipcRenderer.on).toHaveBeenCalledWith(SHELL_CHANNELS.change, expect.any(Function));
-    const state = { ...chromeState("macos", true), capabilities: {} };
+    const state = { ...chromeState("macos", true, 1280), capabilities: {} };
     for (const l of deps.changeListeners) l({}, state);
     expect(listener).toHaveBeenCalledWith(state);
   });

@@ -52,7 +52,12 @@
 }
 
 :root {
-  --lp-mono: "Sarasa Mono SC", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Windows and Linux name their own monospace and CJK faces before the generic family: in a zh
+     locale Chromium maps a bare `monospace` to NSimSun there (serif-looking Latin and CJK). */
+  --lp-mono:
+    "Sarasa Mono SC", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas,
+    "DejaVu Sans Mono", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC",
+    monospace;
   --lp-sans:
     system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Segoe UI", sans-serif;
