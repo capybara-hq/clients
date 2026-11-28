@@ -408,27 +408,3 @@ describe("the tray shows no device state", () => {
     expect(tray.setTitle).toHaveBeenLastCalledWith("Capybara");
   });
 });
-
-describe("tray image", () => {
-  test("swaps the icon of an existing tray and ignores the call before it exists", () => {
-    const images: unknown[] = [];
-    const fake = {
-      setToolTip() {},
-      setContextMenu() {},
-      setImage: (image: unknown) => images.push(image),
-      on() {},
-      destroy() {},
-    };
-    const controller = createTrayController({
-      createTray: () => fake,
-      buildMenu: () => null,
-      tooltip: "Capybara",
-      actions: actions(),
-    });
-    controller.setImage("before");
-    expect(images).toEqual([]);
-    controller.update(state);
-    controller.setImage("dark");
-    expect(images).toEqual(["dark"]);
-  });
-});

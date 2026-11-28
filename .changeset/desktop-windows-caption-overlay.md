@@ -7,9 +7,9 @@ web runs to the window's top edge. The caption buttons are a title bar overlay a
 row (48). The overlay is see-through, so the web shows under the buttons: the shell's ground, a
 paper's corner or a dialog's scrim. Only the symbols take the profile's muted color. The shell
 reports the buttons as a 138 by 48 controls rectangle at the window's right edge, and re-announces
-it when the width changes. The app menu's accelerators still work. The local pages name Windows
-and Linux monospace and CJK faces, so they no longer fall back to NSimSun.
-Windows and Linux windows and the taskbar show the app icon, also in an unpackaged run, and
-Windows groups the taskbar buttons under the app's id instead of Electron's. The Windows and Linux app icon is the flat glyph without the macOS tile (an .ico with exact 16 to
-256 px sizes on Windows), and the tray shows the glyph in one color: black on a light taskbar,
-white on a dark one, swapped when the theme changes.
+it when the width changes. The app menu's accelerators still work. The local pages name Windows and
+Linux monospace and CJK faces, so they no longer fall back to NSimSun. Windows and Linux windows and
+the taskbar show the app icon, also in an unpackaged run, and Windows groups the taskbar buttons
+under the app's id instead of Electron's. The Windows and Linux app icon is the flat glyph without
+the macOS tile (an .ico with exact 16 to 256 px sizes on Windows), and the tray shows the same glyph
+in the brand orange.

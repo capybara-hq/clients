@@ -657,17 +657,11 @@ function start(): void {
     };
     // trayTemplate.png (22 px) and trayTemplate@2x.png (44 px): macOS picks the @2x by itself and
     // shows either at 22 pt (the @1x size), the menu bar height; no resize.
-    // macOS: the template glyph the menu bar tints. Elsewhere: the same glyph in one color against
-    // the taskbar (black on a light one, white on a dark one), swapped when the theme changes.
-    // name.png is 16 px, name@2x.png 32 px; Electron picks by the display scale.
+    // macOS: the template glyph the menu bar tints. Elsewhere: the same glyph in the brand orange,
+    // which reads on light and dark taskbars alike. name.png is 16 px, name@2x.png 32 px; Electron
+    // picks by the display scale.
     const trayImage = (): { image: Electron.NativeImage; found: boolean } => {
-      const dark =
-        platform === "windows"
-          ? nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
-          : nativeTheme.shouldUseDarkColors;
-      const name =
-        platform === "macos" ? "trayTemplate.png" : dark ? "trayDark.png" : "trayLight.png";
-      const file = iconFile(name);
+      const file = iconFile(platform === "macos" ? "trayTemplate.png" : "tray.png");
       if (!fs.existsSync(file)) return { image: nativeImage.createEmpty(), found: false };
       const image = nativeImage.createFromPath(file);
       if (platform === "macos") image.setTemplateImage(true);
@@ -675,14 +669,13 @@ function start(): void {
     };
     const trayIcon = trayImage();
     const tray = createTrayController({
-      createTray: () => new Tray(trayImage().image) as unknown as TrayLike,
+      createTray: () => new Tray(trayIcon.image) as unknown as TrayLike,
       buildMenu: (template) => Menu.buildFromTemplate(template as unknown as never),
       tooltip: brand.productName,
       // Without the tray icon file the tray shows the name instead of an invisible image.
       ...(trayIcon.found ? {} : { fallbackTitle: brand.productName }),
       actions: uiActions,
     });
-    if (platform !== "macos") nativeTheme.on("updated", () => tray.setImage(trayImage().image));
     const dockIcon = createDockIcon({
       fetch: net.fetch as typeof fetch,
       setIcon: (png) => {
